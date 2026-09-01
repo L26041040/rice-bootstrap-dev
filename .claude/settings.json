@@ -1,0 +1,18 @@
+{
+  "outputStyle": "老弟",
+  "hooks": {
+    "SessionEnd": [
+      {
+        "matcher": "clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/archive_session.py\"",
+            "timeout": 60,
+            "statusMessage": "Archiving session history..."
+          }
+        ]
+      }
+    ]
+  }
+}
