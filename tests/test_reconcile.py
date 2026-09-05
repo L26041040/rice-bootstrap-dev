@@ -79,7 +79,7 @@ class TestSettingsKeyStates(ReconcileTestBase):
 
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(apply_items)["settings:outputStyle"], "created")
-        self.assertEqual(_read_settings(self.repo_root)["outputStyle"], "老弟")
+        self.assertEqual(_read_settings(self.repo_root)["outputStyle"], "rice:老弟")
 
     def test_rice_defined_key_match_is_noop(self):
         _write_settings(self.repo_root, _fully_correct_settings())
@@ -107,7 +107,7 @@ class TestSettingsKeyStates(ReconcileTestBase):
 
         apply_items = reconcile.apply(self.repo_root, is_rice_update=True, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(apply_items)["settings:outputStyle"], "updated")
-        self.assertEqual(_read_settings(self.repo_root)["outputStyle"], "老弟")
+        self.assertEqual(_read_settings(self.repo_root)["outputStyle"], "rice:老弟")
 
 
 class TestOwnerDefinedKeys(ReconcileTestBase):
@@ -345,7 +345,7 @@ class TestProjectOwnedSettingsPreserved(ReconcileTestBase):
 
         reconcile.apply(self.repo_root, is_rice_update=True, rtk_probe=_ok_rtk_probe)
         after = _read_settings(self.repo_root)
-        self.assertEqual(after["outputStyle"], "老弟")  # rice-defined: fixed
+        self.assertEqual(after["outputStyle"], "rice:老弟")  # rice-defined: fixed
         self.assertEqual(after["permissions"]["allow"], ["Bash(npm test *)"])
         self.assertTrue(after["enabledPlugins"]["other-plugin@other-marketplace"])
         self.assertIn("other-marketplace", after["extraKnownMarketplaces"])

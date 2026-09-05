@@ -1,5 +1,17 @@
 {
   "outputStyle": "老弟",
+  "extraKnownMarketplaces": {
+    "rice-bootstrap": {
+      "source": {
+        "source": "github",
+        "repo": "L26041040/rice-bootstrap",
+        "ref": "v0.1.0"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "rice@rice-bootstrap": true
+  },
   "hooks": {
     "SessionEnd": [
       {

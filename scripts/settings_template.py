@@ -121,7 +121,7 @@ def desired_settings(ref: str, archive_default: bool) -> dict:
             PLUGIN_KEY: True,
         },
         "autoMemoryEnabled": False,
-        "outputStyle": "老弟",
+        "outputStyle": "rice:老弟",  # plugin output styles are namespaced <plugin>:<name> (runtime-verified, #18)
         "env": {
             "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
             "RICE_SESSION_ARCHIVE": "1" if archive_default else "0",

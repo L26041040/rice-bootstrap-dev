@@ -47,7 +47,7 @@ class TestDesiredSettings(unittest.TestCase):
 
     def test_output_style(self):
         s = desired_settings(ref="v0.1.0", archive_default=False)
-        self.assertEqual(s["outputStyle"], "老弟")
+        self.assertEqual(s["outputStyle"], "rice:老弟")
 
     def test_sonnet_default_no_force(self):
         s = desired_settings(ref="v0.1.0", archive_default=False)
