@@ -10,6 +10,19 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/archive_hook.py\"",
+            "timeout": 60,
+            "statusMessage": "Archiving session history..."
+          }
+        ]
+      }
     ]
   }
 }
