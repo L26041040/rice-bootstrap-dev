@@ -107,9 +107,11 @@ def _settings_items(current: dict, ref: str | None, *, write: bool, is_rice_upda
     """Returns (items, current) -- `current` is mutated in place when
     write=True and an item needs creating/updating."""
     if ref is None:
-        state = "FAIL"
+        # Same item name the ref-present path below would use for this key
+        # (settings:{REF_PATH}), so check()/apply() output is consistent
+        # regardless of which branch produced it.
         return [ItemResult(
-            f"settings:{REF_PATH.rsplit('.', 1)[-1]}", state,
+            f"settings:{REF_PATH}", "FAIL",
             f"{REF_PATH} is missing -- cannot determine the pinned version; run bootstrap",
         )], current
 

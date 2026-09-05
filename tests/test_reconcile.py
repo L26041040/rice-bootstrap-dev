@@ -154,10 +154,10 @@ class TestOwnerDefinedKeys(ReconcileTestBase):
         before = (self.repo_root / ".claude" / "settings.json").read_text()
 
         check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertTrue(any(i.state == "FAIL" for i in check_items))
+        self.assertEqual(_states(check_items)[f"settings:{REF_PATH}"], "FAIL")
 
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertTrue(any(i.state == "FAIL" for i in apply_items))
+        self.assertEqual(_states(apply_items)[f"settings:{REF_PATH}"], "FAIL")
         after = (self.repo_root / ".claude" / "settings.json").read_text()
         self.assertEqual(before, after)
 
