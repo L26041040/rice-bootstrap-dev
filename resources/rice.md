@@ -34,7 +34,17 @@ hard error does, so there's no substitute for actually checking.
 
 @../PROJECT_STATE.md
 
-Keep `PROJECT_STATE.md` current at natural checkpoints: before `/clear`,
-when the phase changes, when a blocker appears or clears. Nothing enforces
-this mechanically — the whole point of the file (a new session orienting
-instantly) depends on it actually being kept up to date.
+`PROJECT_STATE.md` describes the project's **current real state** — it is
+not a history or a log. rice governs these rules; the project's own agent
+owns the content. Update it when, and only when, one of these happens:
+
+1. the phase or objective actually changes;
+2. the next step actually changes;
+3. a blocker appears or clears;
+4. a ticket or milestone completes that changes where the project stands;
+5. right before `/clear` or a formal handoff.
+
+If nothing above has changed, leave it alone — never update it for the
+sake of updating. Nothing enforces this mechanically; the file's whole
+value (a new session orienting instantly) depends on it being true.
+`rice-update` never rewrites existing content.

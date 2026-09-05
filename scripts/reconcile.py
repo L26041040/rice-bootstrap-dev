@@ -45,11 +45,31 @@ _OWNER_LEAF_KEYS = sorted(settings_template.OWNER_DEFINED_KEYS)
 _MISSING = object()
 
 
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_STATE_IMPORT_LINE = "@../PROJECT_STATE.md"
+
+# Rubric kinds (RICE-BOOTSTRAP-020). EXISTS: the artifact/capability is
+# there. MATCHES: its content/setting equals this build's canonical state.
+# BEHAVES: only a real execution can confirm it -- the script can report
+# evidence or say how to exercise it in-session, never fake a PASS.
+EXISTS, MATCHES, BEHAVES = "EXISTS", "MATCHES", "BEHAVES"
+
+
 @dataclass
 class ItemResult:
     name: str
     state: str
     detail: str = ""
+    kind: str = MATCHES
+
+
+def build_version() -> str:
+    """Version of the plugin build this rubric ships in -- the only version
+    a PASS can ever be claimed for."""
+    try:
+        return json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")).get("version", "?")
+    except (OSError, json.JSONDecodeError):
+        return "?"
 
 
 def _get_path(d: dict, dotted: str):
@@ -95,6 +115,7 @@ def _settings_items(current: dict, ref: str | None, *, write: bool, is_rice_upda
         return [ItemResult(
             f"settings:{REF_PATH}", "FAIL",
             f"{REF_PATH} is missing -- cannot determine the pinned version; run bootstrap",
+            kind=EXISTS,
         )], current
 
     desired = settings_template.desired_settings(ref, True)  # archive_default is inert here:
@@ -127,11 +148,13 @@ def _settings_items(current: dict, ref: str | None, *, write: bool, is_rice_upda
             items.append(ItemResult(
                 f"settings:{key}", "FAIL",
                 "owner-defined key missing; reconcile never creates it -- run bootstrap",
+                kind=EXISTS,
             ))
         else:
             items.append(ItemResult(
                 f"settings:{key}", "noop" if write else "PASS",
                 "owner-defined; present, value not compared or reasserted",
+                kind=EXISTS,
             ))
     return items, current
 
@@ -184,8 +207,8 @@ def _matt_item(repo_root: Path) -> ItemResult:
     docs_dir = repo_root / "docs" / "agents"
     has_docs = docs_dir.is_dir() and any(docs_dir.glob("*.md"))
     if has_heading and has_docs:
-        return ItemResult("matt:artifacts", "PASS")
-    return ItemResult("matt:artifacts", "FAIL", "Matt setup artifacts not found (## Agent skills / docs/agents/*.md)")
+        return ItemResult("matt:artifacts", "PASS", kind=EXISTS)
+    return ItemResult("matt:artifacts", "FAIL", "Matt setup artifacts not found (## Agent skills / docs/agents/*.md)", kind=EXISTS)
 
 
 def _default_rtk_probe(cmd):
@@ -195,76 +218,187 @@ def _default_rtk_probe(cmd):
 _default_plugin_probe = _default_rtk_probe
 
 
-def _plugin_item(plugin_probe) -> ItemResult:
-    """Presence-only: is the rice plugin actually installed on this machine,
-    per the official CLI (`claude plugin list --json`, a top-level array of
-    {id, version, scope, enabled, ...}). #18 runtime fact: a project
-    settings.json declaring the marketplace/plugin does NOT install it, and
-    a Cloud session never trusts the folder, so the declaration is ignored
-    there entirely -- only an actual install (user scope in the Cloud
-    environment, or `claude plugin install` locally) counts. apply() never
-    installs; installing is the OWNER's step."""
+def _installed_entries(plugin_probe):
+    """Parsed `claude plugin list --json` (a top-level array), or an
+    ItemResult explaining why it couldn't be read."""
     try:
         r = plugin_probe(["claude", "plugin", "list", "--json"])
     except FileNotFoundError:
-        return ItemResult("plugin:installed", "NOT_VERIFIED", "claude CLI not found on PATH")
+        return None, "claude CLI not found on PATH"
     except OSError as exc:
-        return ItemResult("plugin:installed", "NOT_VERIFIED", f"could not run claude plugin list: {exc}")
+        return None, f"could not run claude plugin list: {exc}"
     if r.returncode != 0:
-        return ItemResult("plugin:installed", "NOT_VERIFIED", f"claude plugin list exited {r.returncode}")
+        return None, f"claude plugin list exited {r.returncode}"
     try:
         entries = json.loads(r.stdout or "[]")
     except json.JSONDecodeError:
-        return ItemResult("plugin:installed", "NOT_VERIFIED", "claude plugin list --json was not valid JSON")
+        return None, "claude plugin list --json was not valid JSON"
     if not isinstance(entries, list):
-        return ItemResult("plugin:installed", "NOT_VERIFIED", "unexpected claude plugin list --json shape")
-    for e in entries:
-        if isinstance(e, dict) and e.get("id") == settings_template.PLUGIN_KEY:
-            return ItemResult(
-                "plugin:installed", "PASS",
-                f"{settings_template.PLUGIN_KEY} {e.get('version', '?')} (scope {e.get('scope', '?')}, "
-                f"enabled={e.get('enabled')})",
-            )
-    return ItemResult(
-        "plugin:installed", "FAIL",
-        f"{settings_template.PLUGIN_KEY} is not installed on this machine; install it "
-        "(Cloud: add it to the environment like other user-scope plugins; local: "
-        "`claude plugin marketplace add L26041040/rice-bootstrap && claude plugin install "
-        f"{settings_template.PLUGIN_KEY}`), then start a new session",
+        return None, "unexpected claude plugin list --json shape"
+    return [e for e in entries if isinstance(e, dict) and e.get("id") == settings_template.PLUGIN_KEY], None
+
+
+def _plugin_items(plugin_probe) -> list[ItemResult]:
+    """plugin:installed (EXISTS) and plugin:build (MATCHES).
+
+    #18 runtime facts: a project settings.json declaring the marketplace/
+    plugin does not by itself install it; only an actual install counts.
+    apply() never installs. plugin:build compares the installed version with
+    the build this rubric ships in -- if they differ, whatever ran this
+    script is not the build the repo will actually load next session, so no
+    PASS can be claimed for it."""
+    mine, err = _installed_entries(plugin_probe)
+    if err:
+        return [ItemResult("plugin:installed", "NOT_VERIFIED", err, kind=EXISTS),
+                ItemResult("plugin:build", "NOT_VERIFIED", err, kind=MATCHES)]
+    if not mine:
+        return [ItemResult(
+            "plugin:installed", "FAIL",
+            f"{settings_template.PLUGIN_KEY} is not installed on this machine; install it with "
+            "`claude plugin marketplace add L26041040/rice-bootstrap && claude plugin install "
+            f"{settings_template.PLUGIN_KEY}`, then start a new session",
+            kind=EXISTS,
+        ), ItemResult("plugin:build", "NOT_VERIFIED", "nothing installed to compare against", kind=MATCHES)]
+    e = mine[0]
+    installed = ItemResult(
+        "plugin:installed", "PASS",
+        "; ".join(f"{settings_template.PLUGIN_KEY} {x.get('version', '?')} (scope {x.get('scope', '?')}, "
+                  f"enabled={x.get('enabled')})" for x in mine),
+        kind=EXISTS,
     )
+    bv = build_version()
+    versions = {str(x.get("version")) for x in mine}
+    if bv in versions:
+        build = ItemResult("plugin:build", "PASS", f"installed {sorted(versions)} includes this rubric's build {bv}", kind=MATCHES)
+    else:
+        build = ItemResult(
+            "plugin:build", "FAIL",
+            f"installed {sorted(versions)} but this rubric is build {bv} -- update the install "
+            "(`claude plugin update`) and/or start a new session so the loaded build matches",
+            kind=MATCHES,
+        )
+    return [installed, build]
+
+
+def _output_style_item() -> ItemResult:
+    styles = PLUGIN_ROOT / "output-styles"
+    for f in sorted(styles.glob("*.md")) if styles.is_dir() else []:
+        head = f.read_text(encoding="utf-8").splitlines()[:8]
+        if any(line.strip() == "name: 老弟" for line in head):
+            return ItemResult("output-style:exists", "PASS", f"{f.name} in build {build_version()} (addressed as rice:老弟)", kind=EXISTS)
+    return ItemResult("output-style:exists", "FAIL", "no output-styles/*.md with `name: 老弟` in this build", kind=EXISTS)
+
+
+def _rice_md_import_item(repo_root: Path) -> ItemResult:
+    dest = repo_root / ".claude" / "rice.md"
+    if not dest.exists():
+        return ItemResult("rice.md:imports-project-state", "FAIL", ".claude/rice.md missing", kind=MATCHES)
+    if any(line.strip() == PROJECT_STATE_IMPORT_LINE for line in dest.read_text(encoding="utf-8").splitlines()):
+        return ItemResult("rice.md:imports-project-state", "PASS", kind=MATCHES)
+    return ItemResult("rice.md:imports-project-state", "FAIL", f"`{PROJECT_STATE_IMPORT_LINE}` line missing", kind=MATCHES)
+
+
+def _project_state_item(repo_root: Path) -> ItemResult:
+    """Read-only presence. Content is never inspected (#21)."""
+    if (repo_root / "PROJECT_STATE.md").exists():
+        return ItemResult("project-state:exists", "PASS", kind=EXISTS)
+    return ItemResult("project-state:exists", "FAIL", "PROJECT_STATE.md missing (bootstrap creates it; rice-update restores it)", kind=EXISTS)
+
+
+def _archive_hook_item() -> ItemResult:
+    hooks = PLUGIN_ROOT / "hooks" / "hooks.json"
+    script = PLUGIN_ROOT / "scripts" / "archive_hook.py"
+    try:
+        cfg = json.loads(hooks.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ItemResult("archive-hook:exists", "FAIL", "hooks/hooks.json missing or invalid in this build", kind=EXISTS)
+    for entry in cfg.get("hooks", {}).get("SessionEnd", []):
+        if entry.get("matcher") == "clear" and any("archive_hook.py" in h.get("command", "") for h in entry.get("hooks", [])):
+            if script.exists():
+                return ItemResult("archive-hook:exists", "PASS", kind=EXISTS)
+            return ItemResult("archive-hook:exists", "FAIL", "hooks.json wires archive_hook.py but the script is missing", kind=EXISTS)
+    return ItemResult("archive-hook:exists", "FAIL", "no SessionEnd(clear) -> archive_hook.py entry in hooks.json", kind=EXISTS)
+
+
+def _archive_behaves_item(repo_root: Path, current_settings: dict) -> ItemResult:
+    """BEHAVES: only a real /clear proves it. Evidence-based: an INDEX row
+    whose archive file exists in this repo means it has already happened
+    here. Never a PASS without that evidence."""
+    switch = _get_path(current_settings, "env.RICE_SESSION_ARCHIVE")
+    if switch is not _MISSING and str(switch) != "1":
+        return ItemResult("archive:behaves", "PASS", "archiving is switched off for this repo (RICE_SESSION_ARCHIVE != 1); nothing to exercise", kind=BEHAVES)
+    index = repo_root / "session-history" / "INDEX.md"
+    if index.exists():
+        for line in index.read_text(encoding="utf-8").splitlines():
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) >= 5 and cells[-1].endswith(".md") and (repo_root / "session-history" / cells[-1]).exists():
+                return ItemResult("archive:behaves", "PASS", f"evidence: INDEX row -> session-history/{cells[-1]} exists", kind=BEHAVES)
+    return ItemResult("archive:behaves", "NOT_VERIFIED", "not yet exercised in this repo: do a real /clear with RICE_SESSION_ARCHIVE=1 and re-run check (see #29)", kind=BEHAVES)
+
+
+def _in_session_behaves_items() -> list[ItemResult]:
+    """Permission enforcement can only be observed from inside a Claude
+    session (the harness decides, not a script). The rubric names the
+    exact probe so the skill can exercise it and record the outcome."""
+    return [
+        ItemResult("git-deny:behaves", "NOT_VERIFIED",
+                   "exercise in-session: run `git branch --show-current` through Bash -- expected outcome: "
+                   "denied by the permission rule (side-effect-free either way)", kind=BEHAVES),
+        ItemResult("premium-ask:behaves", "NOT_VERIFIED",
+                   "exercise in-session: request a subagent with model `opus` -- expected outcome: a native "
+                   "OWNER approval prompt (decline it)", kind=BEHAVES),
+    ]
 
 
 def _rtk_item(rtk_probe) -> ItemResult:
     try:
         r = rtk_probe(["rtk", "--version"])
     except FileNotFoundError:
-        return ItemResult("rtk", "FAIL", "rtk not found on PATH")
+        return ItemResult("rtk", "FAIL", "rtk not found on PATH", kind=EXISTS)
     except OSError as exc:
-        return ItemResult("rtk", "NOT_VERIFIED", f"could not run rtk --version: {exc}")
+        return ItemResult("rtk", "NOT_VERIFIED", f"could not run rtk --version: {exc}", kind=EXISTS)
     if r.returncode != 0:
-        return ItemResult("rtk", "FAIL", f"rtk --version exited {r.returncode}")
-    return ItemResult("rtk", "PASS", r.stdout.strip())
+        return ItemResult("rtk", "FAIL", f"rtk --version exited {r.returncode}", kind=EXISTS)
+    return ItemResult("rtk", "PASS", r.stdout.strip(), kind=EXISTS)
 
 
 def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> tuple[list[ItemResult], str]:
+    """The versioned mechanical verification rubric of this build. A
+    MECHANICAL-VERIFIED verdict requires every EXISTS and MATCHES item to
+    PASS; BEHAVES items report evidence or say how to exercise them
+    in-session -- the caller (bootstrap / rice-update / E2E) must actually
+    do that before claiming VERIFIED."""
     rtk_probe = rtk_probe or _default_rtk_probe
     plugin_probe = plugin_probe or _default_plugin_probe
     repo_root = Path(repo_root)
     current = _current_settings(repo_root)
     ref = _current_ref(current)
-    items = [_plugin_item(plugin_probe)]
+    items = _plugin_items(plugin_probe)
+    items.append(_output_style_item())
     settings_items, _ = _settings_items(current, ref, write=False, is_rice_update=False)
     items.extend(settings_items)
     items.append(_rice_md_item(repo_root, write=False, is_rice_update=False))
+    items.append(_rice_md_import_item(repo_root))
     items.append(_claude_md_item(repo_root, write=False))
+    items.append(_project_state_item(repo_root))
+    items.append(_archive_hook_item())
+    items.append(_archive_behaves_item(repo_root, current))
+    items.extend(_in_session_behaves_items())
     items.append(_matt_item(repo_root))
     items.append(_rtk_item(rtk_probe))
+    return items, summarize(items, ref)
 
-    passed = sum(1 for i in items if i.state == "PASS")
-    failed = sum(1 for i in items if i.state == "FAIL")
-    not_verified = sum(1 for i in items if i.state == "NOT_VERIFIED")
-    summary = f"RICE-CHECK: {passed} PASS, {failed} FAIL, {not_verified} NOT_VERIFIED ({len(items)} total)"
-    return items, summary
+
+def summarize(items: list[ItemResult], ref) -> str:
+    def count(kinds, state):
+        return sum(1 for i in items if i.kind in kinds and i.state == state)
+    mech = (EXISTS, MATCHES)
+    mp, mf, mn = count(mech, "PASS"), count(mech, "FAIL"), count(mech, "NOT_VERIFIED")
+    bp, bn = count((BEHAVES,), "PASS"), count((BEHAVES,), "NOT_VERIFIED")
+    bf = count((BEHAVES,), "FAIL")
+    verdict = f"MECHANICAL-VERIFIED rice {build_version()}" if (mf == 0 and mn == 0) else "NOT VERIFIED"
+    return (f"RICE-CHECK: build={build_version()} ref={ref!r} | EXISTS+MATCHES: {mp} PASS {mf} FAIL {mn} NOT_VERIFIED "
+            f"| BEHAVES: {bp} PASS {bf} FAIL {bn} NOT_VERIFIED | {verdict}")
 
 
 def apply(repo_root, *, is_rice_update: bool = False, rtk_probe=None,
@@ -275,7 +409,7 @@ def apply(repo_root, *, is_rice_update: bool = False, rtk_probe=None,
     settings_path = repo_root / ".claude" / "settings.json"
     current = _current_settings(repo_root)
     ref = _current_ref(current)
-    items = [_plugin_item(plugin_probe)]  # informational; apply never installs
+    items = _plugin_items(plugin_probe)  # informational; apply never installs
     settings_items, mutated = _settings_items(current, ref, write=True, is_rice_update=is_rice_update)
     items.extend(settings_items)
     if any(i.state in ("created", "updated") for i in settings_items):

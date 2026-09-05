@@ -237,3 +237,49 @@ class TestArchiveHookMain(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FIXTURE_2 = Path(__file__).resolve().parent / "fixtures" / "sample_transcript_2.jsonl"
+
+
+class TestIndexAcrossTwoClears(unittest.TestCase):
+    """RICE-BOOTSTRAP-020 §2: first /clear creates INDEX.md with one row;
+    second /clear (a different session) appends a second row and leaves the
+    first archive and row untouched."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._remote_tmp = tempfile.TemporaryDirectory()
+        self.repo_root = Path(self._tmp.name)
+        _init_repo(self.repo_root, Path(self._remote_tmp.name))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+        self._remote_tmp.cleanup()
+
+    def test_two_clears_two_rows_no_overwrite(self):
+        rc1, err1 = _run_main(_payload(self.repo_root), archive_enabled=True)
+        self.assertEqual(rc1, 0, err1)
+        archive_dir = self.repo_root / "session-history"
+        index = archive_dir / "INDEX.md"
+        first_index = index.read_text()
+        first_files = sorted(p.name for p in archive_dir.glob("*.md") if p.name != "INDEX.md")
+        self.assertEqual(len(first_files), 1)
+        self.assertEqual(sum(1 for l in first_index.splitlines() if l.startswith("| 20")), 1)
+        first_archive_bytes = (archive_dir / first_files[0]).read_bytes()
+
+        p2 = _payload(self.repo_root)
+        p2["session_id"] = "beef5678-0000-0000-0000-000000000000"
+        p2["transcript_path"] = str(FIXTURE_2)
+        rc2, err2 = _run_main(p2, archive_enabled=True)
+        self.assertEqual(rc2, 0, err2)
+
+        files = sorted(p.name for p in archive_dir.glob("*.md") if p.name != "INDEX.md")
+        self.assertEqual(len(files), 2)
+        self.assertIn(first_files[0], files)
+        self.assertEqual((archive_dir / first_files[0]).read_bytes(), first_archive_bytes)
+        second_index = index.read_text()
+        self.assertTrue(second_index.startswith(first_index), "INDEX must be append-only")
+        self.assertEqual(sum(1 for l in second_index.splitlines() if l.startswith("| 20")), 2)
+        log = _git(self.repo_root, "log", "--oneline").stdout.strip().splitlines()
+        self.assertEqual(len(log), 3)  # init + two archive commits

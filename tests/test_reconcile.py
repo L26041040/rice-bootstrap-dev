@@ -402,3 +402,74 @@ class _Result:
     def __init__(self, returncode, stdout):
         self.returncode = returncode
         self.stdout = stdout
+
+
+class TestRubricKindsAndVerdict(ReconcileTestBase):
+    """RICE-BOOTSTRAP-020 §4: every item carries a kind; the verdict is
+    MECHANICAL-VERIFIED only when every EXISTS/MATCHES item is PASS; BEHAVES
+    items never fake a PASS."""
+
+    def test_every_item_has_a_kind_and_v1_coverage(self):
+        _make_correct_repo(self.repo_root)
+        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        for i in items:
+            self.assertIn(i.kind, (reconcile.EXISTS, reconcile.MATCHES, reconcile.BEHAVES), i)
+        names = {i.name for i in items}
+        for required in [
+            "plugin:installed", "plugin:build", "output-style:exists", "settings:outputStyle",
+            "settings:permissions.deny", "settings:permissions.ask",
+            "settings:env.CLAUDE_CODE_SUBAGENT_MODEL", "rice.md", "CLAUDE.md:import-line",
+            "project-state:exists", "rice.md:imports-project-state", "archive-hook:exists",
+            "archive:behaves", "git-deny:behaves", "premium-ask:behaves", "matt:artifacts", "rtk",
+        ]:
+            self.assertIn(required, names)
+
+    def test_verdict_requires_all_exists_and_matches_pass(self):
+        _make_correct_repo(self.repo_root)
+        (self.repo_root / "PROJECT_STATE.md").write_text("# PROJECT_STATE\n")
+        items, summary = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        mech = [i for i in items if i.kind != reconcile.BEHAVES and not i.name.startswith(("matt:", "rtk"))]
+        self.assertTrue(all(i.state == "PASS" for i in mech), [i for i in mech if i.state != "PASS"])
+        # matt is FAIL in this fixture -> not mechanically verified yet
+        self.assertIn("NOT VERIFIED", summary)
+        claude_md = self.repo_root / "CLAUDE.md"
+        claude_md.write_text(claude_md.read_text() + "\n## Agent skills\n")
+        (self.repo_root / "docs" / "agents").mkdir(parents=True)
+        (self.repo_root / "docs" / "agents" / "issue-tracker.md").write_text("x")
+        items, summary = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        self.assertIn("MECHANICAL-VERIFIED rice", summary)
+        self.assertEqual(len(summary.splitlines()), 1)
+
+    def test_behaves_items_are_not_verified_without_evidence(self):
+        _make_correct_repo(self.repo_root)
+        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        st = {i.name: i for i in items}
+        self.assertEqual(st["archive:behaves"].state, "NOT_VERIFIED")
+        self.assertEqual(st["git-deny:behaves"].state, "NOT_VERIFIED")
+        self.assertEqual(st["premium-ask:behaves"].state, "NOT_VERIFIED")
+        self.assertIn("git branch --show-current", st["git-deny:behaves"].detail)
+
+    def test_archive_behaves_pass_only_with_real_evidence(self):
+        _make_correct_repo(self.repo_root)
+        sh = self.repo_root / "session-history"; sh.mkdir()
+        (sh / "INDEX.md").write_text("# Session Archive Index\n\n| Date | Title | Excerpt | Turns | File |\n|---|---|---|---|---|\n| 2026-09-05 | t | e | 4 | 2026-09-05_x.md |\n")
+        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        self.assertEqual({i.name: i.state for i in items}["archive:behaves"], "NOT_VERIFIED")  # row but no file
+        (sh / "2026-09-05_x.md").write_text("# archive\n")
+        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        self.assertEqual({i.name: i.state for i in items}["archive:behaves"], "PASS")
+
+    def test_archive_behaves_pass_when_switched_off(self):
+        settings = _fully_correct_settings(); settings["env"]["RICE_SESSION_ARCHIVE"] = "0"
+        _write_settings(self.repo_root, settings)
+        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        self.assertEqual({i.name: i.state for i in items}["archive:behaves"], "PASS")
+
+    def test_plugin_build_mismatch_is_fail(self):
+        _make_correct_repo(self.repo_root)
+        probe = lambda cmd: _Result(0, '[{"id":"rice@rice-bootstrap","version":"0.0.1","scope":"user","enabled":true}]')
+        items, summary = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
+        st = {i.name: i.state for i in items}
+        self.assertEqual(st["plugin:installed"], "PASS")
+        self.assertEqual(st["plugin:build"], "FAIL")
+        self.assertIn("NOT VERIFIED", summary)
