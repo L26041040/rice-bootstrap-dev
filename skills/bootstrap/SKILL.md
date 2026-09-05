@@ -1,121 +1,116 @@
 ---
 name: bootstrap
-description: "(rice plugin v0.1.1) One-instruction bootstrap for a new repo: installs rice's own configuration (git safety, session archiving, model delegation, output style, PROJECT_STATE.md), then hands off to the OWNER for official Matt Pocock setup. Safe to re-run on an already-bootstrapped repo."
+description: "One-instruction bootstrap for a repo: installs rice's own configuration (git safety, session archiving, model delegation, output style, PROJECT_STATE.md), then hands off to the OWNER for official Matt Pocock setup. Safe to re-run on an already-bootstrapped repo."
 ---
 
 # rice bootstrap
 
-Bootstrap this repo onto rice-bootstrap. This spans a session restart (Claude
-Code only picks up a newly-declared plugin on a fresh session) and ends in an
-OWNER-driven handoff to the official Matt Pocock setup skill, which rice must
-never invoke or imitate itself (see `.claude/rice.md` once it's installed;
-until then, this file is the whole policy).
+Bootstrap this repo onto rice-bootstrap. Everything below is idempotent by
+construction (`reconcile.py`'s apply is create-if-missing / no-op-if-correct
+/ conflict-if-drifted), so re-running this skill on a partly or fully
+bootstrapped repo is always safe. Re-derive where you are from actual repo
+state each time; never assume a first run.
 
-Every step below is idempotent by construction (`reconcile.py`'s apply is
-create-if-missing/no-op-if-correct/conflict-if-drifted) — re-running this
-skill on a repo that's already partly or fully bootstrapped is always safe.
-Re-derive where you are from actual repo state each time; do not assume this
-is the first run.
+Runtime facts this flow is built on (ticket #18, verified in real Cloud and
+local sessions — not assumed):
+- Declaring the marketplace/plugin in `.claude/settings.json` does **not**
+  install the plugin. Installing is a separate, official step.
+- A Cloud session never trusts the workspace folder, so project-level
+  `extraKnownMarketplaces` / `enabledPlugins` are ignored there entirely.
+  In Cloud the plugin only exists if it is installed at **user scope in the
+  environment** (the same way `mattpocock-skills` is), and an install done
+  inside one Cloud session does not survive to the next container.
+- A newly installed plugin is only loaded by a **new** session.
+- The plugin's output style is addressed as `rice:老弟`.
 
-## Step 1 — Declare the plugin (if not already declared)
+## Step 0 — Is the plugin actually installed here?
 
-Check `.claude/settings.json` in this repo. If it already declares
-`extraKnownMarketplaces.rice-bootstrap` and `enabledPlugins["rice@rice-bootstrap"]`,
-skip to Step 2.
+Run `claude plugin list`. If `rice@rice-bootstrap` is listed, this skill is
+running from the plugin: go to Step 1.
 
-Otherwise:
+If it is not listed (you are reading this file from a checkout, or from an
+uninstalled state), **stop and hand off** — this is the one step the OWNER
+must do, once per environment, and it is the only interruption before Matt:
 
-1. Find the latest stable release tag of the `rice-bootstrap` marketplace
-   itself (`L26041040/rice-bootstrap` on GitHub) — e.g.
-   `git ls-remote --tags https://github.com/L26041040/rice-bootstrap.git`,
-   picking the highest SemVer tag (`vX.Y.Z`, ignore any pre-release suffix
-   unless none exists yet, in which case say so and stop rather than
-   guessing).
-2. Ask the OWNER whether this bootstrap should turn session archiving on
-   (only if their instruction didn't already say so explicitly). If their
-   instruction already said "with session archive" or equivalent, use that
-   without asking again.
-3. Build the desired settings with `scripts/settings_template.py`'s
-   `desired_settings(ref, archive_default)` (`ref` = the tag from step 1,
-   `archive_default` = the OWNER's choice or the shipped release default if
-   they didn't say) and write it to `.claude/settings.json`, merging with
-   whatever's already there (never clobber unrelated keys a project may
-   already have under `.claude/settings.json` that rice doesn't own).
-4. Commit and push this change.
-5. **Stop here and tell the OWNER plainly**: the plugin is now declared, but
-   this session cannot use its skills/hooks yet — Claude Code only loads a
-   newly-declared plugin on a fresh session. Ask them to start a new session
-   (or `/clear` — NOT VERIFIED whether that alone is sufficient; if unsure,
-   ask for a genuine restart) and re-run `/rice:bootstrap` there to continue.
+> rice isn't installed in this environment yet.
+> - **Cloud**: add `rice@rice-bootstrap` (marketplace `L26041040/rice-bootstrap`)
+>   to the environment the same way `mattpocock-skills@mattpocock` is
+>   already there — user-scope, environment-level. An install run inside
+>   a session does not persist to the next container.
+> - **Local**: `claude plugin marketplace add L26041040/rice-bootstrap`
+>   then `claude plugin install rice@rice-bootstrap`.
+> Then start a new session and run `/rice:bootstrap` again.
 
-   NOT VERIFIED (ticket #18, blocked — see the project's own tracker):
-   the exact Cloud install/restart mechanics haven't been runtime-tested
-   solo. Say what you actually did (declared the plugin, pushed) and what
-   you need (a fresh session) — do not claim more certainty about the
-   restart mechanics than this.
+Do not try to work around this with a per-session install: it would not be
+loaded until the next session anyway, and in Cloud it would be gone by then.
+
+## Step 1 — The two owner-defined settings
+
+Read `.claude/settings.json` (create `{}` if absent). Set, only if missing:
+
+- `extraKnownMarketplaces.rice-bootstrap.source.ref` — the highest SemVer
+  tag of `L26041040/rice-bootstrap` (`git ls-remote --tags
+  https://github.com/L26041040/rice-bootstrap.git`). If the repo has **no
+  tags yet**, say so plainly and use `main`; do not invent a version.
+- `env.RICE_SESSION_ARCHIVE` — `"1"` if the OWNER's instruction asked for
+  session archiving ("with session archive" or equivalent), otherwise the
+  release default (`settings_template.desired_settings` documents it). Ask
+  only if the instruction is genuinely silent and you can't tell.
+
+Never overwrite either if already present — they are owner-defined
+(ticket #15); ordinary reconcile never reasserts them, and neither does
+this step on a re-run.
 
 ## Step 2 — Reconcile rice-owned state
 
-Once the plugin is loaded (this skill is itself running from it), run:
+From Python (`sys.path.insert(0, "<plugin root>/scripts")`):
 
 ```
-python3 "<plugin root>/scripts/reconcile.py"  # see note below
+import reconcile; items = reconcile.apply(repo_root)
 ```
 
-There's no CLI entrypoint file yet — call `reconcile.apply(repo_root)` and
-`reconcile.check(repo_root)` from Python directly (`import sys; sys.path.insert(0, ".../scripts"); import reconcile`), or via a one-line `python3 -c`. This
-copies `.claude/rice.md` from the plugin's `resources/rice.md`, reconciles
-every rice-defined `.claude/settings.json` key, and reports per-item
-PASS/FAIL/conflict.
+This creates every rice-defined settings leaf (marketplace source/repo,
+`enabledPlugins`, `autoMemoryEnabled`, `outputStyle: rice:老弟`,
+`CLAUDE_CODE_SUBAGENT_MODEL`, `permissions.deny` / `permissions.ask`),
+copies `.claude/rice.md`, and ensures the `@.claude/rice.md` line exists in
+`CLAUDE.md` (creating the file with only that line if it didn't exist,
+appending only that line if it did — nothing else in the file is touched).
+Project-owned settings are left alone. Do not pass `is_rice_update=True`.
 
-Do not pass `is_rice_update=True` here — this is bootstrap, not an update
-transaction.
+## Step 3 — PROJECT_STATE.md
 
-## Step 3 — CLAUDE.md integration
+`project_state.create_if_missing(repo_root)` (`scripts/project_state.py`).
+Never `preserve_or_restore` here — that is `rice-update`'s call.
 
-`reconcile.apply()` in Step 2 already handles this (the
-`CLAUDE.md:import-line` item): creates `CLAUDE.md` with just the import line
-if it didn't exist, or appends only that line if the file existed without
-it. Never touch anything else in the file. Nothing further to do here beyond
-confirming that item's result.
+## Step 4 — Verify, then commit
 
-## Step 4 — PROJECT_STATE.md
+`items, summary = reconcile.check(repo_root)`. Every rice-owned item
+(`plugin:installed`, every `settings:*`, `rice.md`, `CLAUDE.md:import-line`)
+must be PASS. `matt:artifacts` is expected to be FAIL at this point and
+`rtk` is whatever the environment says — neither is rice's to fix and
+neither blocks this step. If anything rice-owned is FAIL or conflict, stop
+and report it plainly. Otherwise commit and push the rice-owned changes.
 
-Call `project_state.create_if_missing(repo_root)` (`scripts/project_state.py`).
-Never call `preserve_or_restore` here — that's `rice-update`'s call, not
-bootstrap's.
+## Step 5 — Hand off to Matt
 
-## Step 5 — Verify
-
-Run `reconcile.check(repo_root)`. Every rice-owned item (settings keys,
-`.claude/rice.md`, the `CLAUDE.md` import line) must report PASS. `matt:artifacts`
-and `rtk` are expected to still be FAIL/whatever they are — they are not
-rice's to fix and do not block this step. If anything rice-owned reports
-FAIL or conflict, stop and report it plainly — do not proceed to Step 6
-claiming things are fine.
-
-## Step 6 — Hand off to Matt
-
-Call `bootstrap_state.enter_waiting_for_matt(repo_root)` (`scripts/bootstrap_state.py`).
-
-Then tell the OWNER, plainly:
+`bootstrap_state.enter_waiting_for_matt(repo_root)` (`scripts/bootstrap_state.py`),
+then tell the OWNER:
 
 > Rice's own setup is done and verified. The one remaining step needs you
-> personally: please run `/mattpocock-skills:setup-matt-pocock-skills`
-> yourself. Claude cannot run it for you or simulate its questions — the
-> skill is intentionally OWNER-invoked only. Once you've completed it, let
-> me know (or just run bootstrap again) and I'll verify it and finish up.
+> personally: run `/mattpocock-skills:setup-matt-pocock-skills` yourself.
+> Claude cannot run it or simulate its questions — the skill is
+> intentionally OWNER-invoked only. When you've completed it, run
+> `/rice:bootstrap` again and I'll verify and finish up.
 
-**Do not report bootstrap as "complete" while this marker is present.** A
-false claim of completion is worse than an honest "waiting on you" — see
-`.claude/rice.md`'s "Trust verification" principle. What happens after the
-OWNER runs Matt setup is ticket #28's job (Matt-completion detection),
-currently blocked on a runtime probe (#27) that itself needs the OWNER to
-actually run Matt setup once — it cannot be resolved by Claude alone.
+**Do not report bootstrap as complete while `WAITING_FOR_MATT` is present.**
+A false "done" is worse than an honest "waiting on you" (`.claude/rice.md`,
+"Trust verification"). What happens after the OWNER runs Matt setup is
+ticket #28 (completion detection), which itself waits on #27 — a runtime
+probe that needs the OWNER to run Matt setup once for real.
 
 ## Re-running this skill
 
-If `bootstrap_state.is_waiting_for_matt(repo_root)` is already true, don't
-redo Steps 1–5 — just re-check whether Matt's artifacts are now present
-(`reconcile.check()`'s `matt:artifacts` item) and report status honestly:
-still waiting, or ready to hand off to #28's verification once it exists.
+If `bootstrap_state.is_waiting_for_matt(repo_root)` is true, don't redo
+Steps 1–4 — re-run `reconcile.check()` and report honestly: still waiting
+on Matt (`matt:artifacts` FAIL), or Matt's artifacts are now present and
+#28's verification is what's next.

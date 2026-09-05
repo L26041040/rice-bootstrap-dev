@@ -192,6 +192,48 @@ def _default_rtk_probe(cmd):
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
+_default_plugin_probe = _default_rtk_probe
+
+
+def _plugin_item(plugin_probe) -> ItemResult:
+    """Presence-only: is the rice plugin actually installed on this machine,
+    per the official CLI (`claude plugin list --json`, a top-level array of
+    {id, version, scope, enabled, ...}). #18 runtime fact: a project
+    settings.json declaring the marketplace/plugin does NOT install it, and
+    a Cloud session never trusts the folder, so the declaration is ignored
+    there entirely -- only an actual install (user scope in the Cloud
+    environment, or `claude plugin install` locally) counts. apply() never
+    installs; installing is the OWNER's step."""
+    try:
+        r = plugin_probe(["claude", "plugin", "list", "--json"])
+    except FileNotFoundError:
+        return ItemResult("plugin:installed", "NOT_VERIFIED", "claude CLI not found on PATH")
+    except OSError as exc:
+        return ItemResult("plugin:installed", "NOT_VERIFIED", f"could not run claude plugin list: {exc}")
+    if r.returncode != 0:
+        return ItemResult("plugin:installed", "NOT_VERIFIED", f"claude plugin list exited {r.returncode}")
+    try:
+        entries = json.loads(r.stdout or "[]")
+    except json.JSONDecodeError:
+        return ItemResult("plugin:installed", "NOT_VERIFIED", "claude plugin list --json was not valid JSON")
+    if not isinstance(entries, list):
+        return ItemResult("plugin:installed", "NOT_VERIFIED", "unexpected claude plugin list --json shape")
+    for e in entries:
+        if isinstance(e, dict) and e.get("id") == settings_template.PLUGIN_KEY:
+            return ItemResult(
+                "plugin:installed", "PASS",
+                f"{settings_template.PLUGIN_KEY} {e.get('version', '?')} (scope {e.get('scope', '?')}, "
+                f"enabled={e.get('enabled')})",
+            )
+    return ItemResult(
+        "plugin:installed", "FAIL",
+        f"{settings_template.PLUGIN_KEY} is not installed on this machine; install it "
+        "(Cloud: add it to the environment like other user-scope plugins; local: "
+        "`claude plugin marketplace add L26041040/rice-bootstrap && claude plugin install "
+        f"{settings_template.PLUGIN_KEY}`), then start a new session",
+    )
+
+
 def _rtk_item(rtk_probe) -> ItemResult:
     try:
         r = rtk_probe(["rtk", "--version"])
@@ -204,11 +246,15 @@ def _rtk_item(rtk_probe) -> ItemResult:
     return ItemResult("rtk", "PASS", r.stdout.strip())
 
 
-def check(repo_root, *, rtk_probe=_default_rtk_probe) -> tuple[list[ItemResult], str]:
+def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> tuple[list[ItemResult], str]:
+    rtk_probe = rtk_probe or _default_rtk_probe
+    plugin_probe = plugin_probe or _default_plugin_probe
     repo_root = Path(repo_root)
     current = _current_settings(repo_root)
     ref = _current_ref(current)
-    items, _ = _settings_items(current, ref, write=False, is_rice_update=False)
+    items = [_plugin_item(plugin_probe)]
+    settings_items, _ = _settings_items(current, ref, write=False, is_rice_update=False)
+    items.extend(settings_items)
     items.append(_rice_md_item(repo_root, write=False, is_rice_update=False))
     items.append(_claude_md_item(repo_root, write=False))
     items.append(_matt_item(repo_root))
@@ -221,15 +267,21 @@ def check(repo_root, *, rtk_probe=_default_rtk_probe) -> tuple[list[ItemResult],
     return items, summary
 
 
-def apply(repo_root, *, is_rice_update: bool = False, rtk_probe=_default_rtk_probe) -> list[ItemResult]:
+def apply(repo_root, *, is_rice_update: bool = False, rtk_probe=None,
+          plugin_probe=None) -> list[ItemResult]:
+    rtk_probe = rtk_probe or _default_rtk_probe
+    plugin_probe = plugin_probe or _default_plugin_probe
     repo_root = Path(repo_root)
     settings_path = repo_root / ".claude" / "settings.json"
     current = _current_settings(repo_root)
     ref = _current_ref(current)
-    items, mutated = _settings_items(current, ref, write=True, is_rice_update=is_rice_update)
-    if any(i.state in ("created", "updated") for i in items):
+    items = [_plugin_item(plugin_probe)]  # informational; apply never installs
+    settings_items, mutated = _settings_items(current, ref, write=True, is_rice_update=is_rice_update)
+    items.extend(settings_items)
+    if any(i.state in ("created", "updated") for i in settings_items):
         settings_path.parent.mkdir(parents=True, exist_ok=True)
-        settings_path.write_text(json.dumps(mutated, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        settings_path.write_text(json.dumps(mutated, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+                                 encoding="utf-8")
 
     items.append(_rice_md_item(repo_root, write=True, is_rice_update=is_rice_update))
     items.append(_claude_md_item(repo_root, write=True))

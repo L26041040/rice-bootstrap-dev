@@ -59,12 +59,20 @@ def _erroring_rtk_probe(cmd):
     raise PermissionError("cannot execute")
 
 
+def _installed_plugin_probe(cmd):
+    return _Result(0, '[{"id":"rice@rice-bootstrap","version":"0.1.1","scope":"user","enabled":true}]')
+
+
 class ReconcileTestBase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.repo_root = Path(self._tmp.name)
+        # keep tests hermetic: never shell out to the real `claude` CLI
+        self._real_plugin_probe = reconcile._default_plugin_probe
+        reconcile._default_plugin_probe = _installed_plugin_probe
 
     def tearDown(self):
+        reconcile._default_plugin_probe = self._real_plugin_probe
         self._tmp.cleanup()
 
 
@@ -351,3 +359,46 @@ class TestProjectOwnedSettingsPreserved(ReconcileTestBase):
         self.assertIn("other-marketplace", after["extraKnownMarketplaces"])
         self.assertEqual(after["env"]["MY_OWN_VAR"], "keep-me")
         self.assertEqual(after["someOtherKey"], {"nested": True})
+
+
+class TestPluginInstalledPresence(ReconcileTestBase):
+    """#18 runtime fact: declaring the marketplace/plugin in project settings
+    does not install it (and Cloud never trusts the folder, so it is ignored
+    there entirely). `check` therefore reports, presence-only, whether the
+    rice plugin is actually installed on this machine, via the official CLI."""
+
+    def test_installed_is_pass_with_version_in_detail(self):
+        _make_correct_repo(self.repo_root)
+        probe = lambda cmd: _Result(0, '[{"id":"rice@rice-bootstrap","version":"0.1.1","scope":"user","enabled":true}]')
+        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
+        st = {i.name: i for i in items}
+        self.assertEqual(st["plugin:installed"].state, "PASS")
+        self.assertIn("0.1.1", st["plugin:installed"].detail)
+
+    def test_not_installed_is_fail(self):
+        _make_correct_repo(self.repo_root)
+        probe = lambda cmd: _Result(0, '[{"id":"other@mp","version":"1.0.0"}]')
+        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
+        self.assertEqual(_states(items)["plugin:installed"], "FAIL")
+
+    def test_cli_unavailable_is_not_verified(self):
+        _make_correct_repo(self.repo_root)
+        def probe(cmd):
+            raise FileNotFoundError("claude")
+        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
+        self.assertEqual(_states(items)["plugin:installed"], "NOT_VERIFIED")
+
+    def test_apply_never_installs(self):
+        _make_correct_repo(self.repo_root)
+        calls = []
+        def probe(cmd):
+            calls.append(cmd)
+            return _Result(0, '[]')
+        reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
+        self.assertTrue(all(c[:3] == ["claude", "plugin", "list"] for c in calls), calls)
+
+
+class _Result:
+    def __init__(self, returncode, stdout):
+        self.returncode = returncode
+        self.stdout = stdout
