@@ -205,6 +205,10 @@ class TestArchiveHookMain(unittest.TestCase):
         self.assertFalse(index_path.exists())
         log = _git(self.repo_root, "log", "--oneline").stdout
         self.assertEqual(len(log.strip().splitlines()), 1)  # only the init commit
+        # RICE-BOOTSTRAP-019: nothing may remain staged either -- the repo
+        # must be exactly as it was before the run, index included.
+        self.assertEqual(_git(self.repo_root, "status", "--porcelain").stdout, "")
+        self.assertFalse((self.repo_root / "session-history").exists())
 
     def test_push_failure_keeps_local_commit_and_does_not_block(self):
         _git(self.repo_root, "remote", "set-url", "origin", "/nonexistent/does-not-exist.git")

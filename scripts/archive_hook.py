@@ -512,6 +512,7 @@ def main() -> int:
     date_str = _local(end_ts, tz, "%Y-%m-%d")
     row = render_index_row(date_str, title, excerpt, len(turns), filename)
 
+    archive_dir_existed = archive_dir.exists()
     archive_dir.mkdir(exist_ok=True)
 
     dest_existed = dest.exists()
@@ -528,7 +529,12 @@ def main() -> int:
     index_prior = index_path.read_text(encoding="utf-8") if index_existed else None
     appended = append_index_row(index_path, row, filename)
 
-    def _rollback():
+    def _rollback(staged: list[str]):
+        """Put the repo back exactly as found: unstage anything this run
+        staged, restore/remove the files it wrote, drop the directory it
+        created. No retry, no queue -- just a clean pre-run state."""
+        if staged:
+            run(["git", "-C", str(repo_root), "reset", "-q", "--", *staged])
         if wrote_dest:
             dest.unlink(missing_ok=True)
         if appended:
@@ -536,6 +542,8 @@ def main() -> int:
                 index_path.write_text(index_prior, encoding="utf-8")
             else:
                 index_path.unlink(missing_ok=True)
+        if not archive_dir_existed and archive_dir.exists() and not any(archive_dir.iterdir()):
+            archive_dir.rmdir()
 
     dest_committed = _is_committed(repo_root, rel_dest)
     index_committed = _is_committed(repo_root, rel_index)
@@ -545,12 +553,12 @@ def main() -> int:
     if to_add:
         if run(["git", "-C", str(repo_root), "add", "--", *to_add]).returncode != 0:
             print("FAIL: git add failed", file=sys.stderr)
-            _rollback()
+            _rollback(staged=to_add)  # a partial add may have staged some
             return 1
         r = run(["git", "-C", str(repo_root), "commit", "-m", f"session history: {base}", "--", *to_add])
         if r.returncode != 0:
             print(f"FAIL: git commit failed:\n{r.stdout}{r.stderr}", file=sys.stderr)
-            _rollback()
+            _rollback(staged=to_add)
             return 1
         print(f"committed: {', '.join(to_add)}", file=sys.stderr)
     else:

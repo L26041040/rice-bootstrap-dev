@@ -1,16 +1,5 @@
 {
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/git_safety_hook.py\""
-          }
-        ]
-      }
-    ],
     "SessionEnd": [
       {
         "matcher": "clear",

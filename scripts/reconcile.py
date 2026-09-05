@@ -35,30 +35,12 @@ import settings_template
 IMPORT_LINE = "@.claude/rice.md"
 RICE_MD_RESOURCE = Path(__file__).resolve().parent.parent / "resources" / "rice.md"
 
-_MARKETPLACE_PREFIX = f"extraKnownMarketplaces.{settings_template.MARKETPLACE_NAME}"
-REF_PATH = f"{_MARKETPLACE_PREFIX}.ref"
-
-# Leaf dotted-paths actually compared. NOTE: settings_template.py's own
-# RICE_DEFINED_KEYS/OWNER_DEFINED_KEYS sets are the ownership *catalogue*
-# (ticket #15); they use "extraKnownMarketplaces.ref" as documentation
-# shorthand. The real JSON nests ref one level deeper, under the
-# marketplace's own name -- so the actual dotted-paths used for
-# comparison are reconstructed here against the real shape, not taken
-# from those two sets verbatim.
-_RICE_LEAF_KEYS = [
-    f"{_MARKETPLACE_PREFIX}.source",
-    f"{_MARKETPLACE_PREFIX}.repo",
-    "enabledPlugins",
-    "autoMemoryEnabled",
-    "outputStyle",
-    "env.CLAUDE_CODE_SUBAGENT_MODEL",
-    "permissions",
-]
-
-_OWNER_LEAF_KEYS = [
-    REF_PATH,
-    "env.RICE_SESSION_ARCHIVE",
-]
+REF_PATH = settings_template.REF_PATH
+# settings_template's classification sets hold real dotted paths into the
+# official settings shape, usable verbatim for lookup. Sorted so report
+# order is stable.
+_RICE_LEAF_KEYS = sorted(settings_template.RICE_DEFINED_KEYS)
+_OWNER_LEAF_KEYS = sorted(settings_template.OWNER_DEFINED_KEYS)
 
 _MISSING = object()
 

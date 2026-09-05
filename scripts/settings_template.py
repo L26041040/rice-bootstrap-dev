@@ -5,62 +5,88 @@ This module defines DATA (what the settings should look like for the
 current release), not the reconcile logic that writes/compares it -- that
 lives in reconcile.py (ticket #23).
 
-Every top-level settings.json key rice manages must be classified as
-either rice-defined (kept in sync on every reconcile pass) or
-owner-defined (written once at bootstrap, never reasserted -- see #13's
-Ownership model). Sub-keys are addressed with dotted paths.
+Every rice-owned leaf in settings.json is addressed by a dotted path and
+classified as either rice-defined (kept in sync on every reconcile pass)
+or owner-defined (written once at bootstrap, never reasserted -- see #13's
+Ownership model). Paths are the REAL nesting of the official settings
+schema (docs: plugin-marketplaces -> extraKnownMarketplaces), so they can
+be used verbatim for lookup. Anything not listed here is project-owned and
+never touched -- e.g. `permissions.allow`, other marketplaces, other
+plugins, other env vars.
+
+Git safety is permission-only (RICE-BOOTSTRAP-019 superseded the narrow
+PreToolUse hook of #17): the whole `git branch` command class is denied,
+so Claude never creates a branch through it and also can't use it to list
+branches. Use `git status` or `git rev-parse --abbrev-ref HEAD` to see the
+current branch instead.
 """
 
 MARKETPLACE_NAME = "rice-bootstrap"
 MARKETPLACE_REPO = "L26041040/rice-bootstrap"
-PLUGIN_KEY = "rice@rice-bootstrap"
+PLUGIN_NAME = "rice"
+PLUGIN_KEY = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
+
+_MP = f"extraKnownMarketplaces.{MARKETPLACE_NAME}.source"
+REF_PATH = f"{_MP}.ref"
 
 RICE_DEFINED_KEYS = {
-    "extraKnownMarketplaces",
-    "enabledPlugins",
+    f"{_MP}.source",
+    f"{_MP}.repo",
+    f"enabledPlugins.{PLUGIN_KEY}",
     "autoMemoryEnabled",
     "outputStyle",
-    "env",  # container; see env.CLAUDE_CODE_SUBAGENT_MODEL sub-key below
     "env.CLAUDE_CODE_SUBAGENT_MODEL",
-    "permissions",
+    # rice owns these two lists wholesale; `permissions.allow` and any other
+    # permissions key stay project-owned.
+    "permissions.deny",
+    "permissions.ask",
 }
 
 OWNER_DEFINED_KEYS = {
-    "extraKnownMarketplaces.ref",
+    REF_PATH,
     "env.RICE_SESSION_ARCHIVE",
 }
 
-# Destructive / history-rewriting git operations -- categorical, no
-# argument-semantic ambiguity, safe to deny outright.
+# Destructive / history-rewriting git operations. Bash rules match the whole
+# command text; `*` stands in for any text; deny applies if ANY subcommand
+# of a compound command matches (docs: permissions -> Bash rules).
 _DESTRUCTIVE_DENY = [
-    "Bash(git push * --force*)",
+    # force push: --force / --force-with-lease, before or after other args
     "Bash(git push --force*)",
-    "Bash(git push * -f *)",
+    "Bash(git push * --force*)",
+    # -f, before or after other args, at the end or not
     "Bash(git push -f*)",
+    "Bash(git push * -f)",
+    "Bash(git push * -f *)",
+    # +refspec form (git push origin +main, git push origin +HEAD:main)
+    "Bash(git push +*)",
+    "Bash(git push * +*)",
+    # remote branch deletion
+    "Bash(git push --delete *)",
+    "Bash(git push * --delete *)",
+    "Bash(git push -d *)",
+    "Bash(git push * -d *)",
     "Bash(git reset --hard*)",
     "Bash(git rebase*)",
     "Bash(git commit --amend*)",
-    "Bash(git branch -D*)",
-    "Bash(git branch --delete --force*)",
     "Bash(git filter-branch*)",
     "Bash(git filter-repo*)",
     "Bash(git reflog expire*)",
     "Bash(git clean -f*)",
 ]
 
-# Branch creation that carries a distinguishing flag -- the flag alone is
-# the categorical signal, so this is also safe as a plain permission rule.
-# (Bare "git branch <name>" is NOT here -- that's the one case the narrow
-# PreToolUse hook in ticket #17 handles, because it's a positional
-# argument, not a flag, that decides creation vs. listing.)
+# Branch creation. `Bash(git branch *)` also matches the bare `git branch`
+# (trailing ` *` rule), so the entire subcommand is off-limits, listing
+# included -- accepted trade-off for a parser-free hard rule.
 _BRANCH_CREATION_DENY = [
+    "Bash(git branch *)",
     "Bash(git checkout -b *)",
     "Bash(git checkout -B *)",
+    "Bash(git checkout --orphan *)",
     "Bash(git switch -c *)",
     "Bash(git switch -C *)",
     "Bash(git switch --create *)",
-    "Bash(git checkout --orphan *)",
-    "Bash(git worktree add -b *)",
+    "Bash(git worktree add *)",
     "Bash(git stash branch *)",
 ]
 
@@ -84,9 +110,11 @@ def desired_settings(ref: str, archive_default: bool) -> dict:
     return {
         "extraKnownMarketplaces": {
             MARKETPLACE_NAME: {
-                "source": "github",
-                "repo": MARKETPLACE_REPO,
-                "ref": ref,
+                "source": {
+                    "source": "github",
+                    "repo": MARKETPLACE_REPO,
+                    "ref": ref,
+                }
             }
         },
         "enabledPlugins": {

@@ -28,7 +28,7 @@ and hooks never call this; only an explicit OWNER-typed command reaches it.
    state is structurally impossible without needing any rollback machinery.
 
 3. **Change the pinned `ref`.** Read `.claude/settings.json`, set
-   `extraKnownMarketplaces.rice-bootstrap.ref` to the confirmed target
+   `extraKnownMarketplaces.rice-bootstrap.source.ref` to the confirmed target
    version, write the file. This is the only place in the whole rice-bootstrap
    codebase allowed to write that field — `reconcile.py`'s `apply`/`check`
    never do, by design (see ticket #23).

@@ -14,7 +14,7 @@ import reconcile  # noqa: E402
 import settings_template  # noqa: E402
 
 REF = "v1.0.0"
-REF_PATH = f"extraKnownMarketplaces.{settings_template.MARKETPLACE_NAME}.ref"
+REF_PATH = settings_template.REF_PATH
 
 
 def _states(items):
@@ -144,12 +144,12 @@ class TestOwnerDefinedKeys(ReconcileTestBase):
         reconcile.apply(self.repo_root, is_rice_update=True, rtk_probe=_ok_rtk_probe)
         current = _read_settings(self.repo_root)
         self.assertEqual(
-            current["extraKnownMarketplaces"][settings_template.MARKETPLACE_NAME]["ref"], REF
+            current["extraKnownMarketplaces"][settings_template.MARKETPLACE_NAME]["source"]["ref"], REF
         )
 
     def test_ref_missing_entirely_reports_fail_and_apply_writes_nothing(self):
         settings = _fully_correct_settings()
-        del settings["extraKnownMarketplaces"][settings_template.MARKETPLACE_NAME]["ref"]
+        del settings["extraKnownMarketplaces"][settings_template.MARKETPLACE_NAME]["source"]["ref"]
         _write_settings(self.repo_root, settings)
         before = (self.repo_root / ".claude" / "settings.json").read_text()
 
@@ -327,3 +327,27 @@ class TestIdempotentApplyAndSummary(ReconcileTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProjectOwnedSettingsPreserved(ReconcileTestBase):
+    def test_project_owned_keys_survive_apply_in_every_mode(self):
+        settings = _fully_correct_settings()
+        settings["permissions"]["allow"] = ["Bash(npm test *)"]
+        settings["enabledPlugins"]["other-plugin@other-marketplace"] = True
+        settings["extraKnownMarketplaces"]["other-marketplace"] = {
+            "source": {"source": "github", "repo": "someone/else"}
+        }
+        settings["env"]["MY_OWN_VAR"] = "keep-me"
+        settings["someOtherKey"] = {"nested": True}
+        # force a rice-defined drift so apply actually writes the file
+        settings["outputStyle"] = "drifted"
+        _write_settings(self.repo_root, settings)
+
+        reconcile.apply(self.repo_root, is_rice_update=True, rtk_probe=_ok_rtk_probe)
+        after = _read_settings(self.repo_root)
+        self.assertEqual(after["outputStyle"], "老弟")  # rice-defined: fixed
+        self.assertEqual(after["permissions"]["allow"], ["Bash(npm test *)"])
+        self.assertTrue(after["enabledPlugins"]["other-plugin@other-marketplace"])
+        self.assertIn("other-marketplace", after["extraKnownMarketplaces"])
+        self.assertEqual(after["env"]["MY_OWN_VAR"], "keep-me")
+        self.assertEqual(after["someOtherKey"], {"nested": True})
