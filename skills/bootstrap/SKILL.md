@@ -1,6 +1,6 @@
 ---
 name: bootstrap
-description: "One-instruction bootstrap for a new repo: installs rice's own configuration (git safety, session archiving, model delegation, output style, PROJECT_STATE.md), then hands off to the OWNER for official Matt Pocock setup. Safe to re-run on an already-bootstrapped repo."
+description: "(rice plugin v0.1.1) One-instruction bootstrap for a new repo: installs rice's own configuration (git safety, session archiving, model delegation, output style, PROJECT_STATE.md), then hands off to the OWNER for official Matt Pocock setup. Safe to re-run on an already-bootstrapped repo."
 ---
 
 # rice bootstrap
