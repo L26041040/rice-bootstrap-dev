@@ -1,0 +1,21 @@
+{
+  "name": "rice-bootstrap",
+  "owner": {
+    "name": "L26041040"
+  },
+  "description": "rice-bootstrap: cross-project Claude Code bootstrap source of truth, as an installable plugin.",
+  "plugins": [
+    {
+      "name": "rice",
+      "source": "./",
+      "description": "One-instruction bootstrap and update for common Claude Code project configuration: git safety, session archiving, model delegation, output style, and Matt Pocock setup handoff.",
+      "category": "engineering",
+      "keywords": [
+        "bootstrap",
+        "reconcile",
+        "git-safety",
+        "session-archive"
+      ]
+    }
+  ]
+}

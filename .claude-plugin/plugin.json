@@ -1,0 +1,17 @@
+{
+  "name": "rice",
+  "version": "0.1.0",
+  "description": "One-instruction bootstrap and update for common Claude Code project configuration.",
+  "repository": "https://github.com/L26041040/rice-bootstrap",
+  "license": "MIT",
+  "keywords": [
+    "bootstrap",
+    "reconcile",
+    "git-safety",
+    "session-archive"
+  ],
+  "skills": [
+    "./skills/bootstrap",
+    "./skills/rice-update"
+  ]
+}
