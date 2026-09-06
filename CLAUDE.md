@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues live in this repo's GitHub Issues (`L26041040/rice-bootstrap`), using the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live in this repo's GitHub Issues (`L26041040/rice-bootstrap-dev`), using the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
