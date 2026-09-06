@@ -3,10 +3,12 @@
 Run: python3 -m unittest tests.test_reconcile -v
 """
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -70,8 +72,11 @@ class ReconcileTestBase(unittest.TestCase):
         # keep tests hermetic: never shell out to the real `claude` CLI
         self._real_plugin_probe = reconcile._default_plugin_probe
         reconcile._default_plugin_probe = _installed_plugin_probe
+        self._env = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.repo_root / "cfg")})
+        self._env.start()
 
     def tearDown(self):
+        self._env.stop()
         reconcile._default_plugin_probe = self._real_plugin_probe
         self._tmp.cleanup()
 
@@ -82,7 +87,7 @@ class TestSettingsKeyStates(ReconcileTestBase):
         del settings["outputStyle"]
         _write_settings(self.repo_root, settings)
 
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["settings:outputStyle"], "FAIL")
 
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
@@ -91,7 +96,7 @@ class TestSettingsKeyStates(ReconcileTestBase):
 
     def test_rice_defined_key_match_is_noop(self):
         _write_settings(self.repo_root, _fully_correct_settings())
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["settings:outputStyle"], "PASS")
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(apply_items)["settings:outputStyle"], "noop")
@@ -101,7 +106,7 @@ class TestSettingsKeyStates(ReconcileTestBase):
         settings["outputStyle"] = "some-other-style"
         _write_settings(self.repo_root, settings)
 
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["settings:outputStyle"], "FAIL")
 
         apply_items = reconcile.apply(self.repo_root, is_rice_update=False, rtk_probe=_ok_rtk_probe)
@@ -122,7 +127,7 @@ class TestOwnerDefinedKeys(ReconcileTestBase):
     def test_owner_defined_key_present_is_pass_and_never_written(self):
         settings = _fully_correct_settings()
         _write_settings(self.repo_root, settings)
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["settings:env.RICE_SESSION_ARCHIVE"], "PASS")
 
         before = _read_settings(self.repo_root)["env"]["RICE_SESSION_ARCHIVE"]
@@ -135,7 +140,7 @@ class TestOwnerDefinedKeys(ReconcileTestBase):
         del settings["env"]["RICE_SESSION_ARCHIVE"]
         _write_settings(self.repo_root, settings)
 
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["settings:env.RICE_SESSION_ARCHIVE"], "FAIL")
 
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
@@ -161,7 +166,7 @@ class TestOwnerDefinedKeys(ReconcileTestBase):
         _write_settings(self.repo_root, settings)
         before = (self.repo_root / ".claude" / "settings.json").read_text()
 
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)[f"settings:{REF_PATH}"], "FAIL")
 
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
@@ -173,7 +178,7 @@ class TestOwnerDefinedKeys(ReconcileTestBase):
 class TestRiceMdWholeFile(ReconcileTestBase):
     def test_missing_is_created_on_apply_and_fails_check(self):
         _write_settings(self.repo_root, _fully_correct_settings())
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["rice.md"], "FAIL")
 
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
@@ -183,7 +188,7 @@ class TestRiceMdWholeFile(ReconcileTestBase):
 
     def test_matching_content_is_noop(self):
         _make_correct_repo(self.repo_root)
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["rice.md"], "PASS")
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(apply_items)["rice.md"], "noop")
@@ -193,7 +198,7 @@ class TestRiceMdWholeFile(ReconcileTestBase):
         dest = self.repo_root / ".claude" / "rice.md"
         dest.write_text("# hand-edited\n", encoding="utf-8")
 
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["rice.md"], "FAIL")
 
         apply_items = reconcile.apply(self.repo_root, is_rice_update=False, rtk_probe=_ok_rtk_probe)
@@ -213,7 +218,7 @@ class TestRiceMdWholeFile(ReconcileTestBase):
 class TestClaudeMdImportLine(ReconcileTestBase):
     def test_file_missing_creates_minimal_file_with_only_import_line(self):
         _write_settings(self.repo_root, _fully_correct_settings())
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["CLAUDE.md:import-line"], "FAIL")
 
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
@@ -226,7 +231,7 @@ class TestClaudeMdImportLine(ReconcileTestBase):
         existing = "# My Project\n\nSome project-owned content.\n"
         (self.repo_root / "CLAUDE.md").write_text(existing, encoding="utf-8")
 
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["CLAUDE.md:import-line"], "FAIL")
 
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
@@ -239,7 +244,7 @@ class TestClaudeMdImportLine(ReconcileTestBase):
         _make_correct_repo(self.repo_root)
         original = (self.repo_root / "CLAUDE.md").read_text()
 
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["CLAUDE.md:import-line"], "PASS")
 
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
@@ -277,12 +282,12 @@ class TestMattAndRtkPresence(ReconcileTestBase):
         (self.repo_root / "docs" / "agents").mkdir(parents=True)
         (self.repo_root / "docs" / "agents" / "issue-tracker.md").write_text("x", encoding="utf-8")
 
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["matt:artifacts"], "PASS")
 
     def test_matt_artifacts_missing(self):
         _make_correct_repo(self.repo_root)
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["matt:artifacts"], "FAIL")
 
     def test_matt_artifacts_never_written_by_apply(self):
@@ -292,17 +297,17 @@ class TestMattAndRtkPresence(ReconcileTestBase):
 
     def test_rtk_present(self):
         _make_correct_repo(self.repo_root)
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["rtk"], "PASS")
 
     def test_rtk_missing(self):
         _make_correct_repo(self.repo_root)
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_missing_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_missing_rtk_probe)
         self.assertEqual(_states(check_items)["rtk"], "FAIL")
 
     def test_rtk_probe_error_is_not_verified(self):
         _make_correct_repo(self.repo_root)
-        check_items, _ = reconcile.check(self.repo_root, rtk_probe=_erroring_rtk_probe)
+        check_items = reconcile.check(self.repo_root, rtk_probe=_erroring_rtk_probe)
         self.assertEqual(_states(check_items)["rtk"], "NOT_VERIFIED")
 
 
@@ -324,13 +329,12 @@ class TestIdempotentApplyAndSummary(ReconcileTestBase):
         actionable = [i for i in rice_owned if i.state in ("created", "updated", "conflict", "FAIL")]
         self.assertEqual(actionable, [], actionable)
 
-    def test_check_summary_line_is_one_line_and_greppable(self):
+    def test_check_returns_items_with_known_states_and_no_verdict(self):
         _make_correct_repo(self.repo_root)
-        items, summary = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(len(summary.splitlines()), 1)
-        self.assertIn("RICE-CHECK", summary)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         for i in items:
             self.assertIn(i.state, ("PASS", "FAIL", "NOT_VERIFIED"))
+            self.assertNotIn("VERIFIED rice", i.detail)
 
 
 if __name__ == "__main__":
@@ -370,7 +374,7 @@ class TestPluginInstalledPresence(ReconcileTestBase):
     def test_installed_is_pass_with_version_in_detail(self):
         _make_correct_repo(self.repo_root)
         probe = lambda cmd: _Result(0, '[{"id":"rice@rice-bootstrap","version":"0.1.1","scope":"user","enabled":true}]')
-        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
         st = {i.name: i for i in items}
         self.assertEqual(st["plugin:installed"].state, "PASS")
         self.assertIn("0.1.1", st["plugin:installed"].detail)
@@ -378,14 +382,14 @@ class TestPluginInstalledPresence(ReconcileTestBase):
     def test_not_installed_is_fail(self):
         _make_correct_repo(self.repo_root)
         probe = lambda cmd: _Result(0, '[{"id":"other@mp","version":"1.0.0"}]')
-        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
         self.assertEqual(_states(items)["plugin:installed"], "FAIL")
 
     def test_cli_unavailable_is_not_verified(self):
         _make_correct_repo(self.repo_root)
         def probe(cmd):
             raise FileNotFoundError("claude")
-        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
         self.assertEqual(_states(items)["plugin:installed"], "NOT_VERIFIED")
 
     def test_apply_never_installs(self):
@@ -404,14 +408,13 @@ class _Result:
         self.stdout = stdout
 
 
-class TestRubricKindsAndVerdict(ReconcileTestBase):
-    """RICE-BOOTSTRAP-020 §4: every item carries a kind; the verdict is
-    MECHANICAL-VERIFIED only when every EXISTS/MATCHES item is PASS; BEHAVES
-    items never fake a PASS."""
+class TestRubricKinds(ReconcileTestBase):
+    """Every item carries a kind and the v1 list is covered. Verdicts are
+    NOT reconcile's business (RICE-BOOTSTRAP-021) -- see tests/test_verify.py."""
 
     def test_every_item_has_a_kind_and_v1_coverage(self):
         _make_correct_repo(self.repo_root)
-        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         for i in items:
             self.assertIn(i.kind, (reconcile.EXISTS, reconcile.MATCHES, reconcile.BEHAVES), i)
         names = {i.name for i in items}
@@ -424,25 +427,9 @@ class TestRubricKindsAndVerdict(ReconcileTestBase):
         ]:
             self.assertIn(required, names)
 
-    def test_verdict_requires_all_exists_and_matches_pass(self):
-        _make_correct_repo(self.repo_root)
-        (self.repo_root / "PROJECT_STATE.md").write_text("# PROJECT_STATE\n")
-        items, summary = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
-        mech = [i for i in items if i.kind != reconcile.BEHAVES and not i.name.startswith(("matt:", "rtk"))]
-        self.assertTrue(all(i.state == "PASS" for i in mech), [i for i in mech if i.state != "PASS"])
-        # matt is FAIL in this fixture -> not mechanically verified yet
-        self.assertIn("NOT VERIFIED", summary)
-        claude_md = self.repo_root / "CLAUDE.md"
-        claude_md.write_text(claude_md.read_text() + "\n## Agent skills\n")
-        (self.repo_root / "docs" / "agents").mkdir(parents=True)
-        (self.repo_root / "docs" / "agents" / "issue-tracker.md").write_text("x")
-        items, summary = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertIn("MECHANICAL-VERIFIED rice", summary)
-        self.assertEqual(len(summary.splitlines()), 1)
-
     def test_behaves_items_are_not_verified_without_evidence(self):
         _make_correct_repo(self.repo_root)
-        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         st = {i.name: i for i in items}
         self.assertEqual(st["archive:behaves"].state, "NOT_VERIFIED")
         self.assertEqual(st["git-deny:behaves"].state, "NOT_VERIFIED")
@@ -453,23 +440,22 @@ class TestRubricKindsAndVerdict(ReconcileTestBase):
         _make_correct_repo(self.repo_root)
         sh = self.repo_root / "session-history"; sh.mkdir()
         (sh / "INDEX.md").write_text("# Session Archive Index\n\n| Date | Title | Excerpt | Turns | File |\n|---|---|---|---|---|\n| 2026-09-05 | t | e | 4 | 2026-09-05_x.md |\n")
-        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual({i.name: i.state for i in items}["archive:behaves"], "NOT_VERIFIED")  # row but no file
         (sh / "2026-09-05_x.md").write_text("# archive\n")
-        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual({i.name: i.state for i in items}["archive:behaves"], "PASS")
 
     def test_archive_behaves_pass_when_switched_off(self):
         settings = _fully_correct_settings(); settings["env"]["RICE_SESSION_ARCHIVE"] = "0"
         _write_settings(self.repo_root, settings)
-        items, _ = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual({i.name: i.state for i in items}["archive:behaves"], "PASS")
 
     def test_plugin_build_mismatch_is_fail(self):
         _make_correct_repo(self.repo_root)
         probe = lambda cmd: _Result(0, '[{"id":"rice@rice-bootstrap","version":"0.0.1","scope":"user","enabled":true}]')
-        items, summary = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
         st = {i.name: i.state for i in items}
         self.assertEqual(st["plugin:installed"], "PASS")
         self.assertEqual(st["plugin:build"], "FAIL")
-        self.assertIn("NOT VERIFIED", summary)

@@ -336,18 +336,104 @@ def _archive_behaves_item(repo_root: Path, current_settings: dict) -> ItemResult
     return ItemResult("archive:behaves", "NOT_VERIFIED", "not yet exercised in this repo: do a real /clear with RICE_SESSION_ARCHIVE=1 and re-run check (see #29)", kind=BEHAVES)
 
 
-def _in_session_behaves_items() -> list[ItemResult]:
-    """Permission enforcement can only be observed from inside a Claude
-    session (the harness decides, not a script). The rubric names the
-    exact probe so the skill can exercise it and record the outcome."""
-    return [
-        ItemResult("git-deny:behaves", "NOT_VERIFIED",
-                   "exercise in-session: run `git branch --show-current` through Bash -- expected outcome: "
-                   "denied by the permission rule (side-effect-free either way)", kind=BEHAVES),
-        ItemResult("premium-ask:behaves", "NOT_VERIFIED",
-                   "exercise in-session: request a subagent with model `opus` -- expected outcome: a native "
-                   "OWNER approval prompt (decline it)", kind=BEHAVES),
-    ]
+import os
+from datetime import datetime, timezone
+
+
+def transcript_dir(repo_root: Path) -> Path:
+    """Claude Code keeps one JSONL transcript per session under
+    <config dir>/projects/<cwd with / replaced by ->/. The harness writes
+    every tool_result there itself -- a permission denial in it is the
+    harness's own record, not the model's claim."""
+    cfg = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
+    return cfg / "projects" / str(Path(repo_root).resolve()).replace("/", "-")
+
+
+def _settings_mtime(repo_root: Path) -> float:
+    p = repo_root / ".claude" / "settings.json"
+    return p.stat().st_mtime if p.exists() else 0.0
+
+
+def _iter_tool_outcomes(tdir: Path):
+    """(timestamp, tool_name, tool_input, result_text) for every tool_use
+    that has a tool_result, across this repo's session transcripts."""
+    if not tdir.is_dir():
+        return
+    for f in sorted(tdir.glob("*.jsonl"), key=lambda x: x.stat().st_mtime, reverse=True):
+        uses, results = {}, []
+        try:
+            with f.open(encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        r = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    c = (r.get("message") or {}).get("content")
+                    if not isinstance(c, list):
+                        continue
+                    for b in c:
+                        if not isinstance(b, dict):
+                            continue
+                        if b.get("type") == "tool_use":
+                            uses[b.get("id")] = (b.get("name"), b.get("input") or {})
+                        elif b.get("type") == "tool_result":
+                            txt = b.get("content")
+                            if not isinstance(txt, str):
+                                txt = " ".join(x.get("text", "") for x in (txt or []) if isinstance(x, dict))
+                            results.append((r.get("timestamp") or "", b.get("tool_use_id"), txt))
+        except OSError:
+            continue
+        for ts, uid, txt in results:
+            if uid in uses:
+                name, inp = uses[uid]
+                yield ts, name, inp, txt
+
+
+def _ts_to_epoch(ts: str) -> float:
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+GIT_DENY_PROBE = "git branch --show-current"
+
+
+def _git_deny_evidence_item(repo_root: Path) -> ItemResult:
+    """BEHAVES, Gate A. Evidence = the harness recorded a denial for the
+    exact probe command in a session of this repo, no older than the
+    current settings.json. The probe is side-effect-free either way; the
+    agent's only role is to attempt it -- it cannot write the record."""
+    since = _settings_mtime(repo_root)
+    for ts, name, inp, txt in _iter_tool_outcomes(transcript_dir(repo_root)):
+        if name == "Bash" and (inp.get("command") or "").strip() == GIT_DENY_PROBE and "denied" in txt.lower():
+            if _ts_to_epoch(ts) >= since:
+                return ItemResult("git-deny:behaves", "PASS", f"harness denied `{GIT_DENY_PROBE}` at {ts}", kind=BEHAVES)
+    return ItemResult(
+        "git-deny:behaves", "NOT_VERIFIED",
+        f"no harness denial of `{GIT_DENY_PROBE}` recorded for this repo since settings.json changed -- "
+        "run that exact command through Bash in this repo (expected: denied), then re-run verify",
+        kind=BEHAVES,
+    )
+
+
+def _premium_ask_evidence_item(repo_root: Path) -> ItemResult:
+    """BEHAVES, Gate B (needs the OWNER at the prompt). Evidence = an Agent
+    tool_use with model `opus` whose harness-recorded result is a denial /
+    declined approval, no older than the current settings.json."""
+    since = _settings_mtime(repo_root)
+    for ts, name, inp, txt in _iter_tool_outcomes(transcript_dir(repo_root)):
+        if name == "Agent" and str(inp.get("model") or "").lower() == "opus":
+            low = txt.lower()
+            if ("denied" in low or "doesn't want to proceed" in low or "does not want to proceed" in low) \
+                    and _ts_to_epoch(ts) >= since:
+                return ItemResult("premium-ask:behaves", "PASS", f"harness recorded the declined opus request at {ts}", kind=BEHAVES)
+    return ItemResult(
+        "premium-ask:behaves", "NOT_VERIFIED",
+        "no declined `opus` subagent request recorded for this repo since settings.json changed -- with the OWNER "
+        "present, request a subagent with model `opus`, have the OWNER decline the prompt, then re-run verify --final",
+        kind=BEHAVES,
+    )
 
 
 def _rtk_item(rtk_probe) -> ItemResult:
@@ -362,12 +448,11 @@ def _rtk_item(rtk_probe) -> ItemResult:
     return ItemResult("rtk", "PASS", r.stdout.strip(), kind=EXISTS)
 
 
-def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> tuple[list[ItemResult], str]:
-    """The versioned mechanical verification rubric of this build. A
-    MECHANICAL-VERIFIED verdict requires every EXISTS and MATCHES item to
-    PASS; BEHAVES items report evidence or say how to exercise them
-    in-session -- the caller (bootstrap / rice-update / E2E) must actually
-    do that before claiming VERIFIED."""
+def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> list[ItemResult]:
+    """Collect every rubric item of this build. This function has NO
+    verdict authority: it returns items and nothing else. Gates, the
+    RICE-VERIFIED / FINAL-VERIFIED lines, and the version stamp live in
+    verify.py, which is the only place allowed to emit them."""
     rtk_probe = rtk_probe or _default_rtk_probe
     plugin_probe = plugin_probe or _default_plugin_probe
     repo_root = Path(repo_root)
@@ -382,23 +467,12 @@ def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> tuple[list[ItemRes
     items.append(_claude_md_item(repo_root, write=False))
     items.append(_project_state_item(repo_root))
     items.append(_archive_hook_item())
+    items.append(_git_deny_evidence_item(repo_root))
     items.append(_archive_behaves_item(repo_root, current))
-    items.extend(_in_session_behaves_items())
+    items.append(_premium_ask_evidence_item(repo_root))
     items.append(_matt_item(repo_root))
     items.append(_rtk_item(rtk_probe))
-    return items, summarize(items, ref)
-
-
-def summarize(items: list[ItemResult], ref) -> str:
-    def count(kinds, state):
-        return sum(1 for i in items if i.kind in kinds and i.state == state)
-    mech = (EXISTS, MATCHES)
-    mp, mf, mn = count(mech, "PASS"), count(mech, "FAIL"), count(mech, "NOT_VERIFIED")
-    bp, bn = count((BEHAVES,), "PASS"), count((BEHAVES,), "NOT_VERIFIED")
-    bf = count((BEHAVES,), "FAIL")
-    verdict = f"MECHANICAL-VERIFIED rice {build_version()}" if (mf == 0 and mn == 0) else "NOT VERIFIED"
-    return (f"RICE-CHECK: build={build_version()} ref={ref!r} | EXISTS+MATCHES: {mp} PASS {mf} FAIL {mn} NOT_VERIFIED "
-            f"| BEHAVES: {bp} PASS {bf} FAIL {bn} NOT_VERIFIED | {verdict}")
+    return items
 
 
 def apply(repo_root, *, is_rice_update: bool = False, rtk_probe=None,
