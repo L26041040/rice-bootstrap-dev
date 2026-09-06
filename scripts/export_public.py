@@ -36,16 +36,6 @@ ALLOWLIST = (
     "LICENSE",
     "CHANGELOG.md",
     ".gitignore",
-    "tests/test_archive_hook.py",
-    "tests/test_bootstrap_state.py",
-    "tests/test_reconcile.py",
-    "tests/test_settings_template.py",
-    "tests/test_uninstall.py",
-    "tests/test_verify.py",
-    "tests/test_output_styles.py",
-    "tests/fixtures/sample_transcript.jsonl",
-    "tests/fixtures/sample_transcript_2.jsonl",
-    "tests/fixtures/synthetic_secrets.json",
 )
 
 # Anything matching these must never appear in an export, whatever the
@@ -57,16 +47,16 @@ FORBIDDEN_PATTERNS = (
     r"^docs(/|$)",
     r"^scripts/release\.py$",
     r"^scripts/export_public\.py$",
-    r"^tests/test_release\.py$",
+    r"^tests(/|$)",
     r"^dist(/|$)",
     r"\.pyc$",
     r"(^|/)__pycache__(/|$)",
 )
 
 # Credential shapes (same families the archive hook redacts) and
-# owner-specific data. tests/fixtures/ is excluded from the credential
-# scan on purpose: it holds deliberately synthetic credential-shaped
-# strings for the redaction tests (synthetic_secrets.json, sample transcripts).
+# owner-specific data. No path is exempt: tests/ and its fixtures are not
+# part of the public export (see ALLOWLIST), so nothing shipped needs a
+# credential-scan exemption.
 SECRET_PATTERNS = (
     ("github-token", re.compile(r"gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255}")),
     ("openai-key", re.compile(r"sk-(?:proj-)?[A-Za-z0-9]{20,}")),
@@ -82,7 +72,6 @@ OWNER_DATA_PATTERNS = (
     # can never be owner data) are the only exemptions.
     ("email", re.compile(r"\b[A-Za-z0-9._%+-]+@(?!anthropic\.com\b|example\.(?:com|net|org)\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
 )
-SECRET_SCAN_EXCLUDED_PREFIX = "tests/fixtures/"
 
 
 def is_forbidden(rel: str) -> str | None:
@@ -132,10 +121,9 @@ def audit(dest: Path) -> list[str]:
             text = (dest / rel).read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        if not rel.startswith(SECRET_SCAN_EXCLUDED_PREFIX):
-            for name, pat in SECRET_PATTERNS:
-                if pat.search(text):
-                    problems.append(f"credential-shaped string ({name}): {rel}")
+        for name, pat in SECRET_PATTERNS:
+            if pat.search(text):
+                problems.append(f"credential-shaped string ({name}): {rel}")
         for name, pat in OWNER_DATA_PATTERNS:
             if pat.search(text):
                 problems.append(f"owner-specific data ({name}): {rel}")

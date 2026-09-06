@@ -69,6 +69,31 @@ def changelog_top_version(root: Path = ROOT) -> str | None:
     return m.group(1) if m else None
 
 
+def changelog_top_date(root: Path = ROOT) -> str | None:
+    p = root / "CHANGELOG.md"
+    if not p.exists():
+        return None
+    m = re.search(r"^## \[\d+\.\d+\.\d+\] - (\d{4}-\d{2}-\d{2})", p.read_text(encoding="utf-8"), re.M)
+    return m.group(1) if m else None
+
+
+def _git_head_sha(root: Path) -> str:
+    rc, out = _run(["git", "rev-parse", "HEAD"], cwd=root)
+    return out.strip() if rc == 0 else ""
+
+
+def source_identity(root: Path = ROOT) -> dict:
+    """The private release identity a release is cut from: plugin.json
+    version, CHANGELOG top date, and the exact private HEAD SHA. Recorded
+    mechanically at the start of every check/publish run -- no private git
+    tag is required or consulted."""
+    return {
+        "version": plugin_version(root),
+        "changelog_date": changelog_top_date(root),
+        "head_sha": _git_head_sha(root),
+    }
+
+
 def gate_tests(root: Path, run_tests: bool) -> list[Gate]:
     if not run_tests:
         return [Gate("tests:all", "FAIL", "test run skipped -- a release check never skips tests"),
@@ -145,9 +170,11 @@ def gate_export(root: Path, dest: Path) -> list[Gate]:
 
 
 def gate_standalone(dest: Path) -> Gate:
-    """The export must work as an independent plugin/marketplace: manifests
+    """The export must work as an independent plugin/marketplace, proven
+    entirely from the private side against the staging tree: manifests
     validate from the export dir, every hook/skill path resolves inside it,
-    and the shipped tests pass when run from the export alone."""
+    and every shipped runtime script imports cleanly standalone. The public
+    distribution never carries tests/ to prove this -- see RICE-BOOTSTRAP-027."""
     problems = []
     try:
         hooks = json.loads((dest / "hooks" / "hooks.json").read_text(encoding="utf-8"))
@@ -166,9 +193,15 @@ def gate_standalone(dest: Path) -> Gate:
     rc, out = _run(["claude", "plugin", "validate", str(dest)])
     if rc != 0 or "warning" in out.lower():
         problems.append(f"claude plugin validate on export: rc={rc} {out.strip()[-200:]}")
-    rc, out = _run([sys.executable, "-B", "-m", "unittest", "discover", "-s", "tests"], cwd=dest)  # -B: no bytecode into the export
-    if rc != 0:
-        problems.append(f"shipped tests fail inside export: {out.strip().splitlines()[-1] if out.strip() else rc}")
+    scripts_dir = dest / "scripts"
+    modules = sorted(p.stem for p in scripts_dir.glob("*.py")) if scripts_dir.is_dir() else []
+    if not modules:
+        problems.append("no shipped runtime scripts to smoke-test")
+    else:
+        smoke = "; ".join(f"import {m}" for m in modules)
+        rc, out = _run([sys.executable, "-B", "-c", smoke], cwd=scripts_dir)  # -B: no bytecode into the export
+        if rc != 0:
+            problems.append(f"runtime import smoke test failed: {out.strip()[-300:] if out.strip() else rc}")
     return Gate("export:standalone", "PASS" if not problems else "FAIL", "; ".join(problems)[:800])
 
 
@@ -196,29 +229,73 @@ def render(gates, verdict) -> str:
     return "\n".join(lines)
 
 
-def publish(dest: Path, version: str, public_repo: str | None) -> tuple[bool, str]:
-    """Push the exported surface as a fresh single-commit history to the
-    public repository and tag it. Only called after a PASS verdict."""
+def _replace_worktree_with_export(git_root: Path, export_dir: Path) -> None:
+    """Make git_root's working tree an exact copy of export_dir, keeping
+    .git. Anything tracked that export_dir no longer has (a file dropped
+    from the allowlist) does not survive; git add -A then stages both the
+    removals and the additions."""
+    for item in git_root.iterdir():
+        if item.name == ".git":
+            continue
+        if item.is_dir():
+            shutil.rmtree(item)
+        else:
+            item.unlink()
+    for src in export_dir.rglob("*"):
+        if src.is_file():
+            target = git_root / src.relative_to(export_dir)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, target)
+
+
+def publish(dest: Path, version: str, public_repo: str | None, source_sha: str = "") -> tuple[bool, str]:
+    """Publish the exported surface to the public repository and tag it.
+    Only called after a PASS verdict. Deterministic two-case flow:
+
+    - public repo has no `main` yet: fresh single-commit history.
+    - public `main` already exists: fetch it, reconcile its working tree to
+      exactly the new export (dropping anything no longer allowlisted), and
+      commit a normal next release commit on top -- a fast-forward push,
+      never a rewrite, never an unrelated history.
+
+    Every release commit and tag records provenance: rice <version>
+    (source <private HEAD SHA>). No private git tag is required."""
     if not public_repo:
         return False, "WAITING_FOR_PUBLIC_REPO -- no public repository configured; nothing was tagged or pushed"
     tag = f"v{version}"
-    steps = [
-        ["git", "init", "-q", "-b", "main"],
+    message = f"rice {version}" + (f" (source {source_sha})" if source_sha else "")
+
+    rc, out = _run(["git", "ls-remote", "--heads", public_repo, "main"])
+    if rc != 0:
+        return False, f"could not reach public repository: {out.strip()[-300:]}"
+    is_first_release = not out.strip()
+
+    ws = Path(tempfile.mkdtemp(prefix="rice-publish-"))
+    steps = [["git", "init", "-q", "-b", "main"], ["git", "remote", "add", "public", public_repo]]
+    if not is_first_release:
+        steps += [["git", "fetch", "-q", "public", "main"], ["git", "checkout", "-q", "-B", "main", "public/main"]]
+    for cmd in steps:
+        rc, out = _run(cmd, cwd=ws)
+        if rc != 0:
+            return False, f"publish step failed: {' '.join(cmd)} -> rc={rc} {out.strip()[-300:]}"
+
+    _replace_worktree_with_export(ws, dest)
+
+    commit_steps = [
         ["git", "add", "-A"],
-        ["git", "-c", "user.name=rice-release", "-c", "user.email=noreply@anthropic.com", "commit", "-q", "-m", f"rice {version}"],
-        ["git", "tag", "-a", tag, "-m", f"rice {version}"],
-        ["git", "remote", "add", "public", public_repo],
+        ["git", "-c", "user.name=rice-release", "-c", "user.email=noreply@anthropic.com", "commit", "-q", "-m", message],
+        ["git", "tag", "-a", tag, "-m", message],
         ["git", "push", "public", "main"],
         ["git", "push", "public", tag],
     ]
-    for cmd in steps:
-        rc, out = _run(cmd, cwd=dest)
+    for cmd in commit_steps:
+        rc, out = _run(cmd, cwd=ws)
         if rc != 0:
             return False, f"publish step failed: {' '.join(cmd)} -> rc={rc} {out.strip()[-300:]}"
     rc, out = _run(["git", "ls-remote", "--tags", public_repo, tag])
     if rc != 0 or tag not in out:
         return False, f"published tag {tag} not visible on {public_repo}"
-    rc_local, local_tree = _run(["git", "rev-parse", f"{tag}^{{tree}}"], cwd=dest)
+    rc_local, local_tree = _run(["git", "rev-parse", f"{tag}^{{tree}}"], cwd=ws)
     rc_remote, remote_line = _run(["git", "ls-remote", public_repo, f"refs/tags/{tag}^{{}}"])
     if rc_local != 0 or rc_remote != 0 or not remote_line.strip():
         return False, "could not compare exported tree with the published tag"
@@ -232,13 +309,15 @@ def main(argv=None) -> int:
     d = sub.add_parser("dry-run"); d.add_argument("--version"); d.add_argument("--dest")
     p = sub.add_parser("publish"); p.add_argument("--version"); p.add_argument("--dest"); p.add_argument("--public-repo")
     args = ap.parse_args(argv)
+    source = source_identity(ROOT)
+    print(f"SOURCE rice={source['version']} changelog={source['changelog_date']} head={source['head_sha']}")
     gates, verdict, dest = check(requested_version=args.version, dest=args.dest)
     print(render(gates, verdict))
     print(f"export staged at: {dest}")
     if not verdict.startswith("RELEASE-CHECKS PASS"):
         return 1
     if args.cmd == "publish":
-        ok, msg = publish(dest, plugin_version(), args.public_repo)
+        ok, msg = publish(dest, plugin_version(), args.public_repo, source_sha=source["head_sha"])
         print(msg)
         return 0 if ok else 2
     return 0
