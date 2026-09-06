@@ -1,6 +1,6 @@
 ---
 name: bootstrap
-description: "One-instruction bootstrap for a repo: installs rice's own configuration (git safety, session archiving, model delegation, output style, PROJECT_STATE.md), runs the mechanical verifier, then hands off to the OWNER for official Matt Pocock setup. Safe to re-run on an already-bootstrapped repo."
+description: "One-instruction bootstrap for a repo: installs rice's own configuration (git safety, session archiving, model delegation, an OWNER-chosen output style, PROJECT_STATE.md), runs the mechanical verifier, then hands off to the OWNER for official Matt Pocock setup. Safe to re-run on an already-bootstrapped repo."
 ---
 
 # rice bootstrap
@@ -29,7 +29,8 @@ it, and a Cloud session never trusts the folder so that declaration is
 ignored there; the official install is two non-interactive commands that
 touch only `~/.claude`, loaded by the **next** session; in Cloud `~/.claude`
 is per-container, so those commands must run at container start (where
-`mattpocock-skills` is provisioned). The plugin's output style is `rice:老弟`.
+`mattpocock-skills` is provisioned). The plugin's bundled output style is
+addressed as `rice:老弟`; using it is the OWNER's choice, not a requirement.
 
 ## Step 0 — Is rice installed here?
 
@@ -63,8 +64,26 @@ Read `.claude/settings.json` (create `{}` if absent). Set, only if missing:
   a verified version; `.claude/rice-version` (verifier-written) is.
 - `env.RICE_SESSION_ARCHIVE` — `"1"` if the OWNER asked for session
   archiving, otherwise the release default. Ask only if genuinely unclear.
+- `outputStyle` — the OWNER's choice, asked once on first bootstrap (skip
+  the question if the key already exists, or is deliberately absent and
+  `.claude/rice-version` exists). Offer exactly:
+  1. `rice:老弟` — **recommended** → write `"outputStyle": "rice:老弟"`.
+  2. Claude default → write **nothing**; the key stays absent. Never write
+     a placeholder value to mean "default".
+  3. An existing style → list what `output_styles.available(repo_root,
+     plugin_probe)` (`scripts/output_styles.py`) returns — built-ins,
+     project `.claude/output-styles/`, user styles, installed plugins'
+     styles as `<plugin>:<name>` — let the OWNER pick, write that exact
+     value. The verifier confirms it resolves; don't write a name the
+     list doesn't contain.
+  4. A custom style → the OWNER describes it in natural language; write a
+     valid Claude output style to `.claude/output-styles/<name>.md`
+     (frontmatter `name: <name>`, `description:`, then the instructions
+     body) and write `"outputStyle": "<name>"`. That file is
+     project-owned: rice never rewrites it and `rice-update` preserves the
+     choice.
 
-Never overwrite either if present (owner-defined, ticket #15). Never touch
+Never overwrite any of these if present (owner-defined). Never touch
 `.claude/rice-version` — it is not yours to write, in any step.
 
 ## Step 2 — Reconcile rice-owned state
@@ -91,7 +110,9 @@ under `RICE-GATE-A FAIL`, do exactly what its detail says, then re-run:
 - `settings:*` / `rice.md` / `CLAUDE.md:import-line` / `project-state:exists`
   → re-run Step 2 / Step 3 (a `conflict` means a rice-owned value was
   hand-edited; report it, do not overwrite outside `rice-update`).
-- `plugin:*` / `output-style:exists` → Step 0 (wrong or missing build).
+- `plugin:*` / `output-style:bundled` → Step 0 (wrong or missing build).
+- `output-style:choice` → the configured `outputStyle` points at nothing that
+  exists; redo the Step 1 choice (or create the custom file it names).
 - `git-deny:behaves` → run **exactly** `git branch --show-current` through
   Bash in this repo. It should be denied; under normal Claude Code
   execution the harness records that denial in the session transcript,

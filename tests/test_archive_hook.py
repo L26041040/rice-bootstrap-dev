@@ -24,6 +24,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import archive_hook  # noqa: E402
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "sample_transcript.jsonl"
+# Synthetic credential-shaped strings live in a fixture so the public-export
+# secret scan (scripts/export_public.py) never sees them in a .py file.
+SYNTHETIC = json.loads((Path(__file__).resolve().parent / "fixtures" / "synthetic_secrets.json").read_text())
 
 
 def _git(root, *args, check=True):
@@ -68,25 +71,25 @@ def _run_main(payload: dict, archive_enabled: bool) -> tuple[int, str]:
 
 class TestRedact(unittest.TestCase):
     def test_github_token(self):
-        s = "token: ghp_1234567890abcdefghijklmnopqrstuvwxyz12 end"
+        s = "token: " + SYNTHETIC["github-token"] + " end"
         out = archive_hook.redact(s)
         self.assertIn("[REDACTED:github-token]", out)
-        self.assertNotIn("ghp_1234567890abcdefghijklmnopqrstuvwxyz12", out)
+        self.assertNotIn(SYNTHETIC["github-token"], out)
 
     def test_openai_key(self):
-        out = archive_hook.redact("key=sk-abcdefghijklmnopqrstuvwxyz123456")
+        out = archive_hook.redact("key=" + SYNTHETIC["openai-key"])
         self.assertIn("[REDACTED:openai-key]", out)
 
     def test_aws_key(self):
-        out = archive_hook.redact("AKIAABCDEFGHIJKLMNOP")
+        out = archive_hook.redact(SYNTHETIC["aws-key"])
         self.assertIn("[REDACTED:aws-key]", out)
 
     def test_slack_token(self):
-        out = archive_hook.redact("xoxb-1234567890-abcdefghijklmn")
+        out = archive_hook.redact(SYNTHETIC["slack-token"])
         self.assertIn("[REDACTED:slack-token]", out)
 
     def test_jwt(self):
-        out = archive_hook.redact("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc123XYZ")
+        out = archive_hook.redact(SYNTHETIC["jwt"])
         self.assertIn("[REDACTED:jwt]", out)
 
     def test_bearer_swallows_whatever_follows(self):
@@ -95,7 +98,7 @@ class TestRedact(unittest.TestCase):
         self.assertNotIn("sometoken1234567890", out)
 
     def test_private_key_block(self):
-        block = "-----BEGIN PRIVATE KEY-----\nMIIBVQ==\n-----END PRIVATE KEY-----"
+        block = SYNTHETIC["private-key"]
         out = archive_hook.redact(f"here: {block}")
         self.assertIn("[REDACTED:private-key]", out)
         self.assertNotIn("MIIBVQ==", out)
@@ -178,10 +181,10 @@ class TestArchiveHookMain(unittest.TestCase):
         md_files = [p for p in archive_dir.glob("*.md") if p.name != "INDEX.md"]
         content = md_files[0].read_text()
         self.assertIn("[REDACTED:github-token]", content)
-        self.assertNotIn("ghp_1234567890abcdefghijklmnopqrstuvwxyz12", content)
+        self.assertNotIn(SYNTHETIC["github-token"], content)
         index_content = (archive_dir / "INDEX.md").read_text()
         self.assertIn("[REDACTED:github-token]", index_content)
-        self.assertNotIn("ghp_1234567890abcdefghijklmnopqrstuvwxyz12", index_content)
+        self.assertNotIn(SYNTHETIC["github-token"], index_content)
 
     def test_oversized_message_truncated_with_marker(self):
         _run_main(_payload(self.repo_root), archive_enabled=True)

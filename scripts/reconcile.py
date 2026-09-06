@@ -30,6 +30,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import output_styles
 import settings_template
 
 IMPORT_LINE = "@.claude/rice.md"
@@ -316,13 +317,24 @@ def _plugin_items(plugin_probe) -> list[ItemResult]:
     return [installed, build]
 
 
-def _output_style_item() -> ItemResult:
+def _output_style_bundled_item() -> ItemResult:
+    """EXISTS: this build ships the rice style (`name: 老弟`), addressable as
+    rice:老弟 -- rice's own artifact, regardless of what the OWNER chose."""
     styles = PLUGIN_ROOT / "output-styles"
     for f in sorted(styles.glob("*.md")) if styles.is_dir() else []:
-        head = f.read_text(encoding="utf-8").splitlines()[:8]
-        if any(line.strip() == "name: 老弟" for line in head):
-            return ItemResult("output-style:exists", "PASS", f"{f.name} in build {build_version()} (addressed as rice:老弟)", kind=EXISTS)
-    return ItemResult("output-style:exists", "FAIL", "no output-styles/*.md with `name: 老弟` in this build", kind=EXISTS)
+        if output_styles.frontmatter_name(f) == "老弟":
+            return ItemResult("output-style:bundled", "PASS", f"{f.name} in build {build_version()} (addressed as {settings_template.RICE_STYLE})", kind=EXISTS)
+    return ItemResult("output-style:bundled", "FAIL", "no output-styles/*.md with `name: 老弟` in this build", kind=EXISTS)
+
+
+def _output_style_choice_item(repo_root: Path, current_settings: dict, plugin_probe) -> ItemResult:
+    """MATCHES: whatever `outputStyle` the OWNER chose resolves to a real
+    style. Absent key = Claude's native default (PASS). A value that points
+    at nothing is FAIL -- rice never writes or 'fixes' this key."""
+    value = _get_path(current_settings, "outputStyle")
+    ok, detail = output_styles.resolve(None if value is _MISSING else value, repo_root, plugin_probe,
+                                       self_plugin=(settings_template.PLUGIN_NAME, PLUGIN_ROOT))
+    return ItemResult("output-style:choice", "PASS" if ok else "FAIL", detail, kind=MATCHES)
 
 
 def _rice_md_import_item(repo_root: Path) -> ItemResult:
@@ -497,7 +509,8 @@ def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> list[ItemResult]:
     current = _current_settings(repo_root)
     ref = _current_ref(current)
     items = _plugin_items(plugin_probe)
-    items.append(_output_style_item())
+    items.append(_output_style_bundled_item())
+    items.append(_output_style_choice_item(repo_root, current, plugin_probe))
     settings_items, _ = _settings_items(current, ref, write=False, is_rice_update=False)
     items.extend(settings_items)
     items.append(_rice_md_item(repo_root, write=False, is_rice_update=False))

@@ -84,43 +84,58 @@ class ReconcileTestBase(unittest.TestCase):
 class TestSettingsKeyStates(ReconcileTestBase):
     def test_rice_defined_key_missing_is_created_on_apply_and_fails_check(self):
         settings = _fully_correct_settings()
-        del settings["outputStyle"]
+        del settings["autoMemoryEnabled"]
         _write_settings(self.repo_root, settings)
 
         check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(check_items)["settings:outputStyle"], "FAIL")
+        self.assertEqual(_states(check_items)["settings:autoMemoryEnabled"], "FAIL")
 
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(apply_items)["settings:outputStyle"], "created")
-        self.assertEqual(_read_settings(self.repo_root)["outputStyle"], "rice:老弟")
+        self.assertEqual(_states(apply_items)["settings:autoMemoryEnabled"], "created")
+        self.assertIs(_read_settings(self.repo_root)["autoMemoryEnabled"], False)
 
     def test_rice_defined_key_match_is_noop(self):
         _write_settings(self.repo_root, _fully_correct_settings())
         check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(check_items)["settings:outputStyle"], "PASS")
+        self.assertEqual(_states(check_items)["settings:env.CLAUDE_CODE_SUBAGENT_MODEL"], "PASS")
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(apply_items)["settings:outputStyle"], "noop")
+        self.assertEqual(_states(apply_items)["settings:env.CLAUDE_CODE_SUBAGENT_MODEL"], "noop")
 
     def test_rice_defined_key_drift_without_rice_update_is_conflict_and_untouched(self):
         settings = _fully_correct_settings()
-        settings["outputStyle"] = "some-other-style"
+        settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] = "opus"
         _write_settings(self.repo_root, settings)
 
         check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(check_items)["settings:outputStyle"], "FAIL")
+        self.assertEqual(_states(check_items)["settings:env.CLAUDE_CODE_SUBAGENT_MODEL"], "FAIL")
 
         apply_items = reconcile.apply(self.repo_root, is_rice_update=False, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(apply_items)["settings:outputStyle"], "conflict")
-        self.assertEqual(_read_settings(self.repo_root)["outputStyle"], "some-other-style")
+        self.assertEqual(_states(apply_items)["settings:env.CLAUDE_CODE_SUBAGENT_MODEL"], "conflict")
+        self.assertEqual(_read_settings(self.repo_root)["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "opus")
 
     def test_rice_defined_key_drift_with_rice_update_is_overwritten(self):
         settings = _fully_correct_settings()
-        settings["outputStyle"] = "some-other-style"
+        settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] = "opus"
         _write_settings(self.repo_root, settings)
 
         apply_items = reconcile.apply(self.repo_root, is_rice_update=True, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(apply_items)["settings:outputStyle"], "updated")
-        self.assertEqual(_read_settings(self.repo_root)["outputStyle"], "rice:老弟")
+        self.assertEqual(_states(apply_items)["settings:env.CLAUDE_CODE_SUBAGENT_MODEL"], "updated")
+        self.assertEqual(_read_settings(self.repo_root)["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "sonnet")
+
+    def test_output_style_is_owner_choice_never_written_or_reasserted(self):
+        # OWNER chose a custom project style -> apply (even rice-update) leaves it alone
+        settings = _fully_correct_settings(); settings["outputStyle"] = "my-style"
+        _write_settings(self.repo_root, settings)
+        (self.repo_root / ".claude" / "output-styles").mkdir(parents=True)
+        (self.repo_root / ".claude" / "output-styles" / "my.md").write_text("---\nname: my-style\n---\nbody\n")
+        for is_update in (False, True):
+            reconcile.apply(self.repo_root, is_rice_update=is_update, rtk_probe=_ok_rtk_probe)
+            self.assertEqual(_read_settings(self.repo_root)["outputStyle"], "my-style")
+        # OWNER chose Claude default -> key absent stays absent
+        settings = _fully_correct_settings(); del settings["outputStyle"]
+        _write_settings(self.repo_root, settings)
+        reconcile.apply(self.repo_root, is_rice_update=True, rtk_probe=_ok_rtk_probe)
+        self.assertNotIn("outputStyle", _read_settings(self.repo_root))
 
 
 class TestOwnerDefinedKeys(ReconcileTestBase):
@@ -391,11 +406,12 @@ class TestProjectOwnedSettingsPreserved(ReconcileTestBase):
         settings["someOtherKey"] = {"nested": True}
         # force a rice-defined drift so apply actually writes the file
         settings["outputStyle"] = "drifted"
+        settings["autoMemoryEnabled"] = True
         _write_settings(self.repo_root, settings)
 
         reconcile.apply(self.repo_root, is_rice_update=True, rtk_probe=_ok_rtk_probe)
         after = _read_settings(self.repo_root)
-        self.assertEqual(after["outputStyle"], "rice:老弟")  # rice-defined: fixed
+        self.assertEqual(after["outputStyle"], "drifted")  # OWNER choice: untouched by apply
         self.assertEqual(after["permissions"]["allow"], ["Bash(npm test *)"])
         self.assertTrue(after["enabledPlugins"]["other-plugin@other-marketplace"])
         self.assertIn("other-marketplace", after["extraKnownMarketplaces"])
@@ -457,7 +473,7 @@ class TestRubricKinds(ReconcileTestBase):
             self.assertIn(i.kind, (reconcile.EXISTS, reconcile.MATCHES, reconcile.BEHAVES), i)
         names = {i.name for i in items}
         for required in [
-            "plugin:installed", "plugin:build", "output-style:exists", "settings:outputStyle",
+            "plugin:installed", "plugin:build", "output-style:bundled", "output-style:choice",
             "settings:permissions.deny", "settings:permissions.ask",
             "settings:env.CLAUDE_CODE_SUBAGENT_MODEL", "rice.md", "CLAUDE.md:import-line",
             "project-state:exists", "rice.md:imports-project-state", "archive-hook:exists",

@@ -58,7 +58,9 @@ Detect this case by: delivery `ref` already at the target, and
 
 6. `reconcile.apply(repo_root, is_rice_update=True)` — rice-defined leaves
    and `.claude/rice.md` that drifted from the new build's desired state
-   are overwritten wholesale; project-owned content untouched.
+   are overwritten wholesale; project-owned content untouched. The OWNER's
+   `outputStyle` choice (including an absent key = Claude default, and any
+   custom `.claude/output-styles/*.md`) is never touched by an update.
 7. `project_state.preserve_or_restore(repo_root)` — existing content
    byte-for-byte preserved; only a missing file gets the empty template.
 8. **Gate A**: `verify.py <repo_root>`. Fix exactly what each listed item

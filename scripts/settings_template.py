@@ -29,12 +29,13 @@ PLUGIN_KEY = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
 _MP = f"extraKnownMarketplaces.{MARKETPLACE_NAME}.source"
 REF_PATH = f"{_MP}.ref"
 
+RICE_STYLE = "rice:老弟"  # the plugin's bundled style, namespaced <plugin>:<name> (runtime-verified, #18)
+
 RICE_DEFINED_KEYS = {
     f"{_MP}.source",
     f"{_MP}.repo",
     f"enabledPlugins.{PLUGIN_KEY}",
     "autoMemoryEnabled",
-    "outputStyle",
     "env.CLAUDE_CODE_SUBAGENT_MODEL",
     # rice owns these two lists wholesale; `permissions.allow` and any other
     # permissions key stay project-owned.
@@ -45,6 +46,16 @@ RICE_DEFINED_KEYS = {
 OWNER_DEFINED_KEYS = {
     REF_PATH,
     "env.RICE_SESSION_ARCHIVE",
+}
+
+# RICE-BOOTSTRAP-023: the output style is the OWNER's choice, made once at
+# bootstrap (rice:老弟 recommended / Claude default / an existing style / a
+# custom project style). Absent key == Claude's native default -- never a
+# placeholder value. The verifier checks that whatever is configured
+# actually resolves to an existing style (scripts/output_styles.py);
+# reconcile never writes or reasserts it; rice-update preserves it.
+OWNER_CHOICE_KEYS = {
+    "outputStyle",
 }
 
 # Destructive / history-rewriting git operations. Bash rules match the whole
@@ -99,15 +110,16 @@ _PREMIUM_MODEL_ASK = [
 ]
 
 
-def desired_settings(ref: str, archive_default: bool) -> dict:
+def desired_settings(ref: str, archive_default: bool, output_style: str | None = RICE_STYLE) -> dict:
     """The full desired-state settings.json content for the given pinned
-    ref and this release's archive default.
+    ref, this release's archive default, and the OWNER's output-style
+    choice (None = Claude default: the key is simply absent).
 
     `archive_default` is what THIS release ships as the default; bootstrap
     passes True/False for it depending on whether the OWNER asked to
-    override it. Once written, `RICE_SESSION_ARCHIVE` is owner-defined --
-    ordinary reconcile never reasserts it (see #13 Ownership model)."""
-    return {
+    override it. Once written, `RICE_SESSION_ARCHIVE` and `outputStyle`
+    are the OWNER's -- ordinary reconcile never reasserts them."""
+    settings = {
         "extraKnownMarketplaces": {
             MARKETPLACE_NAME: {
                 "source": {
@@ -121,7 +133,6 @@ def desired_settings(ref: str, archive_default: bool) -> dict:
             PLUGIN_KEY: True,
         },
         "autoMemoryEnabled": False,
-        "outputStyle": "rice:老弟",  # plugin output styles are namespaced <plugin>:<name> (runtime-verified, #18)
         "env": {
             "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
             "RICE_SESSION_ARCHIVE": "1" if archive_default else "0",
@@ -131,3 +142,6 @@ def desired_settings(ref: str, archive_default: bool) -> dict:
             "ask": list(_PREMIUM_MODEL_ASK),
         },
     }
+    if output_style is not None:
+        settings["outputStyle"] = output_style
+    return settings

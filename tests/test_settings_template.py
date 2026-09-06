@@ -12,7 +12,9 @@ from settings_template import (  # noqa: E402
     desired_settings,
     RICE_DEFINED_KEYS,
     OWNER_DEFINED_KEYS,
+    OWNER_CHOICE_KEYS,
     REF_PATH,
+    RICE_STYLE,
 )
 
 MARKETPLACE_NAME = "rice-bootstrap"
@@ -45,9 +47,15 @@ class TestDesiredSettings(unittest.TestCase):
         s = desired_settings(ref="v0.1.0", archive_default=False)
         self.assertFalse(s["autoMemoryEnabled"])
 
-    def test_output_style(self):
-        s = desired_settings(ref="v0.1.0", archive_default=False)
-        self.assertEqual(s["outputStyle"], "rice:老弟")
+    def test_output_style_is_owner_choice(self):
+        # recommended default when the OWNER picks option 1
+        self.assertEqual(desired_settings(ref="v0.1.0", archive_default=False)["outputStyle"], RICE_STYLE)
+        # Claude default = the key is simply absent, never a placeholder value
+        self.assertNotIn("outputStyle", desired_settings(ref="v0.1.0", archive_default=False, output_style=None))
+        # any other choice is written verbatim
+        self.assertEqual(desired_settings("v0.1.0", False, output_style="Explanatory")["outputStyle"], "Explanatory")
+        self.assertIn("outputStyle", OWNER_CHOICE_KEYS)
+        self.assertNotIn("outputStyle", RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS)
 
     def test_sonnet_default_no_force(self):
         s = desired_settings(ref="v0.1.0", archive_default=False)
@@ -131,7 +139,7 @@ class TestDesiredSettings(unittest.TestCase):
 
     def test_every_leaf_in_desired_settings_is_classified(self):
         s = desired_settings(ref="v0.1.0", archive_default=False)
-        classified = RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS
+        classified = RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS | OWNER_CHOICE_KEYS
 
         def leaves(d, prefix=""):
             for k, v in d.items():
