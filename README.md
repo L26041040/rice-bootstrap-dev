@@ -65,7 +65,12 @@ rice" or equivalent). It decides nothing; it operates the verifier.
    simulate it.
 6. After the OWNER's Matt setup: `verify.py <repo> --final`. Only its
    `FINAL-VERIFIED <build>` line means done; that pass writes
-   `.claude/rice-version` and clears `WAITING_FOR_MATT`.
+   `.claude/rice-version` and clears `WAITING_FOR_MATT`. Matt's setup
+   artifacts and RTK are required: without both there is no `FINAL-VERIFIED`.
+
+If the repo already had its own `/clear` archive hook before rice, the OWNER
+removes that old hook/script before enabling rice's archive; an existing
+`session-history/` can stay.
 
 ## Update
 
@@ -81,6 +86,25 @@ Only on the OWNER's explicit request; entrypoint `/rice:rice-update`
 - `.claude/rice-version` changes only when the verifier prints
   `FINAL-VERIFIED <build>`; on any failure it is byte-for-byte unchanged.
   The OWNER's output-style choice is preserved.
+
+## Uninstall
+
+Only on the OWNER's explicit, present request ("uninstall rice", "移除
+rice-bootstrap", "把 rice 從這個 repo 拿掉"); vague discussion is not a
+trigger. Entrypoint: the `rice:rice-uninstall` skill, which runs
+`python3 <plugin root>/scripts/uninstall.py <repo>`.
+
+- Target repo cleanup: exact subtraction of rice-owned state only
+  (`.claude/rice.md`, the `@.claude/rice.md` line, `.claude/rice-version`,
+  `WAITING_FOR_MATT`, the rice marketplace/plugin declaration, the Sonnet
+  subagent default when still rice's value, `RICE_SESSION_ARCHIVE`, rice's
+  own deny rules, `outputStyle` only when it is exactly `rice:老弟`).
+- Kept: `session-history/`, custom output styles and any other
+  `outputStyle`, `permissions.allow`/`ask`, project deny rules, other
+  plugins/marketplaces, Matt artifacts, RTK, all repo files and history.
+- Only the script's `RICE-UNINSTALLED` line means the repo is clean.
+- Removing the user-level `rice@rice-bootstrap` plugin/marketplace is a
+  separate question the skill asks the OWNER afterwards; never automatic.
 
 ## Release / Development
 

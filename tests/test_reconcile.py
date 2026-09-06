@@ -354,8 +354,9 @@ class TestIdempotentApplyAndSummary(ReconcileTestBase):
         after_bytes = settings_path.read_bytes()
         self.assertEqual(before_bytes, after_bytes)
         self.assertEqual(before_mtime, settings_path.stat().st_mtime_ns)
-        # matt/rtk items are informational-only -- apply never acts on them,
-        # so a FAIL there doesn't mean apply left something undone.
+        # matt/rtk are REQUIRED Gate B items, but apply never acts on them
+        # (Matt / the environment provide them), so a FAIL there doesn't mean
+        # apply left something undone.
         rice_owned = [i for i in items if not i.name.startswith(("matt:", "rtk"))]
         actionable = [i for i in rice_owned if i.state in ("created", "updated", "conflict", "FAIL")]
         self.assertEqual(actionable, [], actionable)

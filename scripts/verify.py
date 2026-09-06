@@ -17,7 +17,9 @@ precondition for entering WAITING_FOR_MATT.
 
 Gate B (FINAL-VERIFIED <build>): Gate A again, plus the items that need
 the OWNER's own actions or the environment (Matt artifacts, RTK, a real
-/clear having produced an archive). Only a Gate B
+/clear having produced an archive). Matt and RTK are REQUIRED, not
+optional integrations: v1 is the OWNER's actual workflow, and no
+FINAL-VERIFIED exists without both. Only a Gate B
 pass writes `.claude/rice-version`; on any failure the file is left
 byte-for-byte untouched. The same pass removes the WAITING_FOR_MATT marker
 -- the deterministic re-check #28 asked for.

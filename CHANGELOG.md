@@ -18,3 +18,8 @@ First release candidate.
   OWNER names another model out loud when wanted); `.claude/rice.md` carrying
   only the OWNER's soft working rules.
 - Session archive on `/clear` with a mechanical `session-history/INDEX.md`.
+- Matt Pocock official setup artifacts and RTK are required for
+  `FINAL-VERIFIED` (v1 is the OWNER's actual workflow).
+- OWNER-triggered `rice:rice-uninstall`: exact subtraction of rice-owned
+  state from a repo, mechanically checked (`RICE-UNINSTALLED`); the user-level
+  plugin is never removed automatically.

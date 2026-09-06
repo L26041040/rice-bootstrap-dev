@@ -16,8 +16,10 @@ are presence-only from this module's point of view: it is never correct
 for apply to create, fix, or reassert them, in any mode, ever -- that is
 bootstrap's job at first-write.
 
-Matt setup artifacts and RTK are presence-only, never content-validated,
-and never written by apply -- Matt/environment own that content.
+Matt setup artifacts and RTK are REQUIRED (v1 is the OWNER's actual
+workflow; Gate B never passes without both). They are presence-only,
+never content-validated, and never written by apply -- Matt/environment
+own that content.
 
 This module has no git responsibility of its own: it writes files, it
 does not commit them. Committing rice-owned changes is the caller's job

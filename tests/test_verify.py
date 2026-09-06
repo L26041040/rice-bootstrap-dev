@@ -271,7 +271,11 @@ class TestSoleAuthority(unittest.TestCase):
         for py in (REPO / "scripts").glob("*.py"):
             if py.name == "verify.py":
                 continue
-            self.assertNotIn("rice-version", py.read_text(encoding="utf-8"), f"{py.name} touches rice-version")
+            src = py.read_text(encoding="utf-8")
+            self.assertNotIn("rice-version", src, f"{py.name} names rice-version")
+            if py.name == "uninstall.py":  # may unlink it, via verify's constant only, never write it
+                self.assertIn("from verify import VERSION_FILE", src)
+                self.assertNotRegex(src, r"VERSION_FILE[^\n]*write")
 
     def test_cli_exit_code_follows_gate(self):
         with tempfile.TemporaryDirectory() as d:

@@ -30,6 +30,7 @@ README_REQUIRED = (
     "## Installation",
     "## Bootstrap",
     "## Update",
+    "## Uninstall",
     "## Release",
     "claude plugin marketplace add L26041040/rice-bootstrap",
     "claude plugin install rice@rice-bootstrap",

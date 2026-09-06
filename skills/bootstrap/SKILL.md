@@ -53,6 +53,10 @@ machine/environment):
 No per-session workaround in Cloud: it would not be loaded until the next
 session, and it would be gone by then.
 
+Before enabling the session archive: if this repo already had its own
+`/clear` archive hook or script before rice, the OWNER removes that old
+hook/script first; an existing `session-history/` can stay as it is.
+
 ## Step 1 — The two owner-defined settings
 
 Read `.claude/settings.json` (create `{}` if absent). Set, only if missing:
@@ -135,8 +139,9 @@ counts as verified.
 Run `verify.py <repo_root> --final`. The `[B]` items need things only the
 OWNER/environment provide; the verifier reads their evidence:
 
-- `matt:artifacts` → the OWNER ran Matt setup.
-- `rtk` → the environment must provide it; Gate B fails until it does.
+- `matt:artifacts` → the OWNER ran Matt setup. **Required**, not optional.
+- `rtk` → the environment must provide it. **Required**; Gate B fails until
+  it does. Without both there is no `FINAL-VERIFIED`.
 - `archive:behaves` → one real `/clear` with `RICE_SESSION_ARCHIVE=1` has
   produced an INDEX row and archive in this repo (or the switch is off).
 
