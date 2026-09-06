@@ -2,10 +2,10 @@
 
 One-instruction bootstrap and update for common Claude Code project
 configuration: git safety as native permission rules, a session archive with
-a mechanical index, Sonnet by default with an OWNER-approved premium path, an
-OWNER-chosen output style (the bundled 老弟 style recommended), a
-`PROJECT_STATE.md` orientation file, and an OWNER-driven handoff to Matt
-Pocock's official skill setup. One public repository is both the Claude Code
+a mechanical index, Sonnet as the subagent default, an OWNER-chosen output
+style (the bundled 老弟 style recommended), the OWNER's soft working rules in
+`.claude/rice.md`, and an OWNER-driven handoff to Matt Pocock's official
+skill setup. One public repository is both the Claude Code
 plugin marketplace (`rice-bootstrap`) and the plugin (`rice`).
 
 # FOR AGENTS
@@ -57,7 +57,7 @@ rice" or equivalent). It decides nothing; it operates the verifier.
      (project-owned; rice never rewrites it).
    - delivery `ref` = highest upstream tag (delivery mechanism only).
 3. `reconcile.apply` (rice-owned settings leaves, `.claude/rice.md`, the
-   `@.claude/rice.md` line in `CLAUDE.md`), `project_state.create_if_missing`.
+   `@.claude/rice.md` line in `CLAUDE.md`).
 4. Gate A: run the verifier, fix exactly what a FAIL line says, re-run,
    until it prints `RICE-VERIFIED <build>`. Commit and push.
 5. `WAITING_FOR_MATT`: ask the OWNER to run
@@ -77,12 +77,10 @@ Only on the OWNER's explicit request; entrypoint `/rice:rice-update`
 - Session 1: confirm the target tag exists → move the delivery `ref` →
   `claude plugin marketplace update rice-bootstrap` →
   `claude plugin update rice@rice-bootstrap` → new session.
-- Session 2: `reconcile.apply(is_rice_update=True)` →
-  `project_state.preserve_or_restore` → Gate A → Gate B.
+- Session 2: `reconcile.apply(is_rice_update=True)` → Gate A → Gate B.
 - `.claude/rice-version` changes only when the verifier prints
   `FINAL-VERIFIED <build>`; on any failure it is byte-for-byte unchanged.
-  The OWNER's output-style choice and `PROJECT_STATE.md` content are
-  preserved.
+  The OWNER's output-style choice is preserved.
 
 ## Release / Development
 

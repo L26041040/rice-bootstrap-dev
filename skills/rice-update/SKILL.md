@@ -61,13 +61,11 @@ Detect this case by: delivery `ref` already at the target, and
    are overwritten wholesale; project-owned content untouched. The OWNER's
    `outputStyle` choice (including an absent key = Claude default, and any
    custom `.claude/output-styles/*.md`) is never touched by an update.
-7. `project_state.preserve_or_restore(repo_root)` — existing content
-   byte-for-byte preserved; only a missing file gets the empty template.
-8. **Gate A**: `verify.py <repo_root>`. Fix exactly what each listed item
-   says (see bootstrap Step 4), re-run, until `RICE-VERIFIED <build>`.
+7. **Gate A**: `verify.py <repo_root>`. Fix exactly what each listed item
+   says (see bootstrap Step 3), re-run, until `RICE-VERIFIED <build>`.
    `plugin:build` failing means you are still on the old build — that is
    Session 1's step 4/5 not done; stop and say so.
-9. **Gate B**: `verify.py <repo_root> --final`. On `FINAL-VERIFIED <build>`
+8. **Gate B**: `verify.py <repo_root> --final`. On `FINAL-VERIFIED <build>`
    the verifier has written `.claude/rice-version`; commit and push and
    quote the line verbatim. On `FINAL FAIL`, `rice-version` still holds the
    previous version — report the listed items; nothing is "updated".

@@ -14,6 +14,7 @@ First release candidate.
   update that never claims a version the verifier did not stamp.
 - Deterministic verifier (`scripts/verify.py`): Gate A `RICE-VERIFIED`,
   Gate B `FINAL-VERIFIED`; sole writer of `.claude/rice-version`.
-- Git safety as native permission rules; Sonnet default with `opus` gated by
-  a native `ask` rule; `.claude/rice.md` policy with PROJECT_STATE governance.
+- Git safety as native permission rules; Sonnet as the subagent default (the
+  OWNER names another model out loud when wanted); `.claude/rice.md` carrying
+  only the OWNER's soft working rules.
 - Session archive on `/clear` with a mechanical `session-history/INDEX.md`.

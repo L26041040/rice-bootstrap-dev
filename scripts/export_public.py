@@ -25,7 +25,6 @@ ALLOWLIST = (
     "scripts/settings_template.py",
     "scripts/reconcile.py",
     "scripts/verify.py",
-    "scripts/project_state.py",
     "scripts/bootstrap_state.py",
     "scripts/archive_hook.py",
     "scripts/output_styles.py",
@@ -37,7 +36,6 @@ ALLOWLIST = (
     ".gitignore",
     "tests/test_archive_hook.py",
     "tests/test_bootstrap_state.py",
-    "tests/test_project_state.py",
     "tests/test_reconcile.py",
     "tests/test_settings_template.py",
     "tests/test_verify.py",
@@ -51,7 +49,6 @@ ALLOWLIST = (
 # allowlist says (defence in depth against a future allowlist mistake).
 FORBIDDEN_PATTERNS = (
     r"^session-history(/|$)",
-    r"(^|/)PROJECT_STATE\.md$",
     r"^\.claude(/|$)",
     r"^CLAUDE\.md$",
     r"^docs(/|$)",

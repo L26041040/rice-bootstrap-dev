@@ -43,9 +43,15 @@ class TestDesiredSettings(unittest.TestCase):
         s = desired_settings(ref="v0.1.0", archive_default=False)
         self.assertEqual(_get(s, REF_PATH), "v0.1.0")
 
-    def test_auto_memory_disabled(self):
+    def test_no_memory_override_and_no_premium_gate(self):
+        # RICE-BOOTSTRAP-024: Claude's native auto memory is left alone, and
+        # a subagent model other than the default is the OWNER saying so out
+        # loud -- no ask rule, no approval mechanism of any kind.
         s = desired_settings(ref="v0.1.0", archive_default=False)
-        self.assertFalse(s["autoMemoryEnabled"])
+        self.assertNotIn("autoMemoryEnabled", s)
+        self.assertNotIn("ask", s["permissions"])
+        self.assertNotIn("permissions.ask", RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS | OWNER_CHOICE_KEYS)
+        self.assertNotIn("autoMemoryEnabled", RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS | OWNER_CHOICE_KEYS)
 
     def test_output_style_is_owner_choice(self):
         # recommended default when the OWNER picks option 1
@@ -128,10 +134,6 @@ class TestDesiredSettings(unittest.TestCase):
         ]:
             self.assertNotIn(pattern, deny, f"{pattern} would over-block ordinary work")
 
-    def test_premium_model_ask_rule(self):
-        s = desired_settings(ref="v0.1.0", archive_default=False)
-        self.assertIn("Agent(model:opus)", s["permissions"]["ask"])
-
     def test_every_classified_path_exists_in_desired_settings(self):
         s = desired_settings(ref="v0.1.0", archive_default=False)
         for dotted in RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS:
@@ -160,6 +162,7 @@ class TestDesiredSettings(unittest.TestCase):
     def test_permissions_allow_is_project_owned(self):
         self.assertNotIn("permissions", RICE_DEFINED_KEYS)
         self.assertNotIn("permissions.allow", RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS)
+        self.assertNotIn("permissions.ask", RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS)
 
 
 if __name__ == "__main__":

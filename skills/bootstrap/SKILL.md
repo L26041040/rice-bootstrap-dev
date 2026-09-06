@@ -1,6 +1,6 @@
 ---
 name: bootstrap
-description: "One-instruction bootstrap for a repo: installs rice's own configuration (git safety, session archiving, model delegation, an OWNER-chosen output style, PROJECT_STATE.md), runs the mechanical verifier, then hands off to the OWNER for official Matt Pocock setup. Safe to re-run on an already-bootstrapped repo."
+description: "One-instruction bootstrap for a repo: installs rice's own configuration (git safety, session archiving, Sonnet subagent default, an OWNER-chosen output style, the OWNER's working rules), runs the mechanical verifier, then hands off to the OWNER for official Matt Pocock setup. Safe to re-run on an already-bootstrapped repo."
 ---
 
 # rice bootstrap
@@ -97,19 +97,14 @@ Creates every rice-defined settings leaf, copies `.claude/rice.md`, ensures
 the `@.claude/rice.md` line in `CLAUDE.md`. Project-owned content is left
 alone.
 
-## Step 3 — PROJECT_STATE.md
-
-`project_state.create_if_missing(repo_root)`. Never `preserve_or_restore`
-here — that is `rice-update`'s call.
-
-## Step 4 — Gate A: run the verifier until it says RICE-VERIFIED
+## Step 3 — Gate A: run the verifier until it says RICE-VERIFIED
 
 Run `verify.py <repo_root>`. Every `[A]` item must be PASS. For each line
 under `RICE-GATE-A FAIL`, do exactly what its detail says, then re-run:
 
-- `settings:*` / `rice.md` / `CLAUDE.md:import-line` / `project-state:exists`
-  → re-run Step 2 / Step 3 (a `conflict` means a rice-owned value was
-  hand-edited; report it, do not overwrite outside `rice-update`).
+- `settings:*` / `rice.md` / `CLAUDE.md:import-line` → re-run Step 2 (a
+  `conflict` means a rice-owned value was hand-edited; report it, do not
+  overwrite outside `rice-update`).
 - `plugin:*` / `output-style:bundled` → Step 0 (wrong or missing build).
 - `output-style:choice` → the configured `outputStyle` points at nothing that
   exists; redo the Step 1 choice (or create the custom file it names).
@@ -124,7 +119,7 @@ When the verifier prints `RICE-VERIFIED <build>`: commit and push the
 rice-owned changes. Quote that line verbatim in your report. Nothing else
 counts as verified.
 
-## Step 5 — Hand off to Matt
+## Step 4 — Hand off to Matt
 
 `bootstrap_state.enter_waiting_for_matt(repo_root)`, then tell the OWNER:
 
@@ -135,7 +130,7 @@ counts as verified.
 
 **Never report bootstrap as complete while `WAITING_FOR_MATT` exists.**
 
-## Step 6 — Gate B: final verification (after the OWNER's Matt setup)
+## Step 5 — Gate B: final verification (after the OWNER's Matt setup)
 
 Run `verify.py <repo_root> --final`. The `[B]` items need things only the
 OWNER/environment provide; the verifier reads their evidence:
@@ -144,9 +139,6 @@ OWNER/environment provide; the verifier reads their evidence:
 - `rtk` → the environment must provide it; Gate B fails until it does.
 - `archive:behaves` → one real `/clear` with `RICE_SESSION_ARCHIVE=1` has
   produced an INDEX row and archive in this repo (or the switch is off).
-- `premium-ask:behaves` → with the OWNER present, request a subagent with
-  model `opus`; the OWNER declines the native prompt; the harness records
-  it; the verifier reads it.
 
 On `FINAL-VERIFIED <build>` the verifier itself has written
 `.claude/rice-version` and removed `WAITING_FOR_MATT`. Commit and push;

@@ -17,7 +17,7 @@ precondition for entering WAITING_FOR_MATT.
 
 Gate B (FINAL-VERIFIED <build>): Gate A again, plus the items that need
 the OWNER's own actions or the environment (Matt artifacts, RTK, a real
-/clear having produced an archive, a declined opus prompt). Only a Gate B
+/clear having produced an archive). Only a Gate B
 pass writes `.claude/rice-version`; on any failure the file is left
 byte-for-byte untouched. The same pass removes the WAITING_FOR_MATT marker
 -- the deterministic re-check #28 asked for.
@@ -46,16 +46,13 @@ GATE_A = (
     *sorted(f"settings:{k}" for k in reconcile.settings_template.RICE_DEFINED_KEYS),
     *sorted(f"settings:{k}" for k in reconcile.settings_template.OWNER_DEFINED_KEYS),
     "rice.md",
-    "rice.md:imports-project-state",
     "CLAUDE.md:import-line",
-    "project-state:exists",
     "archive-hook:exists",
     "git-deny:behaves",
 )
 
 GATE_B_EXTRA = (
     "archive:behaves",
-    "premium-ask:behaves",
     "matt:artifacts",
     "rtk",
 )

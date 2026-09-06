@@ -14,6 +14,10 @@ be used verbatim for lookup. Anything not listed here is project-owned and
 never touched -- e.g. `permissions.allow`, other marketplaces, other
 plugins, other env vars.
 
+Subagents default to Sonnet via `env.CLAUDE_CODE_SUBAGENT_MODEL`; the
+OWNER names another model out loud whenever they want one -- there is no
+approval gate for that (RICE-BOOTSTRAP-024 deleted the `ask` rule).
+
 Git safety is permission-only (RICE-BOOTSTRAP-019 superseded the narrow
 PreToolUse hook of #17): the whole `git branch` command class is denied,
 so Claude never creates a branch through it and also can't use it to list
@@ -35,12 +39,10 @@ RICE_DEFINED_KEYS = {
     f"{_MP}.source",
     f"{_MP}.repo",
     f"enabledPlugins.{PLUGIN_KEY}",
-    "autoMemoryEnabled",
     "env.CLAUDE_CODE_SUBAGENT_MODEL",
-    # rice owns these two lists wholesale; `permissions.allow` and any other
-    # permissions key stay project-owned.
+    # rice owns the deny list wholesale; `permissions.allow`, `permissions.ask`
+    # and any other permissions key stay project-owned.
     "permissions.deny",
-    "permissions.ask",
 }
 
 OWNER_DEFINED_KEYS = {
@@ -105,11 +107,6 @@ _MCP_DENY = [
     "mcp__github__create_branch",
 ]
 
-_PREMIUM_MODEL_ASK = [
-    "Agent(model:opus)",
-]
-
-
 def desired_settings(ref: str, archive_default: bool, output_style: str | None = RICE_STYLE) -> dict:
     """The full desired-state settings.json content for the given pinned
     ref, this release's archive default, and the OWNER's output-style
@@ -132,14 +129,12 @@ def desired_settings(ref: str, archive_default: bool, output_style: str | None =
         "enabledPlugins": {
             PLUGIN_KEY: True,
         },
-        "autoMemoryEnabled": False,
         "env": {
             "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
             "RICE_SESSION_ARCHIVE": "1" if archive_default else "0",
         },
         "permissions": {
             "deny": _DESTRUCTIVE_DENY + _BRANCH_CREATION_DENY + _MCP_DENY,
-            "ask": list(_PREMIUM_MODEL_ASK),
         },
     }
     if output_style is not None:

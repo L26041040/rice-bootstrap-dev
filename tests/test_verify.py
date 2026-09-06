@@ -102,10 +102,9 @@ def _make_correct_repo(root: Path, *, matt=False):
         (root / "docs" / "agents" / "issue-tracker.md").write_text("x", encoding="utf-8")
         (root / "docs" / "agents" / "domain.md").write_text("x", encoding="utf-8")
     (root / "CLAUDE.md").write_text(claude_md, encoding="utf-8")
-    (root / "PROJECT_STATE.md").write_text("# PROJECT_STATE\n", encoding="utf-8")
 
 
-def _write_transcript(root: Path, *, git_denied=True, opus_declined=True, ts="2099-01-01T00:00:00.000Z"):
+def _write_transcript(root: Path, *, git_denied=True, ts="2099-01-01T00:00:00.000Z"):
     tdir = reconcile.transcript_dir(root)
     tdir.mkdir(parents=True, exist_ok=True)
     recs = []
@@ -116,14 +115,6 @@ def _write_transcript(root: Path, *, git_denied=True, opus_declined=True, ts="20
             {"type": "user", "timestamp": ts, "message": {"role": "user", "content": [
                 {"type": "tool_result", "tool_use_id": "t1",
                  "content": "Permission to use Bash with command git branch --show-current has been denied."}]}},
-        ]
-    if opus_declined:
-        recs += [
-            {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [
-                {"type": "tool_use", "id": "t2", "name": "Agent", "input": {"model": "opus", "prompt": "hi"}}]}},
-            {"type": "user", "timestamp": ts, "message": {"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": "t2", "is_error": True,
-                 "content": "The user doesn't want to proceed with this tool use."}]}},
         ]
     (tdir / "session.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n", encoding="utf-8")
 
@@ -158,7 +149,7 @@ class TestGateA(VerifierRunBase):
         self.assertFalse(rep.gate_a)
         self.assertTrue(any(l.startswith("RICE-GATE-A FAIL") for l in rep.lines))
         self.assertTrue(any("git-deny:behaves: NOT_VERIFIED" in l for l in rep.lines))
-        _write_transcript(self.root, opus_declined=False)
+        _write_transcript(self.root)
         rep = self.run_verify()
         self.assertTrue(rep.gate_a, rep.lines)
         self.assertIn(f"RICE-VERIFIED {reconcile.build_version()}", rep.lines)
@@ -222,11 +213,8 @@ class TestGateBAndVersionAuthority(VerifierRunBase):
         # archive evidence missing
         _make_correct_repo(self.root, matt=True); _write_transcript(self.root)
         self.assertFalse(self.run_verify(final=True).gate_b)
-        # opus decline missing
-        _write_archive_evidence(self.root); _write_transcript(self.root, opus_declined=False)
-        self.assertFalse(self.run_verify(final=True).gate_b)
         # rtk missing
-        _write_transcript(self.root)
+        _write_archive_evidence(self.root)
         rep = verify.run(self.root, final=True, rtk_probe=lambda c: (_ for _ in ()).throw(FileNotFoundError()), plugin_probe=_installed)
         self.assertFalse(rep.gate_b)
         self.assertFalse((self.root / verify.VERSION_FILE).exists())

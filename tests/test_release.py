@@ -44,7 +44,7 @@ class TestExport(unittest.TestCase):
     def test_forbidden_paths_never_in_allowlist(self):
         for rel in export_public.ALLOWLIST:
             self.assertIsNone(export_public.is_forbidden(rel), rel)
-        for bad in ("session-history/x.md", "PROJECT_STATE.md", ".claude/settings.json", "CLAUDE.md",
+        for bad in ("session-history/x.md", ".claude/settings.json", "CLAUDE.md",
                     "docs/agents/domain.md", "scripts/release.py", "scripts/export_public.py",
                     "tests/test_release.py", "a/__pycache__/b.pyc", ".claude/skills/rice-release/SKILL.md"):
             self.assertIsNotNone(export_public.is_forbidden(bad), bad)

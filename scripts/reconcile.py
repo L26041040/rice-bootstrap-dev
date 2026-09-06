@@ -14,9 +14,7 @@ applies to rice-defined settings keys and to the .claude/rice.md
 whole-file case. Owner-defined settings keys (`ref`, `RICE_SESSION_ARCHIVE`)
 are presence-only from this module's point of view: it is never correct
 for apply to create, fix, or reassert them, in any mode, ever -- that is
-bootstrap's job at first-write. PROJECT_STATE.md is out of scope entirely:
-this module never reads its content, never creates it, never restores it
-(see #21) -- reconcile does not even import project_state.
+bootstrap's job at first-write.
 
 Matt setup artifacts and RTK are presence-only, never content-validated,
 and never written by apply -- Matt/environment own that content.
@@ -47,7 +45,6 @@ _MISSING = object()
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-PROJECT_STATE_IMPORT_LINE = "@../PROJECT_STATE.md"
 
 # Rubric kinds (RICE-BOOTSTRAP-020). EXISTS: the artifact/capability is
 # there. MATCHES: its content/setting equals this build's canonical state.
@@ -337,22 +334,6 @@ def _output_style_choice_item(repo_root: Path, current_settings: dict, plugin_pr
     return ItemResult("output-style:choice", "PASS" if ok else "FAIL", detail, kind=MATCHES)
 
 
-def _rice_md_import_item(repo_root: Path) -> ItemResult:
-    dest = repo_root / ".claude" / "rice.md"
-    if not dest.exists():
-        return ItemResult("rice.md:imports-project-state", "FAIL", ".claude/rice.md missing", kind=MATCHES)
-    if any(line.strip() == PROJECT_STATE_IMPORT_LINE for line in dest.read_text(encoding="utf-8").splitlines()):
-        return ItemResult("rice.md:imports-project-state", "PASS", kind=MATCHES)
-    return ItemResult("rice.md:imports-project-state", "FAIL", f"`{PROJECT_STATE_IMPORT_LINE}` line missing", kind=MATCHES)
-
-
-def _project_state_item(repo_root: Path) -> ItemResult:
-    """Read-only presence. Content is never inspected (#21)."""
-    if (repo_root / "PROJECT_STATE.md").exists():
-        return ItemResult("project-state:exists", "PASS", kind=EXISTS)
-    return ItemResult("project-state:exists", "FAIL", "PROJECT_STATE.md missing (bootstrap creates it; rice-update restores it)", kind=EXISTS)
-
-
 def _archive_hook_item() -> ItemResult:
     hooks = PLUGIN_ROOT / "hooks" / "hooks.json"
     script = PLUGIN_ROOT / "scripts" / "archive_hook.py"
@@ -467,25 +448,6 @@ def _git_deny_evidence_item(repo_root: Path) -> ItemResult:
     )
 
 
-def _premium_ask_evidence_item(repo_root: Path) -> ItemResult:
-    """BEHAVES, Gate B (needs the OWNER at the prompt). Evidence = an Agent
-    tool_use with model `opus` whose harness-recorded result is a denial /
-    declined approval, no older than the current settings.json."""
-    since = _settings_mtime(repo_root)
-    for ts, name, inp, txt in _iter_tool_outcomes(transcript_dir(repo_root)):
-        if name == "Agent" and str(inp.get("model") or "").lower() == "opus":
-            low = txt.lower()
-            if ("denied" in low or "doesn't want to proceed" in low or "does not want to proceed" in low) \
-                    and _ts_to_epoch(ts) >= since:
-                return ItemResult("premium-ask:behaves", "PASS", f"harness recorded the declined opus request at {ts}", kind=BEHAVES)
-    return ItemResult(
-        "premium-ask:behaves", "NOT_VERIFIED",
-        "no declined `opus` subagent request recorded for this repo since settings.json changed -- with the OWNER "
-        "present, request a subagent with model `opus`, have the OWNER decline the prompt, then re-run verify --final",
-        kind=BEHAVES,
-    )
-
-
 def _rtk_item(rtk_probe) -> ItemResult:
     try:
         r = rtk_probe(["rtk", "--version"])
@@ -514,13 +476,10 @@ def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> list[ItemResult]:
     settings_items, _ = _settings_items(current, ref, write=False, is_rice_update=False)
     items.extend(settings_items)
     items.append(_rice_md_item(repo_root, write=False, is_rice_update=False))
-    items.append(_rice_md_import_item(repo_root))
     items.append(_claude_md_item(repo_root, write=False))
-    items.append(_project_state_item(repo_root))
     items.append(_archive_hook_item())
     items.append(_git_deny_evidence_item(repo_root))
     items.append(_archive_behaves_item(repo_root, current))
-    items.append(_premium_ask_evidence_item(repo_root))
     items.append(_matt_item(repo_root, plugin_probe))
     items.append(_rtk_item(rtk_probe))
     return items

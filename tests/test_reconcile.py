@@ -84,15 +84,15 @@ class ReconcileTestBase(unittest.TestCase):
 class TestSettingsKeyStates(ReconcileTestBase):
     def test_rice_defined_key_missing_is_created_on_apply_and_fails_check(self):
         settings = _fully_correct_settings()
-        del settings["autoMemoryEnabled"]
+        del settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"]
         _write_settings(self.repo_root, settings)
 
         check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(check_items)["settings:autoMemoryEnabled"], "FAIL")
+        self.assertEqual(_states(check_items)["settings:env.CLAUDE_CODE_SUBAGENT_MODEL"], "FAIL")
 
         apply_items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(apply_items)["settings:autoMemoryEnabled"], "created")
-        self.assertIs(_read_settings(self.repo_root)["autoMemoryEnabled"], False)
+        self.assertEqual(_states(apply_items)["settings:env.CLAUDE_CODE_SUBAGENT_MODEL"], "created")
+        self.assertEqual(_read_settings(self.repo_root)["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "sonnet")
 
     def test_rice_defined_key_match_is_noop(self):
         _write_settings(self.repo_root, _fully_correct_settings())
@@ -267,28 +267,6 @@ class TestClaudeMdImportLine(ReconcileTestBase):
         self.assertEqual((self.repo_root / "CLAUDE.md").read_text(), original)
 
 
-class TestProjectStateNeverTouched(ReconcileTestBase):
-    def test_project_state_untouched_across_check_and_every_apply_mode(self):
-        _make_correct_repo(self.repo_root)
-        ps = self.repo_root / "PROJECT_STATE.md"
-        custom = "# PROJECT_STATE\n\ncustom in-progress content\n"
-        ps.write_text(custom, encoding="utf-8")
-
-        reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(ps.read_text(), custom)
-
-        for is_rice_update in (False, True):
-            items = reconcile.apply(self.repo_root, is_rice_update=is_rice_update, rtk_probe=_ok_rtk_probe)
-            self.assertEqual(ps.read_text(), custom)
-            self.assertFalse(any("PROJECT_STATE" in i.name for i in items))
-
-    def test_project_state_missing_is_never_created_by_reconcile(self):
-        _make_correct_repo(self.repo_root)
-        self.assertFalse((self.repo_root / "PROJECT_STATE.md").exists())
-        reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertFalse((self.repo_root / "PROJECT_STATE.md").exists())
-
-
 class TestMattAndRtkPresence(ReconcileTestBase):
     def _matt_repo(self, *, heading=True, issue=True, domain=True, triage_heading=False, triage_doc=False):
         import shutil
@@ -406,13 +384,16 @@ class TestProjectOwnedSettingsPreserved(ReconcileTestBase):
         settings["someOtherKey"] = {"nested": True}
         # force a rice-defined drift so apply actually writes the file
         settings["outputStyle"] = "drifted"
-        settings["autoMemoryEnabled"] = True
+        settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] = "opus"
+        settings["permissions"]["ask"] = ["Bash(rm *)"]  # project-owned now (-024)
         _write_settings(self.repo_root, settings)
 
         reconcile.apply(self.repo_root, is_rice_update=True, rtk_probe=_ok_rtk_probe)
         after = _read_settings(self.repo_root)
         self.assertEqual(after["outputStyle"], "drifted")  # OWNER choice: untouched by apply
         self.assertEqual(after["permissions"]["allow"], ["Bash(npm test *)"])
+        self.assertEqual(after["permissions"]["ask"], ["Bash(rm *)"])
+        self.assertEqual(after["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "sonnet")  # rice-defined: converged
         self.assertTrue(after["enabledPlugins"]["other-plugin@other-marketplace"])
         self.assertIn("other-marketplace", after["extraKnownMarketplaces"])
         self.assertEqual(after["env"]["MY_OWN_VAR"], "keep-me")
@@ -474,10 +455,10 @@ class TestRubricKinds(ReconcileTestBase):
         names = {i.name for i in items}
         for required in [
             "plugin:installed", "plugin:build", "output-style:bundled", "output-style:choice",
-            "settings:permissions.deny", "settings:permissions.ask",
+            "settings:permissions.deny",
             "settings:env.CLAUDE_CODE_SUBAGENT_MODEL", "rice.md", "CLAUDE.md:import-line",
-            "project-state:exists", "rice.md:imports-project-state", "archive-hook:exists",
-            "archive:behaves", "git-deny:behaves", "premium-ask:behaves", "matt:artifacts", "rtk",
+            "archive-hook:exists",
+            "archive:behaves", "git-deny:behaves", "matt:artifacts", "rtk",
         ]:
             self.assertIn(required, names)
 
@@ -487,7 +468,6 @@ class TestRubricKinds(ReconcileTestBase):
         st = {i.name: i for i in items}
         self.assertEqual(st["archive:behaves"].state, "NOT_VERIFIED")
         self.assertEqual(st["git-deny:behaves"].state, "NOT_VERIFIED")
-        self.assertEqual(st["premium-ask:behaves"].state, "NOT_VERIFIED")
         self.assertIn("git branch --show-current", st["git-deny:behaves"].detail)
 
     def test_archive_behaves_pass_only_with_real_evidence(self):
