@@ -275,15 +275,53 @@ class TestProjectStateNeverTouched(ReconcileTestBase):
 
 
 class TestMattAndRtkPresence(ReconcileTestBase):
-    def test_matt_artifacts_present(self):
-        _make_correct_repo(self.repo_root)
+    def _matt_repo(self, *, heading=True, issue=True, domain=True, triage_heading=False, triage_doc=False):
+        import shutil
+        _make_correct_repo(self.repo_root)  # rewrites CLAUDE.md fresh
+        shutil.rmtree(self.repo_root / "docs", ignore_errors=True)
         claude_md = self.repo_root / "CLAUDE.md"
-        claude_md.write_text(claude_md.read_text() + "\n## Agent skills\n\nsee docs/agents\n", encoding="utf-8")
-        (self.repo_root / "docs" / "agents").mkdir(parents=True)
-        (self.repo_root / "docs" / "agents" / "issue-tracker.md").write_text("x", encoding="utf-8")
+        extra = ""
+        if heading:
+            extra += "\n## Agent skills\n\n### Issue tracker\n\nsee docs/agents/issue-tracker.md\n"
+        if triage_heading:
+            extra += "\n### Triage labels\n\nsee docs/agents/triage-labels.md\n"
+        claude_md.write_text(claude_md.read_text() + extra, encoding="utf-8")
+        d = self.repo_root / "docs" / "agents"; d.mkdir(parents=True, exist_ok=True)
+        if issue: (d / "issue-tracker.md").write_text("x", encoding="utf-8")
+        if domain: (d / "domain.md").write_text("x", encoding="utf-8")
+        if triage_doc: (d / "triage-labels.md").write_text("x", encoding="utf-8")
 
-        check_items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(check_items)["matt:artifacts"], "PASS")
+    def test_matt_artifacts_present_exact_observed_shape(self):
+        self._matt_repo()
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        self.assertEqual(_states(items)["matt:artifacts"], "PASS")
+
+    def test_matt_each_required_artifact_alone_fails(self):
+        for kw in ({"heading": False}, {"issue": False}, {"domain": False}):
+            self._matt_repo(**kw)
+            items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+            self.assertEqual(_states(items)["matt:artifacts"], "FAIL", kw)
+
+    def test_matt_triage_doc_required_only_when_triage_capability_present(self):
+        # triage heading present in CLAUDE.md (Matt writes it when triage is installed) -> doc required
+        self._matt_repo(triage_heading=True, triage_doc=False)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        self.assertEqual(_states(items)["matt:artifacts"], "FAIL")
+        self._matt_repo(triage_heading=True, triage_doc=True)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
+        self.assertEqual(_states(items)["matt:artifacts"], "PASS")
+        # installed mattpocock plugin that ships a triage skill -> doc required even without the heading
+        plugin_root = self.repo_root / "mp"; (plugin_root / "skills" / "engineering" / "triage").mkdir(parents=True)
+        (plugin_root / "skills" / "engineering" / "triage" / "SKILL.md").write_text("---\nname: triage\n---\n")
+        probe = lambda cmd: _Result(0, json.dumps([
+            {"id": "rice@rice-bootstrap", "version": "0.1.1", "scope": "user", "enabled": True},
+            {"id": "mattpocock-skills@mattpocock", "version": "1.2.3", "installPath": str(plugin_root)}]))
+        self._matt_repo(triage_heading=False, triage_doc=False)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
+        self.assertEqual(_states(items)["matt:artifacts"], "FAIL")
+        self._matt_repo(triage_heading=False, triage_doc=True)
+        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe, plugin_probe=probe)
+        self.assertEqual(_states(items)["matt:artifacts"], "PASS")
 
     def test_matt_artifacts_missing(self):
         _make_correct_repo(self.repo_root)

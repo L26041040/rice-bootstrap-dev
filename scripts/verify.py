@@ -74,17 +74,21 @@ class Report:
 
 def gate_passes(items, required) -> tuple[bool, list[str]]:
     """The invariant. Returns (passed, reasons). A reason is recorded for
-    every required item that is not exactly PASS, including absent ones."""
-    by_name = {}
+    every required item that is not exactly PASS, including absent ones.
+    If a name occurs more than once, every occurrence must be PASS -- a
+    duplicate can never mask a failure."""
+    by_name: dict[str, list] = {}
     for i in items:
-        by_name.setdefault(i.name, i)
+        by_name.setdefault(i.name, []).append(i)
     reasons = []
     for name in required:
-        i = by_name.get(name)
-        if i is None:
+        occurrences = by_name.get(name)
+        if not occurrences:
             reasons.append(f"{name}: MISSING (verifier produced no result for a required item)")
-        elif i.state != "PASS":
-            reasons.append(f"{name}: {i.state}" + (f" -- {i.detail}" if i.detail else ""))
+            continue
+        for i in occurrences:
+            if i.state != "PASS":
+                reasons.append(f"{name}: {i.state}" + (f" -- {i.detail}" if i.detail else ""))
     return (not reasons), reasons
 
 

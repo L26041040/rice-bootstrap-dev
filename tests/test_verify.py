@@ -97,9 +97,10 @@ def _make_correct_repo(root: Path, *, matt=False):
     (root / ".claude" / "rice.md").write_text(reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"), encoding="utf-8")
     claude_md = f"# proj\n\n{reconcile.IMPORT_LINE}\n"
     if matt:
-        claude_md += "\n## Agent skills\n\nsee docs/agents\n"
+        claude_md += "\n## Agent skills\n\n### Issue tracker\n\nsee docs/agents\n"
         (root / "docs" / "agents").mkdir(parents=True, exist_ok=True)
         (root / "docs" / "agents" / "issue-tracker.md").write_text("x", encoding="utf-8")
+        (root / "docs" / "agents" / "domain.md").write_text("x", encoding="utf-8")
     (root / "CLAUDE.md").write_text(claude_md, encoding="utf-8")
     (root / "PROJECT_STATE.md").write_text("# PROJECT_STATE\n", encoding="utf-8")
 
@@ -229,6 +230,25 @@ class TestGateBAndVersionAuthority(VerifierRunBase):
         rep = verify.run(self.root, final=True, rtk_probe=lambda c: (_ for _ in ()).throw(FileNotFoundError()), plugin_probe=_installed)
         self.assertFalse(rep.gate_b)
         self.assertFalse((self.root / verify.VERSION_FILE).exists())
+
+    def test_missing_any_matt_artifact_blocks_final(self):
+        for victim in ("docs/agents/issue-tracker.md", "docs/agents/domain.md"):
+            _make_correct_repo(self.root, matt=True); _write_transcript(self.root); _write_archive_evidence(self.root)
+            (self.root / victim).unlink()
+            rep = self.run_verify(final=True)
+            self.assertFalse(rep.gate_b, victim)
+            self.assertFalse((self.root / verify.VERSION_FILE).exists())
+        # triage heading present -> triage-labels.md becomes required
+        _make_correct_repo(self.root, matt=True); _write_transcript(self.root); _write_archive_evidence(self.root)
+        cm = self.root / "CLAUDE.md"; cm.write_text(cm.read_text() + "\n### Triage labels\n\nsee docs/agents/triage-labels.md\n")
+        self.assertFalse(self.run_verify(final=True).gate_b)
+        (self.root / "docs" / "agents" / "triage-labels.md").write_text("x")
+        self.assertTrue(self.run_verify(final=True).gate_b)
+
+    def test_duplicate_item_names_cannot_mask_a_failure(self):
+        items = _all_pass_items() + [reconcile.ItemResult("rice.md", "FAIL", kind="x")]
+        ok, reasons = verify.gate_passes(items, verify.GATE_A)
+        self.assertFalse(ok); self.assertTrue(any(r.startswith("rice.md: FAIL") for r in reasons))
 
     def test_collection_exception_fails_closed(self):
         _make_correct_repo(self.root, matt=True)

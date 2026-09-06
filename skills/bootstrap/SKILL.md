@@ -93,9 +93,11 @@ under `RICE-GATE-A FAIL`, do exactly what its detail says, then re-run:
   hand-edited; report it, do not overwrite outside `rice-update`).
 - `plugin:*` / `output-style:exists` → Step 0 (wrong or missing build).
 - `git-deny:behaves` → run **exactly** `git branch --show-current` through
-  Bash in this repo. It should be denied; that denial is recorded by the
-  harness, and the verifier reads that record. If the command *runs*, the
-  deny rules are not in effect — the verifier will keep failing; report it.
+  Bash in this repo. It should be denied; under normal Claude Code
+  execution the harness records that denial in the session transcript,
+  and the verifier reads that record — your own statement that it was
+  denied counts for nothing. If the command *runs*, the deny rules are not
+  in effect; the verifier will keep failing; report that.
 
 When the verifier prints `RICE-VERIFIED <build>`: commit and push the
 rice-owned changes. Quote that line verbatim in your report. Nothing else
@@ -118,7 +120,7 @@ Run `verify.py <repo_root> --final`. The `[B]` items need things only the
 OWNER/environment provide; the verifier reads their evidence:
 
 - `matt:artifacts` → the OWNER ran Matt setup.
-- `rtk` → environment; report as-is if missing.
+- `rtk` → the environment must provide it; Gate B fails until it does.
 - `archive:behaves` → one real `/clear` with `RICE_SESSION_ARCHIVE=1` has
   produced an INDEX row and archive in this repo (or the switch is off).
 - `premium-ask:behaves` → with the OWNER present, request a subagent with

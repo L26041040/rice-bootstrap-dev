@@ -197,18 +197,54 @@ def _claude_md_item(repo_root: Path, *, write: bool) -> ItemResult:
     return ItemResult("CLAUDE.md:import-line", "FAIL", "import line missing")
 
 
-def _matt_item(repo_root: Path) -> ItemResult:
-    """Presence-only, never content-validated, never written here -- Matt's
-    artifacts remain permanently Matt/project-owned (#13 Ownership model).
-    Shape (`## Agent skills` heading + a populated docs/agents/) is the
-    real shape observed from this repo's own Matt setup run."""
+MATT_HEADING = "## Agent skills"
+MATT_REQUIRED_DOCS = ("docs/agents/issue-tracker.md", "docs/agents/domain.md")
+MATT_TRIAGE_DOC = "docs/agents/triage-labels.md"
+MATT_TRIAGE_HEADING = "### Triage labels"
+
+
+def _triage_capability_present(repo_root: Path, plugin_probe) -> bool:
+    """Matt's setup writes the triage section only when its `triage` skill
+    is installed. Mechanical signals, either suffices: the installed
+    mattpocock plugin build ships a `triage` skill (from `claude plugin
+    list --json` installPath), or the repo's CLAUDE.md carries the
+    `### Triage labels` heading Matt writes in that case."""
     claude_md = repo_root / "CLAUDE.md"
-    has_heading = claude_md.exists() and "## Agent skills" in claude_md.read_text(encoding="utf-8")
-    docs_dir = repo_root / "docs" / "agents"
-    has_docs = docs_dir.is_dir() and any(docs_dir.glob("*.md"))
-    if has_heading and has_docs:
-        return ItemResult("matt:artifacts", "PASS", kind=EXISTS)
-    return ItemResult("matt:artifacts", "FAIL", "Matt setup artifacts not found (## Agent skills / docs/agents/*.md)", kind=EXISTS)
+    if claude_md.exists() and any(l.strip() == MATT_TRIAGE_HEADING for l in claude_md.read_text(encoding="utf-8").splitlines()):
+        return True
+    try:
+        r = plugin_probe(["claude", "plugin", "list", "--json"])
+        entries = json.loads(r.stdout or "[]") if r.returncode == 0 else []
+    except (OSError, json.JSONDecodeError, AttributeError):
+        entries = []
+    for e in entries if isinstance(entries, list) else []:
+        if isinstance(e, dict) and str(e.get("id", "")).startswith("mattpocock-skills@") and e.get("installPath"):
+            root = Path(e["installPath"])
+            if root.is_dir() and any(root.glob("skills/**/triage/SKILL.md")):
+                return True
+    return False
+
+
+def _matt_item(repo_root: Path, plugin_probe) -> ItemResult:
+    """Presence-only, never content-validated, never written here -- Matt's
+    artifacts remain Matt/project-owned. Required shape is the real output
+    observed from the official setup run in this repo (RICE-BOOTSTRAP-022):
+    a `## Agent skills` heading line in CLAUDE.md, docs/agents/issue-tracker.md,
+    docs/agents/domain.md, and docs/agents/triage-labels.md whenever the
+    triage capability is present."""
+    missing = []
+    claude_md = repo_root / "CLAUDE.md"
+    if not (claude_md.exists() and any(l.strip() == MATT_HEADING for l in claude_md.read_text(encoding="utf-8").splitlines())):
+        missing.append(f"CLAUDE.md `{MATT_HEADING}` heading")
+    required = list(MATT_REQUIRED_DOCS)
+    if _triage_capability_present(repo_root, plugin_probe):
+        required.append(MATT_TRIAGE_DOC)
+    for rel in required:
+        if not (repo_root / rel).is_file():
+            missing.append(rel)
+    if missing:
+        return ItemResult("matt:artifacts", "FAIL", "official Matt setup artifacts missing: " + ", ".join(missing), kind=EXISTS)
+    return ItemResult("matt:artifacts", "PASS", "present: " + ", ".join([f"`{MATT_HEADING}`", *required]), kind=EXISTS)
 
 
 def _default_rtk_probe(cmd):
@@ -342,9 +378,11 @@ from datetime import datetime, timezone
 
 def transcript_dir(repo_root: Path) -> Path:
     """Claude Code keeps one JSONL transcript per session under
-    <config dir>/projects/<cwd with / replaced by ->/. The harness writes
-    every tool_result there itself -- a permission denial in it is the
-    harness's own record, not the model's claim."""
+    <config dir>/projects/<cwd with / replaced by ->/. Under normal Claude
+    Code execution the harness writes every tool_result there itself, so a
+    permission denial found there is mechanical evidence produced by the
+    harness. rice never treats the agent's own statement as PASS; it reads
+    this record instead. No stronger claim (tamper-proofness) is made."""
     cfg = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
     return cfg / "projects" / str(Path(repo_root).resolve()).replace("/", "-")
 
@@ -403,7 +441,7 @@ def _git_deny_evidence_item(repo_root: Path) -> ItemResult:
     """BEHAVES, Gate A. Evidence = the harness recorded a denial for the
     exact probe command in a session of this repo, no older than the
     current settings.json. The probe is side-effect-free either way; the
-    agent's only role is to attempt it -- it cannot write the record."""
+    agent's role is to attempt it, the harness produces the record."""
     since = _settings_mtime(repo_root)
     for ts, name, inp, txt in _iter_tool_outcomes(transcript_dir(repo_root)):
         if name == "Bash" and (inp.get("command") or "").strip() == GIT_DENY_PROBE and "denied" in txt.lower():
@@ -470,7 +508,7 @@ def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> list[ItemResult]:
     items.append(_git_deny_evidence_item(repo_root))
     items.append(_archive_behaves_item(repo_root, current))
     items.append(_premium_ask_evidence_item(repo_root))
-    items.append(_matt_item(repo_root))
+    items.append(_matt_item(repo_root, plugin_probe))
     items.append(_rtk_item(rtk_probe))
     return items
 
@@ -493,6 +531,6 @@ def apply(repo_root, *, is_rice_update: bool = False, rtk_probe=None,
 
     items.append(_rice_md_item(repo_root, write=True, is_rice_update=is_rice_update))
     items.append(_claude_md_item(repo_root, write=True))
-    items.append(_matt_item(repo_root))
+    items.append(_matt_item(repo_root, plugin_probe))
     items.append(_rtk_item(rtk_probe))
     return items
