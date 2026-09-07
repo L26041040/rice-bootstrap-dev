@@ -55,7 +55,8 @@ rice" or equivalent). It decides nothing; it operates the verifier.
      from `scripts/output_styles.py` and verified to exist; (4) a custom
      style the agent writes to `.claude/output-styles/<name>.md`
      (project-owned; rice never rewrites it).
-   - delivery `ref` = highest upstream tag (delivery mechanism only).
+   - delivery `ref` = upstream `main`'s exact commit SHA (delivery
+     mechanism only — no git tag or GitHub release is used).
 3. `reconcile.apply` (rice-owned settings leaves, `.claude/rice.md`, the
    `@.claude/rice.md` line in `CLAUDE.md`).
 4. Gate A: run the verifier, fix exactly what a FAIL line says, re-run,
@@ -77,9 +78,13 @@ removes that old hook/script before enabling rice's archive; an existing
 Only on the OWNER's explicit request; entrypoint `/rice:rice-update`
 (OWNER-invoked only by design).
 
-- Latest stable comes from upstream release tags of `L26041040/rice-bootstrap`
-  (`git ls-remote --tags`). The target repo never declares "latest".
-- Session 1: confirm the target tag exists → move the delivery `ref` →
+- Latest stable comes from upstream `L26041040/rice-bootstrap`'s `main`
+  branch — its `.claude-plugin/plugin.json` version, CHANGELOG date, and
+  exact HEAD commit SHA (`git ls-remote .../rice-bootstrap main`). No git
+  tag or GitHub release is used anywhere; the target repo never declares
+  "latest".
+- Session 1: confirm the target commit exists → move the delivery `ref`
+  to that exact SHA →
   `claude plugin marketplace update rice-bootstrap` →
   `claude plugin update rice@rice-bootstrap` → new session.
 - Session 2: `reconcile.apply(is_rice_update=True)` → Gate A → Gate B.
@@ -115,4 +120,6 @@ allowlisted surface; it is never a mirror, never receives private history,
 and is never a source of truth. Release checks (tests, manifests, version
 consistency, this README's required sections, allowlist completeness,
 forbidden-path absence, secret scan, standalone-package validation) are
-mechanical: any FAIL → `RELEASE BLOCKED`, no tag, no publish.
+mechanical: any FAIL → `RELEASE BLOCKED`, no publish. No git tag or GitHub
+release is ever created, private or public; release identity is
+`plugin.json` version + CHANGELOG + the exact commit SHA.

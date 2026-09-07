@@ -62,10 +62,13 @@ hook/script first; an existing `session-history/` can stay as it is.
 Read `.claude/settings.json` (create `{}` if absent). Set, only if missing:
 
 - `extraKnownMarketplaces.rice-bootstrap.source.ref` — the **delivery
-  mechanism only**: the highest SemVer tag of `L26041040/rice-bootstrap`
-  (`git ls-remote --tags https://github.com/L26041040/rice-bootstrap.git`).
-  If the repo has no tags yet, say so and use `main`. This value is never
-  a verified version; `.claude/rice-version` (verifier-written) is.
+  mechanism only**: `L26041040/rice-bootstrap`'s `main` branch's exact
+  commit SHA (`git ls-remote https://github.com/L26041040/rice-bootstrap.git
+  main`), never a tag name and never the floating branch name `main`
+  itself. If upstream has no commits yet, say so and use the literal
+  string `main` as a stopgap. This value is never a verified version;
+  `.claude/rice-version` (verifier-written) is. No git tag or GitHub
+  release is used anywhere in rice's lifecycle (RICE-BOOTSTRAP-030).
 - `env.RICE_SESSION_ARCHIVE` — `"1"` if the OWNER asked for session
   archiving, otherwise the release default. Ask only if genuinely unclear.
 - `outputStyle` — the OWNER's choice, asked once on first bootstrap (skip

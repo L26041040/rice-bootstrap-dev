@@ -1,15 +1,20 @@
 """Tests for scripts/export_public.py and scripts/release.py
-(RICE-BOOTSTRAP-023, simplified per RICE-BOOTSTRAP-027): allowlist export,
-forbidden-path/secret audit, and the release gates -- any FAIL blocks; only
-the script emits the verdicts.
+(RICE-BOOTSTRAP-023, simplified per RICE-BOOTSTRAP-027, tagless per
+RICE-BOOTSTRAP-030): allowlist export, forbidden-path/secret audit, and the
+release gates -- any FAIL blocks; only the script emits the verdicts.
 
 Since RICE-BOOTSTRAP-027 the public distribution never ships tests/ or its
-fixtures, there is no credential-scan exemption, standalone validation is
-proven from the private side via a runtime import smoke test instead of
-running shipped tests inside the export, and there is no private git tag
-dependency -- release identity is plugin.json version + CHANGELOG top
-date + private HEAD SHA, recorded mechanically and stamped into every
-public commit/tag as provenance.
+fixtures, there is no credential-scan exemption, and standalone validation
+is proven from the private side via a runtime import smoke test instead of
+running shipped tests inside the export.
+
+Since RICE-BOOTSTRAP-030 no git tag or GitHub release exists anywhere in
+the lifecycle, private or public. Release identity is plugin.json version +
+CHANGELOG top date + the exact commit SHA (private HEAD for a release cut,
+public main's HEAD for what is live); the private SHA is stamped into every
+public commit message as provenance. publish() treats public `main`
+already equaling the new export as a safe already-published success, never
+a "nothing to commit" FAIL.
 
 The gates that shell out (tests, `claude plugin validate`) are exercised
 through the real dry-run in CI/manual use; here they are stubbed so the
@@ -205,13 +210,14 @@ class TestReleaseGates(unittest.TestCase):
             ok, msg = release.publish(dest, release.plugin_version(), str(bare))
             self.assertTrue(ok, msg)
             self.assertEqual(msg, "RELEASED rice " + release.plugin_version())
-            tags = subprocess.run(["git", "--git-dir", str(bare), "tag"], capture_output=True, text=True).stdout.split()
-            self.assertEqual(tags, ["v" + release.plugin_version()])
+            self.assertEqual(subprocess.run(["git", "--git-dir", str(bare), "tag"],
+                                             capture_output=True, text=True).stdout.split(), [],
+                              "no git tag is ever created (RICE-BOOTSTRAP-030)")
             files = _ls_tree(bare, "main")
             self.assertEqual(sorted(files), sorted(export_public.ALLOWLIST))
             self.assertEqual(_rev_count(bare, "main"), "1")  # fresh single-commit history, no private history
 
-    def test_publish_embeds_source_provenance_in_commit_and_tag(self):
+    def test_publish_embeds_source_provenance_in_commit_message_only(self):
         gates, verdict, dest = self._check()
         self.assertTrue(verdict.startswith("RELEASE-CHECKS PASS"))
         sha = "deadbeef" * 5
@@ -222,11 +228,7 @@ class TestReleaseGates(unittest.TestCase):
             self.assertTrue(ok, msg)
             commit_msg = subprocess.run(["git", "--git-dir", str(bare), "log", "-1", "--format=%s", "main"],
                                          capture_output=True, text=True).stdout.strip()
-            tag_msg = subprocess.run(["git", "--git-dir", str(bare), "for-each-ref",
-                                       "--format=%(contents)", "refs/tags/v" + release.plugin_version()],
-                                      capture_output=True, text=True).stdout
             self.assertIn(f"source {sha}", commit_msg)
-            self.assertIn(f"source {sha}", tag_msg)
 
     def test_second_release_fast_forwards_and_reconciles_removed_files(self):
         gates, verdict, dest = self._check()
@@ -260,10 +262,35 @@ class TestReleaseGates(unittest.TestCase):
             self.assertNotIn("LICENSE", second_files,
                               "a file dropped from the export must not linger in the next release")
             self.assertEqual(sorted(second_files), sorted(f for f in export_public.ALLOWLIST if f != "LICENSE"))
+            self.assertEqual(subprocess.run(["git", "--git-dir", str(bare), "tag"],
+                                             capture_output=True, text=True).stdout.split(), [],
+                              "no git tag is ever created, first or subsequent release (RICE-BOOTSTRAP-030)")
 
-            tags = sorted(subprocess.run(["git", "--git-dir", str(bare), "tag"],
-                                          capture_output=True, text=True).stdout.split())
-            self.assertEqual(tags, ["v0.1.1", "v0.1.2"])
+    def test_republish_of_the_same_already_published_content_is_not_a_fail(self):
+        """RICE-BOOTSTRAP-029: a re-run whose public main already equals this
+        export (e.g. an earlier run's push already landed but the run did
+        not finish cleanly) must be a safe already-published RELEASED, never
+        a 'nothing to commit' FAIL."""
+        gates, verdict, dest = self._check()
+        self.assertTrue(verdict.startswith("RELEASE-CHECKS PASS"))
+        with tempfile.TemporaryDirectory() as d:
+            bare = Path(d) / "public.git"
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
+
+            ok1, msg1 = release.publish(dest, "0.1.1", str(bare), source_sha="a" * 40)
+            self.assertTrue(ok1, msg1)
+            first_sha = _rev_parse(bare, "main")
+
+            # re-run with an export identical in content to what is already
+            # published -- must succeed without creating a new commit
+            dest2 = Path(d) / "export-again"
+            shutil.copytree(dest, dest2)
+            ok2, msg2 = release.publish(dest2, "0.1.1", str(bare), source_sha="a" * 40)
+            self.assertTrue(ok2, msg2)
+            self.assertEqual(msg2, "RELEASED rice 0.1.1")
+            second_sha = _rev_parse(bare, "main")
+            self.assertEqual(second_sha, first_sha, "no new commit should be created for identical content")
+            self.assertEqual(_rev_count(bare, "main"), "1")
 
     def test_verdict_strings_only_from_release_script(self):
         for py in (ROOT / "scripts").glob("*.py"):

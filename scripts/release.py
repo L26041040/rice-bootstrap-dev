@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """rice release: deterministic mechanical gates, export, and publish.
 
-Skill -> this script -> GitHub-native tag/push. No hook, no daemon, no state
-machine. The agent never decides a release is OK; only this script's
-`RELEASE-CHECKS PASS <version>` allows an export/publish to proceed, and
-only its `RELEASED rice <version>` line means a release happened.
+Skill -> this script -> GitHub-native push. No git tag, no GitHub release,
+no hook, no daemon, no state machine (RICE-BOOTSTRAP-030: release identity
+lives entirely in .claude-plugin/plugin.json, CHANGELOG.md, and the exact
+commit SHA -- private HEAD for a release cut, public main HEAD for what is
+actually live). The agent never decides a release is OK; only this
+script's `RELEASE-CHECKS PASS <version>` allows an export/publish to
+proceed, and only its `RELEASED rice <version>` line means a release
+happened.
 
 Verdict strings are assembled at runtime so that tests/test_verify.py's
 "only verify.py emits verifier verdicts" grep stays honest -- those are the
@@ -249,20 +253,28 @@ def _replace_worktree_with_export(git_root: Path, export_dir: Path) -> None:
 
 
 def publish(dest: Path, version: str, public_repo: str | None, source_sha: str = "") -> tuple[bool, str]:
-    """Publish the exported surface to the public repository and tag it.
-    Only called after a PASS verdict. Deterministic two-case flow:
+    """Publish the exported surface to the public repository. Only called
+    after a PASS verdict. No git tag or GitHub release is ever created,
+    pushed, or checked (RICE-BOOTSTRAP-030) -- success is public `main`
+    correctly holding this export, confirmed by re-reading the remote.
+    Deterministic flow:
 
     - public repo has no `main` yet: fresh single-commit history.
-    - public `main` already exists: fetch it, reconcile its working tree to
-      exactly the new export (dropping anything no longer allowlisted), and
-      commit a normal next release commit on top -- a fast-forward push,
-      never a rewrite, never an unrelated history.
+    - public `main` exists and differs from this export: fetch it,
+      reconcile the working tree to exactly the new export (dropping
+      anything no longer allowlisted), commit a normal next release
+      commit, fast-forward push -- never a rewrite, never an unrelated
+      history.
+    - public `main` already equals this export byte-for-byte (e.g. a
+      re-run of the same version after an earlier run's push already
+      landed): there is nothing new to commit. That is a safe
+      already-published outcome, not a FAIL -- "nothing to commit" must
+      never block a release whose content is already live.
 
-    Every release commit and tag records provenance: rice <version>
-    (source <private HEAD SHA>). No private git tag is required."""
+    Every commit records provenance: rice <version> (source <private HEAD
+    SHA>)."""
     if not public_repo:
-        return False, "WAITING_FOR_PUBLIC_REPO -- no public repository configured; nothing was tagged or pushed"
-    tag = f"v{version}"
+        return False, "WAITING_FOR_PUBLIC_REPO -- no public repository configured; nothing was pushed"
     message = f"rice {version}" + (f" (source {source_sha})" if source_sha else "")
 
     rc, out = _run(["git", "ls-remote", "--heads", public_repo, "main"])
@@ -281,24 +293,30 @@ def publish(dest: Path, version: str, public_repo: str | None, source_sha: str =
 
     _replace_worktree_with_export(ws, dest)
 
-    commit_steps = [
-        ["git", "add", "-A"],
-        ["git", "-c", "user.name=rice-release", "-c", "user.email=noreply@anthropic.com", "commit", "-q", "-m", message],
-        ["git", "tag", "-a", tag, "-m", message],
-        ["git", "push", "public", "main"],
-        ["git", "push", "public", tag],
-    ]
-    for cmd in commit_steps:
-        rc, out = _run(cmd, cwd=ws)
-        if rc != 0:
-            return False, f"publish step failed: {' '.join(cmd)} -> rc={rc} {out.strip()[-300:]}"
-    rc, out = _run(["git", "ls-remote", "--tags", public_repo, tag])
-    if rc != 0 or tag not in out:
-        return False, f"published tag {tag} not visible on {public_repo}"
-    rc_local, local_tree = _run(["git", "rev-parse", f"{tag}^{{tree}}"], cwd=ws)
-    rc_remote, remote_line = _run(["git", "ls-remote", public_repo, f"refs/tags/{tag}^{{}}"])
-    if rc_local != 0 or rc_remote != 0 or not remote_line.strip():
-        return False, "could not compare exported tree with the published tag"
+    rc, out = _run(["git", "add", "-A"], cwd=ws)
+    if rc != 0:
+        return False, f"publish step failed: git add -A -> rc={rc} {out.strip()[-300:]}"
+    rc, out = _run(["git", "diff", "--cached", "--name-only"], cwd=ws)
+    if rc != 0:
+        return False, f"publish step failed: git diff --cached --name-only -> rc={rc} {out.strip()[-300:]}"
+
+    if out.strip():
+        commit_steps = [
+            ["git", "-c", "user.name=rice-release", "-c", "user.email=noreply@anthropic.com", "commit", "-q", "-m", message],
+            ["git", "push", "public", "main"],
+        ]
+        for cmd in commit_steps:
+            rc, out = _run(cmd, cwd=ws)
+            if rc != 0:
+                return False, f"publish step failed: {' '.join(cmd)} -> rc={rc} {out.strip()[-300:]}"
+    # else: public main already equals this export -- already published,
+    # nothing new to commit or push.
+
+    rc_local, local_sha = _run(["git", "rev-parse", "HEAD"], cwd=ws)
+    rc_remote, remote_out = _run(["git", "ls-remote", "--heads", public_repo, "main"])
+    remote_sha = remote_out.split()[0] if remote_out.strip() else ""
+    if rc_local != 0 or rc_remote != 0 or local_sha.strip() != remote_sha:
+        return False, "could not verify published main matches the export"
     return True, "RELEASED rice " + version
 
 
