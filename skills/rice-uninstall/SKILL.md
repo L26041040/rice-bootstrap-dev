@@ -31,7 +31,7 @@ lists what is still there; your own reading of the tree counts for nothing.
    proactively ask about removing the user-level `rice@rice-bootstrap`
    plugin or the `rice-bootstrap` marketplace. Other repos in this
    environment may still use them; that is the default assumption, not a
-   question to raise (RICE-BOOTSTRAP-034/036: an earlier version of this
+   question to raise (RICE-BOOTSTRAP-034: an earlier version of this
    skill asked this unconditionally after every repo uninstall — that was
    unnecessary and introduced cross-repo risk).
 

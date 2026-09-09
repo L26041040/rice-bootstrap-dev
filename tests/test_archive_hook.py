@@ -415,6 +415,34 @@ class TestArchiveSync(unittest.TestCase):
         md_files = [p for p in (self.repo_root / "session-history").glob("*.md") if p.name != "INDEX.md"]
         self.assertEqual(len(md_files), 1)  # local commit still stands
 
+    def test_pushes_to_the_actual_configured_remote_not_a_hardcoded_origin(self):
+        """RICE-BOOTSTRAP-037 review finding: sync_main() used to hardcode
+        'origin' regardless of what the branch actually tracks."""
+        _git(self.repo_root, "remote", "rename", "origin", "upstream-remote")
+        _run_main(_payload(self.repo_root), archive_enabled=True)
+        rc, err = _run_sync(_sync_payload(self.repo_root))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self._remote_head(), self._local_head())
+
+    def test_range_check_fails_closed_when_rev_list_itself_fails(self):
+        """RICE-BOOTSTRAP-037 review finding: a failed `git rev-list` must
+        never be mistaken for 'nothing to sync' -- that would let
+        reconcile._archive_behaves_item report a false PASS."""
+        _run_main(_payload(self.repo_root), archive_enabled=True)
+        branch = archive_hook._current_branch(self.repo_root)
+        upstream = archive_hook._upstream_ref(self.repo_root, branch)
+        real_run = archive_hook.run
+
+        def flaky_run(cmd, **kw):
+            if "rev-list" in cmd:
+                return subprocess.CompletedProcess(cmd, 128, stdout="", stderr="fatal: boom\n")
+            return real_run(cmd, **kw)
+
+        with mock.patch.object(archive_hook, "run", side_effect=flaky_run):
+            safe, detail = archive_hook._range_is_safe_to_push(self.repo_root, upstream)
+        self.assertFalse(safe)
+        self.assertIn("could not list commits", detail)
+
     def test_detached_head_is_a_noop(self):
         _run_main(_payload(self.repo_root), archive_enabled=True)
         _git(self.repo_root, "checkout", "-q", "--detach", "HEAD")

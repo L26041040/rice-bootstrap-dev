@@ -495,6 +495,11 @@ def _range_is_safe_to_push(repo_root: Path, upstream: str) -> tuple[bool, str]:
     if run(["git", "-C", str(repo_root), "merge-base", "--is-ancestor", upstream, "HEAD"]).returncode != 0:
         return False, f"upstream {upstream} is not an ancestor of HEAD"
     r = run(["git", "-C", str(repo_root), "rev-list", f"{upstream}..HEAD"])
+    if r.returncode != 0:
+        # A failed rev-list must never read the same as "nothing to sync" --
+        # that would let _archive_behaves_item report a false PASS without
+        # ever having actually confirmed the range is empty.
+        return False, f"could not list commits ahead of {upstream}: rc={r.returncode}"
     shas = [s for s in r.stdout.split() if s]
     if not shas:
         return True, "nothing to sync"
@@ -531,12 +536,13 @@ def sync_main() -> int:
     if detail == "nothing to sync":
         print("rice: archive already in sync with upstream", file=sys.stderr)
         return 0
-    r = run(["git", "-C", str(repo_root), "push", "origin", f"HEAD:{branch}"], timeout=PUSH_TIMEOUT_SECONDS)
+    remote = upstream.split("/", 1)[0]
+    r = run(["git", "-C", str(repo_root), "push", remote, f"HEAD:{branch}"], timeout=PUSH_TIMEOUT_SECONDS)
     if r.returncode != 0:
         print(f"rice: archive sync push failed, local commit(s) remain ({detail}): {r.stdout}{r.stderr}",
               file=sys.stderr)
         return 0
-    print(f"rice: archive synced to origin/{branch} ({detail})", file=sys.stderr)
+    print(f"rice: archive synced to {upstream} ({detail})", file=sys.stderr)
     return 0
 
 
