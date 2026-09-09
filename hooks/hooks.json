@@ -12,6 +12,19 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/archive_hook.py\" --sync",
+            "timeout": 60,
+            "statusMessage": "Syncing session archive..."
+          }
+        ]
+      }
     ]
   }
 }

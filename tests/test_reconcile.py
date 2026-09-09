@@ -4,6 +4,7 @@ Run: python3 -m unittest tests.test_reconcile -v
 """
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -458,34 +459,85 @@ class TestRubricKinds(ReconcileTestBase):
             "plugin:installed", "plugin:build", "output-style:bundled", "output-style:choice",
             "settings:permissions.deny",
             "settings:env.CLAUDE_CODE_SUBAGENT_MODEL", "rice.md", "CLAUDE.md:import-line",
-            "archive-hook:exists",
-            "archive:behaves", "git-deny:behaves", "matt:artifacts", "rtk",
+            "archive-hook:exists", "archive-sync-hook:exists",
+            "git-deny:behaves", "matt:artifacts", "rtk",
         ]:
             self.assertIn(required, names)
+        # archive:behaves is deliberately NOT part of the rubric
+        # (RICE-BOOTSTRAP-032) -- it gates nothing, so it must not appear
+        # in check()'s output (RICE-BOOTSTRAP-021's "no informational
+        # escape hatch" invariant, see tests/test_verify.py).
+        self.assertNotIn("archive:behaves", names)
 
     def test_behaves_items_are_not_verified_without_evidence(self):
         _make_correct_repo(self.repo_root)
         items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
         st = {i.name: i for i in items}
-        self.assertEqual(st["archive:behaves"].state, "NOT_VERIFIED")
         self.assertEqual(st["git-deny:behaves"].state, "NOT_VERIFIED")
         self.assertIn("git branch --show-current", st["git-deny:behaves"].detail)
 
-    def test_archive_behaves_pass_only_with_real_evidence(self):
-        _make_correct_repo(self.repo_root)
-        sh = self.repo_root / "session-history"; sh.mkdir()
-        (sh / "INDEX.md").write_text("# Session Archive Index\n\n| Date | Title | Excerpt | Turns | File |\n|---|---|---|---|---|\n| 2026-09-05 | t | e | 4 | 2026-09-05_x.md |\n")
-        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual({i.name: i.state for i in items}["archive:behaves"], "NOT_VERIFIED")  # row but no file
-        (sh / "2026-09-05_x.md").write_text("# archive\n")
-        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual({i.name: i.state for i in items}["archive:behaves"], "PASS")
 
-    def test_archive_behaves_pass_when_switched_off(self):
+def _git_r(root, *args):
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=True)
+
+
+def _init_archive_repo(root: Path, remote: Path) -> None:
+    _git_r(remote, "init", "-q", "--bare", "-b", "main")
+    _git_r(root, "init", "-q", "-b", "main")
+    _git_r(root, "config", "user.email", "test@example.com")
+    _git_r(root, "config", "user.name", "Test")
+    _git_r(root, "remote", "add", "origin", str(remote))
+    (root / "README.md").write_text("init\n")
+    _git_r(root, "add", "README.md")
+    _git_r(root, "commit", "-q", "-m", "init")
+    _git_r(root, "push", "-q", "-u", "origin", "main")
+
+
+class TestArchiveBehavesDiagnostic(ReconcileTestBase):
+    """_archive_behaves_item is a standalone diagnostic (RICE-BOOTSTRAP-032),
+    not part of reconcile.check()'s rubric -- see TestRubricKinds above."""
+
+    def setUp(self):
+        super().setUp()
+        self._remote_tmp = tempfile.TemporaryDirectory()
+        _init_archive_repo(self.repo_root, Path(self._remote_tmp.name))
+
+    def tearDown(self):
+        self._remote_tmp.cleanup()
+        super().tearDown()
+
+    def test_pass_when_switched_off_regardless_of_git_state(self):
         settings = _fully_correct_settings(); settings["env"]["RICE_SESSION_ARCHIVE"] = "0"
-        _write_settings(self.repo_root, settings)
-        items = reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual({i.name: i.state for i in items}["archive:behaves"], "PASS")
+        self.assertEqual(reconcile._archive_behaves_item(self.repo_root, settings).state, "PASS")
+
+    def test_not_verified_when_nothing_produced_yet(self):
+        settings = _fully_correct_settings()
+        self.assertEqual(reconcile._archive_behaves_item(self.repo_root, settings).state, "NOT_VERIFIED")
+
+    def test_never_pass_from_local_file_evidence_alone(self):
+        """The exact false-PASS this diagnostic exists to close: a Rice
+        archive commit sitting locally, unpushed, must never read PASS."""
+        settings = _fully_correct_settings()
+        sh = self.repo_root / "session-history"; sh.mkdir()
+        (sh / "INDEX.md").write_text(
+            "# Session Archive Index\n\n| Date | Title | Excerpt | Turns | File |\n|---|---|---|---|---|\n"
+            "| 2026-09-05 | t | e | 4 | 2026-09-05_x.md |\n")
+        (sh / "2026-09-05_x.md").write_text("# archive\n")
+        _git_r(self.repo_root, "add", "session-history")
+        _git_r(self.repo_root, "commit", "-q", "-m", f"session history: x\n\n{reconcile.archive_hook.RICE_ARCHIVE_TRAILER}")
+        self.assertEqual(reconcile._archive_behaves_item(self.repo_root, settings).state, "NOT_VERIFIED")
+
+    def test_pass_once_the_archive_commit_reaches_upstream(self):
+        settings = _fully_correct_settings()
+        sh = self.repo_root / "session-history"; sh.mkdir()
+        (sh / "INDEX.md").write_text(
+            "# Session Archive Index\n\n| Date | Title | Excerpt | Turns | File |\n|---|---|---|---|---|\n"
+            "| 2026-09-05 | t | e | 4 | 2026-09-05_x.md |\n")
+        (sh / "2026-09-05_x.md").write_text("# archive\n")
+        _git_r(self.repo_root, "add", "session-history")
+        _git_r(self.repo_root, "commit", "-q", "-m", f"session history: x\n\n{reconcile.archive_hook.RICE_ARCHIVE_TRAILER}")
+        _git_r(self.repo_root, "push", "-q", "origin", "HEAD:main")
+        self.assertEqual(reconcile._archive_behaves_item(self.repo_root, settings).state, "PASS")
 
     def test_plugin_build_mismatch_is_fail(self):
         _make_correct_repo(self.repo_root)

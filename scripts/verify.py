@@ -15,14 +15,17 @@ Gate A (RICE-VERIFIED <build>): everything rice controls or can verify
 mechanically without the OWNER at the keyboard. Passing it is the
 precondition for entering WAITING_FOR_MATT.
 
-Gate B (FINAL-VERIFIED <build>): Gate A again, plus the items that need
-the OWNER's own actions or the environment (Matt artifacts, RTK, a real
-/clear having produced an archive). Matt and RTK are REQUIRED, not
-optional integrations: v1 is the OWNER's actual workflow, and no
-FINAL-VERIFIED exists without both. Only a Gate B
-pass writes `.claude/rice-version`; on any failure the file is left
-byte-for-byte untouched. The same pass removes the WAITING_FOR_MATT marker
--- the deterministic re-check #28 asked for.
+Gate B (FINAL-VERIFIED <build>): Gate A again, plus the items that need the
+OWNER's own actions or the environment (Matt artifacts, RTK). Matt and RTK
+are REQUIRED, not optional integrations: v1 is the OWNER's actual workflow,
+and no FINAL-VERIFIED exists without both. A real `/clear` is deliberately
+NOT required (RICE-BOOTSTRAP-032): archive registration is a Gate A fact
+(`archive-hook:exists`, `archive-sync-hook:exists` -- wired, not exercised),
+and whether a produced archive has actually reached its upstream
+(`archive:behaves`) is informational only, checked from git state, never a
+gate requirement. Only a Gate B pass writes `.claude/rice-version`; on any
+failure the file is left byte-for-byte untouched. The same pass removes the
+WAITING_FOR_MATT marker -- the deterministic re-check #28 asked for.
 
 Pyramid check for this module: Setting/Permission cannot verify
 themselves; this is a Script; no Hook is needed (verification runs when a
@@ -50,11 +53,11 @@ GATE_A = (
     "rice.md",
     "CLAUDE.md:import-line",
     "archive-hook:exists",
+    "archive-sync-hook:exists",
     "git-deny:behaves",
 )
 
 GATE_B_EXTRA = (
-    "archive:behaves",
     "matt:artifacts",
     "rtk",
 )

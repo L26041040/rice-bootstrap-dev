@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
-"""Ticket #22: SessionEnd(reason=clear) hook -- archive the ended session as
-readable, redacted Markdown, with a mechanical INDEX row.
+"""Ticket #22 (RICE-BOOTSTRAP-032 split): archive an ended session as
+readable, redacted Markdown, with a mechanical INDEX row -- and separately,
+safely sync any pending archive commits to origin.
 
-Wired in the plugin's hooks.json as a SessionEnd hook (matcher: "clear"),
-so Claude Code itself decides when this runs. Reads the archive-toggle
-env key from #15's settings template (RICE_SESSION_ARCHIVE) -- no-op
-immediately if it isn't exactly "1".
+Two entrypoints, two hook events, wired in the plugin's hooks.json so
+Claude Code itself decides when each runs:
 
-Failure policy (#13 "Session archive + INDEX", #22 scope): report clearly
-to stderr and return without blocking. Claude Code offers no mechanism to
-make a SessionEnd hook block /clear -- a non-zero exit only surfaces
-stderr, it never stops the clear or the session from proceeding. There is
-no retry-as-protocol, no escape hatch, no pending/recovery state: on a
-commit failure, any files this run wrote are rolled back so the working
-tree is left exactly as it was found (a plain re-run of the hook is not a
-"retry protocol", it's just running the hook again); on a push failure,
-the local commit stands as-is.
+- `main()` -- SessionEnd(clear): parse/redact/archive, write INDEX, local
+  git commit. Never touches the network.
+- `sync_main()` (invoked with `--sync`) -- SessionStart(clear): push any
+  commits this repo is ahead of its upstream by, but ONLY when every one
+  of them is mechanically provable to be a Rice archive commit (see
+  `RICE_ARCHIVE_TRAILER`) touching nothing but `session-history/**`. Rice
+  must never use archive sync as a reason to publish unrelated
+  OWNER/project work that happens to be sitting ahead of the same
+  upstream -- see `_range_is_safe_to_push`. Git itself is the only pending
+  -state store: no queue, database, or state machine.
+
+Failure policy (#13 "Session archive + INDEX", #22 scope, extended by
+RICE-BOOTSTRAP-032 to the sync phase): report clearly to stderr and return
+without blocking. Claude Code offers no mechanism to make a SessionEnd or
+SessionStart hook block the session -- a non-zero exit only surfaces
+stderr. There is no retry-as-protocol, no escape hatch, no pending/recovery
+state beyond git's own ahead/behind: on a commit failure, any files this
+run wrote are rolled back so the working tree is left exactly as it was
+found (a plain re-run of the hook is not a "retry protocol", it's just
+running the hook again); when sync finds the ahead range unsafe or a push
+fails, the local commit(s) simply stand as-is until the next SessionStart.
 
 ---------------------------------------------------------------------------
 Vendored code notice (MIT)
@@ -71,11 +82,17 @@ try:
 except ImportError:
     ZoneInfo = None
 
-# SessionEnd hooks share a 1.5s default budget; the plugin's hooks.json sets
-# this hook's own `timeout` to 60 (the documented cap) to match. The push
-# below uses a smaller timeout so it fails loudly with time to spare instead
-# of racing that outer cutoff.
+# SessionEnd/SessionStart hooks share a 1.5s default budget; the plugin's
+# hooks.json sets each hook's own `timeout` to 60 (the documented cap) to
+# match. sync_main()'s push uses a smaller timeout so it fails loudly with
+# time to spare instead of racing that outer cutoff.
 PUSH_TIMEOUT_SECONDS = 30
+
+# Mechanical identity for a Rice-authored archive commit (RICE-BOOTSTRAP-032):
+# a trailer line, not a heuristic on the commit message subject, so sync can
+# tell a Rice archive commit apart from any OWNER/project commit with
+# certainty before ever considering a push.
+RICE_ARCHIVE_TRAILER = "Rice-Archive: true"
 
 TZ_NAME = os.environ.get("SESSION_HISTORY_TZ", "Asia/Taipei")
 CLEAR_MARKER = "<command-name>/clear</command-name>"
@@ -444,6 +461,85 @@ def _current_branch(repo_root: Path) -> str:
     return "" if branch in ("", "HEAD") else branch
 
 
+def _upstream_ref(repo_root: Path, branch: str) -> str | None:
+    r = run(["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", f"{branch}@{{upstream}}"])
+    if r.returncode != 0:
+        return None
+    ref = r.stdout.strip()
+    return ref or None
+
+
+def _is_rice_archive_commit(repo_root: Path, sha: str) -> bool:
+    r = run(["git", "-C", str(repo_root), "log", "-1", "--format=%B", sha])
+    if r.returncode != 0:
+        return False
+    return any(line.strip() == RICE_ARCHIVE_TRAILER for line in r.stdout.splitlines())
+
+
+def _commit_touches_only_session_history(repo_root: Path, sha: str) -> bool:
+    r = run(["git", "-C", str(repo_root), "diff-tree", "--no-commit-id", "--name-only", "-r", sha])
+    if r.returncode != 0:
+        return False
+    paths = [p for p in r.stdout.splitlines() if p.strip()]
+    if not paths:
+        return False  # an empty diff proves nothing; fail closed
+    return all(p.startswith("session-history/") for p in paths)
+
+
+def _range_is_safe_to_push(repo_root: Path, upstream: str) -> tuple[bool, str]:
+    """Fail-closed range check (RICE-BOOTSTRAP-032). Rice must never use
+    archive sync as a reason to publish unrelated OWNER/project work that
+    happens to be sitting ahead of the same upstream: every commit in
+    `upstream..HEAD` must be mechanically provable to be a Rice archive
+    commit touching only session-history/**, or nothing gets pushed."""
+    if run(["git", "-C", str(repo_root), "merge-base", "--is-ancestor", upstream, "HEAD"]).returncode != 0:
+        return False, f"upstream {upstream} is not an ancestor of HEAD"
+    r = run(["git", "-C", str(repo_root), "rev-list", f"{upstream}..HEAD"])
+    shas = [s for s in r.stdout.split() if s]
+    if not shas:
+        return True, "nothing to sync"
+    for sha in shas:
+        if not _is_rice_archive_commit(repo_root, sha):
+            return False, f"commit {sha[:8]} ahead of {upstream} is not a Rice archive commit"
+        if not _commit_touches_only_session_history(repo_root, sha):
+            return False, f"commit {sha[:8]} touches a path outside session-history/"
+    return True, f"{len(shas)} Rice archive commit(s) safe to push"
+
+
+def sync_main() -> int:
+    """SessionStart(clear) hook: push pending Rice archive commits when (and
+    only when) the entire ahead range is safe -- see `_range_is_safe_to_push`.
+    Never blocks session start: always returns 0."""
+    payload = read_payload()
+    cwd = payload.get("cwd") or ""
+    if not cwd:
+        print("rice: hook payload has no cwd; nothing to sync", file=sys.stderr)
+        return 0
+    repo_root = Path(cwd)
+    branch = _current_branch(repo_root)
+    if not branch:
+        print("rice: detached HEAD; nothing to sync", file=sys.stderr)
+        return 0
+    upstream = _upstream_ref(repo_root, branch)
+    if not upstream:
+        print(f"rice: {branch} has no upstream configured; nothing to sync", file=sys.stderr)
+        return 0
+    safe, detail = _range_is_safe_to_push(repo_root, upstream)
+    if not safe:
+        print(f"rice: archive sync pending (not auto-pushed): {detail}", file=sys.stderr)
+        return 0
+    if detail == "nothing to sync":
+        print("rice: archive already in sync with upstream", file=sys.stderr)
+        return 0
+    r = run(["git", "-C", str(repo_root), "push", "origin", f"HEAD:{branch}"], timeout=PUSH_TIMEOUT_SECONDS)
+    if r.returncode != 0:
+        print(f"rice: archive sync push failed, local commit(s) remain ({detail}): {r.stdout}{r.stderr}",
+              file=sys.stderr)
+        return 0
+    print(f"rice: archive synced to origin/{branch} ({detail})", file=sys.stderr)
+    return 0
+
+
 def read_payload() -> dict:
     data = sys.stdin.read()
     if not data.strip():
@@ -555,7 +651,8 @@ def main() -> int:
             print("FAIL: git add failed", file=sys.stderr)
             _rollback(staged=to_add)  # a partial add may have staged some
             return 1
-        r = run(["git", "-C", str(repo_root), "commit", "-m", f"session history: {base}", "--", *to_add])
+        commit_message = f"session history: {base}\n\n{RICE_ARCHIVE_TRAILER}"
+        r = run(["git", "-C", str(repo_root), "commit", "-m", commit_message, "--", *to_add])
         if r.returncode != 0:
             print(f"FAIL: git commit failed:\n{r.stdout}{r.stderr}", file=sys.stderr)
             _rollback(staged=to_add)
@@ -564,19 +661,11 @@ def main() -> int:
     else:
         print(f"already written and committed: {rel_dest} (resuming)", file=sys.stderr)
 
-    branch = _current_branch(repo_root)
-    if not branch:
-        print(f"ARCHIVED {rel_dest} (committed locally; detached HEAD, so no push)", file=sys.stderr)
-        return 0
-
-    r = run(["git", "-C", str(repo_root), "push", "origin", f"HEAD:{branch}"], timeout=PUSH_TIMEOUT_SECONDS)
-    if r.returncode != 0:
-        print(f"FAIL: git push failed (local commit remains):\n{r.stdout}{r.stderr}", file=sys.stderr)
-        return 1
-
-    print(f"ARCHIVED {rel_dest} (pushed to origin/{branch})", file=sys.stderr)
+    print(f"ARCHIVED {rel_dest} (committed locally; sync happens at the next SessionStart)", file=sys.stderr)
     return 0
 
 
 if __name__ == "__main__":
+    if "--sync" in sys.argv[1:]:
+        raise SystemExit(sync_main())
     raise SystemExit(main())

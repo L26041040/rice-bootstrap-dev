@@ -30,6 +30,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import archive_hook
 import output_styles
 import settings_template
 
@@ -351,20 +352,55 @@ def _archive_hook_item() -> ItemResult:
     return ItemResult("archive-hook:exists", "FAIL", "no SessionEnd(clear) -> archive_hook.py entry in hooks.json", kind=EXISTS)
 
 
+def _archive_sync_hook_item() -> ItemResult:
+    """RICE-BOOTSTRAP-032: registration-only, like archive-hook:exists --
+    is the SessionStart sync hook wired, never has it actually run/pushed."""
+    hooks = PLUGIN_ROOT / "hooks" / "hooks.json"
+    script = PLUGIN_ROOT / "scripts" / "archive_hook.py"
+    try:
+        cfg = json.loads(hooks.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ItemResult("archive-sync-hook:exists", "FAIL", "hooks/hooks.json missing or invalid in this build", kind=EXISTS)
+    for entry in cfg.get("hooks", {}).get("SessionStart", []):
+        if entry.get("matcher") == "clear" and any(
+            "archive_hook.py" in h.get("command", "") and "--sync" in h.get("command", "")
+            for h in entry.get("hooks", [])
+        ):
+            if script.exists():
+                return ItemResult("archive-sync-hook:exists", "PASS", kind=EXISTS)
+            return ItemResult("archive-sync-hook:exists", "FAIL",
+                               "hooks.json wires the sync hook but archive_hook.py is missing", kind=EXISTS)
+    return ItemResult("archive-sync-hook:exists", "FAIL",
+                       "no SessionStart(clear) -> archive_hook.py --sync entry in hooks.json", kind=EXISTS)
+
+
 def _archive_behaves_item(repo_root: Path, current_settings: dict) -> ItemResult:
-    """BEHAVES: only a real /clear proves it. Evidence-based: an INDEX row
-    whose archive file exists in this repo means it has already happened
-    here. Never a PASS without that evidence."""
+    """A standalone, explicit diagnostic (RICE-BOOTSTRAP-032) -- deliberately
+    NOT part of `check()`'s rubric, since every item the rubric produces
+    must be required by a gate (RICE-BOOTSTRAP-021) and this one gates
+    nothing. Call it directly (release E2E, a manual check) to ask: has
+    every Rice archive commit this repo has produced actually reached the
+    branch's upstream? PASS only from that git-state evidence -- never from
+    local file evidence alone, which would be a false PASS whenever a
+    commit is sitting unpushed."""
     switch = _get_path(current_settings, "env.RICE_SESSION_ARCHIVE")
     if switch is not _MISSING and str(switch) != "1":
         return ItemResult("archive:behaves", "PASS", "archiving is switched off for this repo (RICE_SESSION_ARCHIVE != 1); nothing to exercise", kind=BEHAVES)
     index = repo_root / "session-history" / "INDEX.md"
-    if index.exists():
-        for line in index.read_text(encoding="utf-8").splitlines():
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            if len(cells) >= 5 and cells[-1].endswith(".md") and (repo_root / "session-history" / cells[-1]).exists():
-                return ItemResult("archive:behaves", "PASS", f"evidence: INDEX row -> session-history/{cells[-1]} exists", kind=BEHAVES)
-    return ItemResult("archive:behaves", "NOT_VERIFIED", "not yet exercised in this repo: do a real /clear with RICE_SESSION_ARCHIVE=1 and re-run check (see #29)", kind=BEHAVES)
+    if not index.exists():
+        return ItemResult("archive:behaves", "NOT_VERIFIED", "no archive has been produced yet in this repo", kind=BEHAVES)
+    branch = archive_hook._current_branch(repo_root)
+    if not branch:
+        return ItemResult("archive:behaves", "NOT_VERIFIED", "detached HEAD; cannot compare against an upstream", kind=BEHAVES)
+    upstream = archive_hook._upstream_ref(repo_root, branch)
+    if not upstream:
+        return ItemResult("archive:behaves", "NOT_VERIFIED", f"{branch} has no upstream configured", kind=BEHAVES)
+    safe, detail = archive_hook._range_is_safe_to_push(repo_root, upstream)
+    if not safe:
+        return ItemResult("archive:behaves", "NOT_VERIFIED", f"pending, unsafe to auto-push: {detail}", kind=BEHAVES)
+    if detail == "nothing to sync":
+        return ItemResult("archive:behaves", "PASS", "every produced archive commit is present on the upstream", kind=BEHAVES)
+    return ItemResult("archive:behaves", "NOT_VERIFIED", f"pending: {detail}, not yet pushed", kind=BEHAVES)
 
 
 import os
@@ -480,8 +516,13 @@ def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> list[ItemResult]:
     items.append(_rice_md_item(repo_root, write=False, is_rice_update=False))
     items.append(_claude_md_item(repo_root, write=False))
     items.append(_archive_hook_item())
+    items.append(_archive_sync_hook_item())
     items.append(_git_deny_evidence_item(repo_root))
-    items.append(_archive_behaves_item(repo_root, current))
+    # archive:behaves is deliberately NOT part of the rubric (RICE-BOOTSTRAP-032):
+    # it is an explicit, standalone diagnostic (see `_archive_behaves_item`),
+    # called directly by release E2E / manual checks, never mixed into
+    # `check()`'s output -- every item this rubric produces must be required
+    # by a gate (RICE-BOOTSTRAP-021), and archive:behaves gates nothing.
     items.append(_matt_item(repo_root, plugin_probe))
     items.append(_rtk_item(rtk_probe))
     return items

@@ -183,9 +183,11 @@ class TestGateA(VerifierRunBase):
 
 class TestGateBAndVersionAuthority(VerifierRunBase):
     def test_final_pass_writes_version_and_clears_marker(self):
+        # RICE-BOOTSTRAP-032: deliberately no _write_archive_evidence call --
+        # FINAL-VERIFIED must be reachable without a real /clear ever having
+        # produced an archive.
         _make_correct_repo(self.root, matt=True)
         _write_transcript(self.root)
-        _write_archive_evidence(self.root)
         enter_waiting_for_matt(self.root)
         rep = self.run_verify(final=True)
         self.assertTrue(rep.gate_b, rep.lines)
@@ -210,11 +212,11 @@ class TestGateBAndVersionAuthority(VerifierRunBase):
         self.assertTrue(any(l.startswith("FINAL FAIL") for l in rep.lines))
 
     def test_each_gate_b_extra_item_alone_blocks_final(self):
-        # archive evidence missing
-        _make_correct_repo(self.root, matt=True); _write_transcript(self.root)
+        # matt missing
+        _make_correct_repo(self.root, matt=False); _write_transcript(self.root)
         self.assertFalse(self.run_verify(final=True).gate_b)
         # rtk missing
-        _write_archive_evidence(self.root)
+        _make_correct_repo(self.root, matt=True)
         rep = verify.run(self.root, final=True, rtk_probe=lambda c: (_ for _ in ()).throw(FileNotFoundError()), plugin_probe=_installed)
         self.assertFalse(rep.gate_b)
         self.assertFalse((self.root / verify.VERSION_FILE).exists())

@@ -213,17 +213,22 @@ class TestArchiveHookMain(unittest.TestCase):
         self.assertEqual(_git(self.repo_root, "status", "--porcelain").stdout, "")
         self.assertFalse((self.repo_root / "session-history").exists())
 
-    def test_push_failure_keeps_local_commit_and_does_not_block(self):
+    def test_session_end_never_touches_the_network(self):
+        """RICE-BOOTSTRAP-032: SessionEnd only commits locally, even when
+        origin is unreachable -- there is no push in this code path at all."""
         _git(self.repo_root, "remote", "set-url", "origin", "/nonexistent/does-not-exist.git")
         rc, err = _run_main(_payload(self.repo_root), archive_enabled=True)
-        self.assertNotEqual(rc, 0)
-        self.assertIn("FAIL", err)
-        self.assertIn("local commit remains", err)
+        self.assertEqual(rc, 0, err)
         archive_dir = self.repo_root / "session-history"
         md_files = [p for p in archive_dir.glob("*.md") if p.name != "INDEX.md"]
         self.assertEqual(len(md_files), 1)
         log = _git(self.repo_root, "log", "--oneline").stdout
         self.assertEqual(len(log.strip().splitlines()), 2)  # init + archive commit
+
+    def test_archive_commit_carries_the_rice_archive_trailer(self):
+        _run_main(_payload(self.repo_root), archive_enabled=True)
+        message = _git(self.repo_root, "log", "-1", "--format=%B").stdout
+        self.assertIn(archive_hook.RICE_ARCHIVE_TRAILER, message)
 
     def test_running_twice_does_not_duplicate(self):
         _run_main(_payload(self.repo_root), archive_enabled=True)
@@ -286,3 +291,134 @@ class TestIndexAcrossTwoClears(unittest.TestCase):
         self.assertEqual(sum(1 for l in second_index.splitlines() if l.startswith("| 20")), 2)
         log = _git(self.repo_root, "log", "--oneline").stdout.strip().splitlines()
         self.assertEqual(len(log), 3)  # init + two archive commits
+
+
+def _sync_payload(repo_root: Path) -> dict:
+    return {"cwd": str(repo_root), "hook_event_name": "SessionStart", "source": "clear"}
+
+
+def _run_sync(payload: dict) -> tuple[int, str]:
+    stdin = io.StringIO(json.dumps(payload))
+    stderr = io.StringIO()
+    with mock.patch("sys.stdin", stdin), contextlib.redirect_stderr(stderr):
+        rc = archive_hook.sync_main()
+    return rc, stderr.getvalue()
+
+
+def _plain_commit(repo: Path, filename: str = "user-file.txt", message: str = "user work") -> None:
+    (repo / filename).write_text("work\n")
+    _git(repo, "add", filename)
+    _git(repo, "commit", "-q", "-m", message)
+
+
+def _fake_archive_commit_touching_outside_session_history(repo: Path) -> None:
+    """A commit carrying the Rice-Archive trailer that ALSO touches a path
+    outside session-history/ -- sync must refuse it regardless of the
+    trailer (RICE-BOOTSTRAP-032: identity alone is not enough)."""
+    (repo / "session-history").mkdir(exist_ok=True)
+    (repo / "session-history" / "fake.md").write_text("fake\n")
+    (repo / "not-session-history.txt").write_text("oops\n")
+    _git(repo, "add", "session-history/fake.md", "not-session-history.txt")
+    _git(repo, "commit", "-q", "-m", f"session history: fake\n\n{archive_hook.RICE_ARCHIVE_TRAILER}")
+
+
+class TestArchiveSync(unittest.TestCase):
+    """RICE-BOOTSTRAP-032: SessionStart(clear) syncs pending archive commits,
+    fail-closed. Rice must never push unrelated OWNER/project work just
+    because it happens to sit ahead of the same upstream as an archive
+    commit."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._remote_tmp = tempfile.TemporaryDirectory()
+        self.repo_root = Path(self._tmp.name)
+        self.remote = Path(self._remote_tmp.name)
+        _init_repo(self.repo_root, self.remote)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+        self._remote_tmp.cleanup()
+
+    def _remote_head(self) -> str:
+        return _git(self.remote, "rev-parse", "main").stdout.strip()
+
+    def _local_head(self) -> str:
+        return _git(self.repo_root, "rev-parse", "HEAD").stdout.strip()
+
+    def test_noop_when_nothing_pending(self):
+        before = self._remote_head()
+        rc, err = _run_sync(_sync_payload(self.repo_root))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self._remote_head(), before)
+
+    def test_pushes_when_range_is_a_single_archive_commit(self):
+        _run_main(_payload(self.repo_root), archive_enabled=True)
+        self.assertNotEqual(self._local_head(), self._remote_head())  # ahead 1
+        rc, err = _run_sync(_sync_payload(self.repo_root))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self._remote_head(), self._local_head())
+
+    def test_pushes_when_range_is_multiple_archive_commits(self):
+        _run_main(_payload(self.repo_root), archive_enabled=True)
+        p2 = _payload(self.repo_root)
+        p2["session_id"] = "beef5678-0000-0000-0000-000000000000"
+        p2["transcript_path"] = str(FIXTURE_2)
+        _run_main(p2, archive_enabled=True)
+        local_ahead = _git(self.repo_root, "rev-list", "--count", f"{self._remote_head()}..HEAD").stdout.strip()
+        self.assertEqual(local_ahead, "2")
+        rc, err = _run_sync(_sync_payload(self.repo_root))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self._remote_head(), self._local_head())
+
+    def test_refuses_when_user_commit_precedes_archive_commit(self):
+        _plain_commit(self.repo_root)
+        _run_main(_payload(self.repo_root), archive_enabled=True)
+        before_remote = self._remote_head()
+        before_local = self._local_head()
+        rc, err = _run_sync(_sync_payload(self.repo_root))
+        self.assertEqual(rc, 0, err)  # never blocks, but...
+        self.assertEqual(self._remote_head(), before_remote)  # ...nothing was pushed
+        self.assertEqual(self._local_head(), before_local)  # ...and nothing was mutated
+
+    def test_refuses_when_user_commit_follows_archive_commit(self):
+        _run_main(_payload(self.repo_root), archive_enabled=True)
+        _plain_commit(self.repo_root)
+        before_remote = self._remote_head()
+        before_local = self._local_head()
+        rc, err = _run_sync(_sync_payload(self.repo_root))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self._remote_head(), before_remote)
+        self.assertEqual(self._local_head(), before_local)
+
+    def test_refuses_when_alleged_archive_commit_touches_outside_session_history(self):
+        _fake_archive_commit_touching_outside_session_history(self.repo_root)
+        before_remote = self._remote_head()
+        rc, err = _run_sync(_sync_payload(self.repo_root))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self._remote_head(), before_remote)
+
+    def test_no_force_rebase_reset_amend_or_branch_mutation_on_refusal(self):
+        _plain_commit(self.repo_root)
+        _run_main(_payload(self.repo_root), archive_enabled=True)
+        before_local = self._local_head()
+        before_branch = _git(self.repo_root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        _run_sync(_sync_payload(self.repo_root))
+        self.assertEqual(self._local_head(), before_local, "refusal must not mutate local history")
+        self.assertEqual(_git(self.repo_root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip(), before_branch)
+        self.assertEqual(_git(self.repo_root, "status", "--porcelain").stdout, "")
+
+    def test_push_failure_does_not_block_session_start(self):
+        _run_main(_payload(self.repo_root), archive_enabled=True)
+        _git(self.repo_root, "remote", "set-url", "origin", "/nonexistent/does-not-exist.git")
+        rc, err = _run_sync(_sync_payload(self.repo_root))
+        self.assertEqual(rc, 0, err)  # never blocks, even when the push itself fails
+        md_files = [p for p in (self.repo_root / "session-history").glob("*.md") if p.name != "INDEX.md"]
+        self.assertEqual(len(md_files), 1)  # local commit still stands
+
+    def test_detached_head_is_a_noop(self):
+        _run_main(_payload(self.repo_root), archive_enabled=True)
+        _git(self.repo_root, "checkout", "-q", "--detach", "HEAD")
+        before_remote = self._remote_head()
+        rc, err = _run_sync(_sync_payload(self.repo_root))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self._remote_head(), before_remote)

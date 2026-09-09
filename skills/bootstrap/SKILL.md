@@ -171,8 +171,16 @@ OWNER/environment provide; the verifier reads their evidence:
 - `matt:artifacts` → the OWNER ran Matt setup. **Required**, not optional.
 - `rtk` → the environment must provide it. **Required**; Gate B fails until
   it does. Without both there is no `FINAL-VERIFIED`.
-- `archive:behaves` → one real `/clear` with `RICE_SESSION_ARCHIVE=1` has
-  produced an INDEX row and archive in this repo (or the switch is off).
+
+A real `/clear` is **not** required to reach `FINAL-VERIFIED`
+(RICE-BOOTSTRAP-032). Archive registration is checked mechanically in
+Gate A instead (`archive-hook:exists`, `archive-sync-hook:exists` — are
+both the `SessionEnd` archive hook and the `SessionStart` sync hook wired
+in this build, not has either one actually run). Whether a produced
+archive commit has actually reached this branch's upstream is a separate,
+explicit diagnostic (`reconcile._archive_behaves_item`, read from git
+state) — deliberately not part of the standard verifier rubric, since it
+gates nothing; call it directly if you need that answer.
 
 On `FINAL-VERIFIED <build>` the verifier itself has written
 `.claude/rice-version` and removed `WAITING_FOR_MATT`. Commit and push;
