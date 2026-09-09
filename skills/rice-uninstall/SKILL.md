@@ -26,14 +26,26 @@ lists what is still there; your own reading of the tree counts for nothing.
 2. Quote its last line verbatim. On `RICE-UNINSTALLED`: commit and push the
    removal. On FAIL: report the listed items; do not hand-fix around the
    script and do not claim success.
-3. Ask the OWNER one separate question, and act only on the answer:
+3. **Stop here.** Plain repo-scoped intent ("移除 rice-bootstrap", "uninstall
+   rice", "把 rice 從這個 repo 拿掉") means *this repo only* — do not
+   proactively ask about removing the user-level `rice@rice-bootstrap`
+   plugin or the `rice-bootstrap` marketplace. Other repos in this
+   environment may still use them; that is the default assumption, not a
+   question to raise (RICE-BOOTSTRAP-034/036: an earlier version of this
+   skill asked this unconditionally after every repo uninstall — that was
+   unnecessary and introduced cross-repo risk).
 
-   > Rice is removed from this repo. Do you also want the user-level
-   > `rice@rice-bootstrap` plugin and the `rice-bootstrap` marketplace
-   > removed from this environment? Other repos here may still use rice.
+## Removing rice globally (a different, separate intent)
 
-   Only on an explicit yes: `claude plugin uninstall rice@rice-bootstrap`
-   then `claude plugin marketplace remove rice-bootstrap`. Never by default.
+Only a separately explicit OWNER request — "remove rice globally",
+"completely uninstall rice from this environment", "remove the user-level
+rice plugin/marketplace", or equivalent, phrased distinctly from repo-scoped
+uninstall intent — reaches this. It is not part of the flow above and is
+never triggered by it. When it is the OWNER's actual request: confirm, then
+run the official mechanism directly —
+`claude plugin uninstall rice@rice-bootstrap` then
+`claude plugin marketplace remove rice-bootstrap`. No wrapper skill or new
+subsystem for this; those two commands are the whole mechanism.
 
 ## What the script removes (exact matches only)
 

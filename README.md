@@ -136,9 +136,15 @@ trigger. Entrypoint: the `rice:rice-uninstall` skill, which runs
 - Kept: `session-history/`, custom output styles and any other
   `outputStyle`, `permissions.allow`/`ask`, project deny rules, other
   plugins/marketplaces, Matt artifacts, RTK, all repo files and history.
-- Only the script's `RICE-UNINSTALLED` line means the repo is clean.
-- Removing the user-level `rice@rice-bootstrap` plugin/marketplace is a
-  separate question the skill asks the OWNER afterwards; never automatic.
+- Only the script's `RICE-UNINSTALLED` line means the repo is clean. Plain
+  repo-scoped intent stops here — no follow-up question about the
+  user-level plugin/marketplace; other repos in the same environment may
+  still use them.
+- Removing the user-level `rice@rice-bootstrap` plugin/marketplace only
+  happens on a separately explicit OWNER request to remove rice globally,
+  using the official `claude plugin uninstall`/`claude plugin marketplace
+  remove` commands directly; it is never triggered by a repo-scoped
+  uninstall and never automatic.
 
 ## Release / Development
 
