@@ -31,15 +31,44 @@ the user to remember or type any command.
    claude plugin marketplace add L26041040/rice-bootstrap
    claude plugin install rice@rice-bootstrap
    ```
-3. A newly installed plugin is loaded by the **next** session. Tell the
-   user to start a new session; that is the only handoff.
-   - Local machine: nothing else.
-   - Claude Code on the web: `~/.claude` is per-container, so an install
-     run inside a session does not persist. Tell the user to add the two
-     commands above where their environment provisions plugins at
-     container start (the same place `mattpocock-skills` comes from), once
-     per environment.
-4. In the new session, run the bootstrap flow below.
+3. **Local machine**: a newly installed plugin is loaded by the **next**
+   session. Start one and run the bootstrap flow below.
+4. **Claude Code on the web**: do not run the two commands inside a session
+   expecting them to persist — `~/.claude` is per-container. See "Claude
+   Code Web setup" below; that is the primary path, not a same-session
+   install.
+
+## Claude Code Web setup (Cloud Environment)
+
+Three layers — worth keeping straight so an install fix lands in the right
+one:
+
+1. **Cloud Environment** — the container template a Claude Code Web session
+   starts from. Anything a session needs *before it starts* belongs in the
+   Environment's setup script. Creating or editing an Environment is a
+   one-time OWNER action in the Claude Code Web UI; rice cannot create or
+   edit one itself.
+2. **rice plugin** — installed once into the Environment's setup script
+   (the same two commands from "Installation" above). Every fresh session
+   started from that Environment already has rice loaded automatically —
+   no per-session install, no `/reload-plugins`.
+3. **Repo bootstrap** (`/rice:bootstrap`, see "Bootstrap" below) — configures
+   the *current repo only*. It never (re)installs rice itself; that is the
+   Environment's job, done once.
+
+Recommended: create a dedicated rice Cloud Environment, or add the two
+install commands to an existing dedicated Environment's setup script,
+alongside whatever else it already provisions (e.g. `mattpocock-skills`,
+RTK). Matt Pocock skills are typically already provided by current
+Cloud/platform provisioning — rice's Environment setup does not duplicate
+installing Matt; Matt's own **repo-level** setup
+(`/mattpocock-skills:setup-matt-pocock-skills`) stays a separate, OWNER-only
+step (see "Bootstrap" below).
+
+If a session's Environment genuinely was not set up this way (rice isn't
+loaded), the one-off recovery is: run the two commands inside the current
+session, then start a new one — but that is a fallback, not the normal
+Cloud flow, and does not persist to the next container on its own.
 
 ## Bootstrap
 

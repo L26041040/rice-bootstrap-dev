@@ -27,13 +27,22 @@ be pasted to another agent, or a long list of questions, put the complete
 content in one single code block. Do not split it into several cards, several
 code blocks, or scattered output.
 
-## Questions in one batch
+## Questions to the OWNER
 
-When a flow (grill, wayfinder, setup, decision-making, ...) needs answers
-from the OWNER, list every question currently known in one code block so
-the OWNER can answer once. Not one question at a time, not card by card.
-Start another round only when an answer genuinely creates a new dependent
-question.
+Two different situations, two different channels — one rule doesn't cover
+both:
+
+- **Bounded configuration choices** (a small, fixed set of options — e.g.
+  bootstrap's session-archive on/off, output-style pick): ask via Claude
+  Code's native interactive choice UI (e.g. `AskUserQuestion`), batching
+  multiple bounded choices into as few native prompts as the UI allows. A
+  fixed option set doesn't need free-text parsing.
+- **Long formal question sets** (a grill, wayfinder, a formal setup
+  questionnaire, or any decision-making content meant to be copied
+  elsewhere): list every question currently known in one complete code
+  block so the OWNER can answer once. Not one question at a time, not card
+  by card. Start another round only when an answer genuinely creates a new
+  dependent question.
 
 ## First-use terminology
 
