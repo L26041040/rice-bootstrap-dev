@@ -150,23 +150,48 @@ counts as verified.
 
 ## Step 4 — Hand off to Matt
 
-`bootstrap_state.enter_waiting_for_matt(repo_root)`, then tell the OWNER
-rice's own setup is verified (`RICE-VERIFIED <build>`) and that the one
-remaining step needs them personally — Claude cannot run or simulate Matt's
-setup; when they're done, saying "bootstrap this repo with rice" again
-re-derives where things are from the verifier and runs the final check.
-Rice never invokes Matt's setup itself.
+First look at what the Gate A run already told you about `matt:artifacts`. If
+it is **already PASS** (a re-bootstrap, or a repo that already had the official
+Matt setup), there is nothing to hand off: call
+`bootstrap_state.enter_waiting_for_matt(repo_root)` and then run
+`python3 "<plugin root>/scripts/verify.py" <repo_root> --final` yourself in
+this same turn, and report per Step 5. Never ask the OWNER for a setup they
+have already done, and never print the hand-off below and a `FINAL-VERIFIED`
+line in the same reply.
 
-End that reply with this exact line, and nothing after it:
+Otherwise `matt:artifacts` is FAIL, and this is the hand-off. Call
+`bootstrap_state.enter_waiting_for_matt(repo_root)`, then reply **tersely**.
+This is the OWNER's hand-off, not a status report: quote the verifier's line,
+say what is left, give the command. No settings detail, no RTK line, no list
+of which Matt artifacts are missing, no commit counts, no summary of what
+bootstrap did. Roughly:
 
-/mattpocock-skills:setup-matt-pocock-skills
+> `RICE-VERIFIED <build>`
+>
+> 還差 Matt repo setup；完成後 Rice 會自動續接 final verification。
+>
+> /mattpocock-skills:setup-matt-pocock-skills
+
+The last line is exactly that command, with nothing after it.
+
+Rice never invokes or simulates Matt's setup. Do **not** ask the OWNER to
+run `/rice:bootstrap`, say "bootstrap this repo with rice", or type any
+other continuation prompt afterwards — a fresh bootstrap costs the OWNER
+exactly one invocation of this skill (RICE-BOOTSTRAP-028). The continuation
+is automatic; see Step 5.
 
 **Never report bootstrap as complete while `WAITING_FOR_MATT` exists.**
 
-## Step 5 — Gate B: final verification (after the OWNER's Matt setup)
+## Step 5 — Gate B: final verification (continues by itself)
 
-Run `verify.py <repo_root> --final`. The `[B]` items need things only the
-OWNER/environment provide; the verifier reads their evidence:
+On a fresh bootstrap that is genuinely waiting for Matt, you do not run this
+step by hand, and neither does the OWNER. `scripts/bootstrap_continue.py` is wired as a `Stop` hook, so at the
+end of the turn in which the OWNER's Matt setup lands, it checks — silently,
+on every turn until then — whether `WAITING_FOR_MATT` is pending and Matt's
+artifacts and RTK are present. When they are, it runs
+`verify.py <repo_root> --final` and hands the result to you (RICE-BOOTSTRAP-028).
+
+The `[B]` items need things only the OWNER/environment provide:
 
 - `matt:artifacts` → the OWNER ran Matt setup. **Required**, not optional.
 - `rtk` → the environment must provide it. **Required**; Gate B fails until
@@ -174,19 +199,27 @@ OWNER/environment provide; the verifier reads their evidence:
 
 A real `/clear` is **not** required to reach `FINAL-VERIFIED`
 (RICE-BOOTSTRAP-032). Archive registration is checked mechanically in
-Gate A instead (`archive-hook:exists`, `archive-sync-hook:exists` — are
-both the `SessionEnd` archive hook and the `SessionStart` sync hook wired
-in this build, not has either one actually run). Whether a produced
+Gate A instead (`archive-hook:exists`, `archive-sync-hook:exists`,
+`continuation-hook:exists` — are the archive, sync and continuation hooks
+wired in this build, not has any of them actually run). Whether a produced
 archive commit has actually reached this branch's upstream is a separate,
 explicit diagnostic (`reconcile._archive_behaves_item`, read from git
 state) — deliberately not part of the standard verifier rubric, since it
 gates nothing; call it directly if you need that answer.
 
-On `FINAL-VERIFIED <build>` the verifier itself has written
-`.claude/rice-version` and removed `WAITING_FOR_MATT`. Commit and push;
-quote the line verbatim. On `FINAL FAIL`, `rice-version` is untouched — say
-which items the verifier listed, do what they say, re-run.
+When the continuation reports blockers, they are Gate A items you can fix
+yourself: fix them and run `verify.py <repo_root> --final` in that same turn,
+because the hook deliberately stays quiet for the rest of a turn it has
+already spoken in.
+
+When the continuation reports `FINAL-VERIFIED <build>`, the verifier has
+already written `.claude/rice-version` and removed `WAITING_FOR_MATT`; commit
+and push the bootstrap, Matt and finalization changes, and quote that line
+verbatim to the OWNER. When it reports blockers, the verified-version file is
+untouched. Either way, never ask the OWNER to re-invoke this skill.
 
 ## Re-running this skill
 
-Just run the verifier first. Its output tells you which step you are at.
+Re-running is safe but should never be *necessary* on a fresh bootstrap. If
+the OWNER does invoke it again, run the verifier first: its output tells you
+which step you are at.

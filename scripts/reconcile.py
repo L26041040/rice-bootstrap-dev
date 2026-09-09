@@ -337,41 +337,46 @@ def _output_style_choice_item(repo_root: Path, current_settings: dict, plugin_pr
     return ItemResult("output-style:choice", "PASS" if ok else "FAIL", detail, kind=MATCHES)
 
 
-def _archive_hook_item() -> ItemResult:
+def _hook_wired_item(name: str, event: str, matcher: str | None, script_name: str,
+                     *fragments: str) -> ItemResult:
+    """Registration-only check, shared by every hook this build ships: is the
+    hook wired in hooks.json for `event` (with `matcher`, when the event uses
+    one) to a command containing every one of `fragments`, and does its script
+    exist? Never asks whether the hook has actually run."""
     hooks = PLUGIN_ROOT / "hooks" / "hooks.json"
-    script = PLUGIN_ROOT / "scripts" / "archive_hook.py"
+    script = PLUGIN_ROOT / "scripts" / script_name
+    wanted = fragments or (script_name,)
     try:
         cfg = json.loads(hooks.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return ItemResult("archive-hook:exists", "FAIL", "hooks/hooks.json missing or invalid in this build", kind=EXISTS)
-    for entry in cfg.get("hooks", {}).get("SessionEnd", []):
-        if entry.get("matcher") == "clear" and any("archive_hook.py" in h.get("command", "") for h in entry.get("hooks", [])):
+        return ItemResult(name, "FAIL", "hooks/hooks.json missing or invalid in this build", kind=EXISTS)
+    for entry in cfg.get("hooks", {}).get(event, []):
+        if entry.get("matcher") != matcher:
+            continue
+        if any(all(f in h.get("command", "") for f in wanted) for h in entry.get("hooks", [])):
             if script.exists():
-                return ItemResult("archive-hook:exists", "PASS", kind=EXISTS)
-            return ItemResult("archive-hook:exists", "FAIL", "hooks.json wires archive_hook.py but the script is missing", kind=EXISTS)
-    return ItemResult("archive-hook:exists", "FAIL", "no SessionEnd(clear) -> archive_hook.py entry in hooks.json", kind=EXISTS)
+                return ItemResult(name, "PASS", kind=EXISTS)
+            return ItemResult(name, "FAIL", f"hooks.json wires {script_name} but the script is missing", kind=EXISTS)
+    shape = f"{event}({matcher})" if matcher else event
+    return ItemResult(name, "FAIL", f"no {shape} -> {' '.join(wanted)} entry in hooks.json", kind=EXISTS)
+
+
+def _archive_hook_item() -> ItemResult:
+    return _hook_wired_item("archive-hook:exists", "SessionEnd", "clear", "archive_hook.py")
 
 
 def _archive_sync_hook_item() -> ItemResult:
     """RICE-BOOTSTRAP-032: registration-only, like archive-hook:exists --
     is the SessionStart sync hook wired, never has it actually run/pushed."""
-    hooks = PLUGIN_ROOT / "hooks" / "hooks.json"
-    script = PLUGIN_ROOT / "scripts" / "archive_hook.py"
-    try:
-        cfg = json.loads(hooks.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ItemResult("archive-sync-hook:exists", "FAIL", "hooks/hooks.json missing or invalid in this build", kind=EXISTS)
-    for entry in cfg.get("hooks", {}).get("SessionStart", []):
-        if entry.get("matcher") == "clear" and any(
-            "archive_hook.py" in h.get("command", "") and "--sync" in h.get("command", "")
-            for h in entry.get("hooks", [])
-        ):
-            if script.exists():
-                return ItemResult("archive-sync-hook:exists", "PASS", kind=EXISTS)
-            return ItemResult("archive-sync-hook:exists", "FAIL",
-                               "hooks.json wires the sync hook but archive_hook.py is missing", kind=EXISTS)
-    return ItemResult("archive-sync-hook:exists", "FAIL",
-                       "no SessionStart(clear) -> archive_hook.py --sync entry in hooks.json", kind=EXISTS)
+    return _hook_wired_item("archive-sync-hook:exists", "SessionStart", "clear",
+                            "archive_hook.py", "archive_hook.py", "--sync")
+
+
+def _continuation_hook_item() -> ItemResult:
+    """RICE-BOOTSTRAP-028: registration-only -- is the Stop hook that continues
+    bootstrap after the OWNER's Matt setup wired, never has it actually run.
+    No matcher: Stop takes none (confirmed by #27's runtime probe)."""
+    return _hook_wired_item("continuation-hook:exists", "Stop", None, "bootstrap_continue.py")
 
 
 def _archive_behaves_item(repo_root: Path, current_settings: dict) -> ItemResult:
@@ -517,6 +522,7 @@ def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> list[ItemResult]:
     items.append(_claude_md_item(repo_root, write=False))
     items.append(_archive_hook_item())
     items.append(_archive_sync_hook_item())
+    items.append(_continuation_hook_item())
     items.append(_git_deny_evidence_item(repo_root))
     # archive:behaves is deliberately NOT part of the rubric (RICE-BOOTSTRAP-032):
     # it is an explicit, standalone diagnostic (see `_archive_behaves_item`),

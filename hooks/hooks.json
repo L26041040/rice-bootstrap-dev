@@ -25,6 +25,18 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap_continue.py\"",
+            "timeout": 120,
+            "statusMessage": "Checking rice bootstrap continuation..."
+          }
+        ]
+      }
     ]
   }
 }

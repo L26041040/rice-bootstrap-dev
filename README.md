@@ -90,13 +90,17 @@ rice" or equivalent). It decides nothing; it operates the verifier.
    `@.claude/rice.md` line in `CLAUDE.md`).
 4. Gate A: run the verifier, fix exactly what a FAIL line says, re-run,
    until it prints `RICE-VERIFIED <build>`. Commit and push.
-5. `WAITING_FOR_MATT`: ask the OWNER to run
-   `/mattpocock-skills:setup-matt-pocock-skills` themselves. Never run or
-   simulate it.
-6. After the OWNER's Matt setup: `verify.py <repo> --final`. Only its
+5. `WAITING_FOR_MATT`: hand off tersely, ending with exactly
+   `/mattpocock-skills:setup-matt-pocock-skills`. Never run or simulate it.
+6. The continuation is automatic: a `Stop` hook
+   (`scripts/bootstrap_continue.py`) watches silently for
+   `WAITING_FOR_MATT` + Matt's artifacts + RTK, then runs
+   `verify.py <repo> --final` itself and hands the result back. Only its
    `FINAL-VERIFIED <build>` line means done; that pass writes
    `.claude/rice-version` and clears `WAITING_FOR_MATT`. Matt's setup
-   artifacts and RTK are required: without both there is no `FINAL-VERIFIED`.
+   artifacts and RTK are required: without both there is no
+   `FINAL-VERIFIED`. A fresh bootstrap costs the OWNER exactly one
+   `rice:bootstrap` invocation — rice never asks for a second one.
 
 If the repo already had its own `/clear` archive hook before rice, the OWNER
 removes that old hook/script before enabling rice's archive; an existing

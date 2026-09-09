@@ -54,6 +54,7 @@ GATE_A = (
     "CLAUDE.md:import-line",
     "archive-hook:exists",
     "archive-sync-hook:exists",
+    "continuation-hook:exists",
     "git-deny:behaves",
 )
 
