@@ -23,6 +23,7 @@ from bootstrap_state import enter_waiting_for_matt  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 PROJECT_CLAUDE_MD = "# My project\n\nProject-owned instructions.\n\n## Agent skills\n\n### Issue tracker\n\nsee docs/agents/issue-tracker.md\n"
+PROJECT_AGENTS_MD = "# Agents\n\nProject-owned guidance for every agent.\n"
 
 
 def _states(items):
@@ -48,6 +49,7 @@ def _bootstrapped_repo(root: Path, *, extra_project_settings=True) -> None:
     (root / ".claude" / "rice-version").write_text("0.1.1\n", encoding="utf-8")
     enter_waiting_for_matt(root)
     (root / "CLAUDE.md").write_text(PROJECT_CLAUDE_MD + f"\n{reconcile.IMPORT_LINE}\n", encoding="utf-8")
+    (root / "AGENTS.md").write_text(PROJECT_AGENTS_MD + f"\n{reconcile.AGENTS_POINTER}", encoding="utf-8")
     # project-owned things rice must not touch
     (root / ".claude" / "output-styles").mkdir(exist_ok=True)
     (root / ".claude" / "output-styles" / "mine.md").write_text("---\nname: mine\n---\nbe terse\n", encoding="utf-8")
@@ -137,6 +139,19 @@ class TestCleanUninstall(UninstallBase):
         _, verdict = self._run()
         self.assertEqual(verdict, "RICE-UNINSTALLED")
         self.assertEqual((self.root / "CLAUDE.md").read_text(encoding="utf-8"), PROJECT_CLAUDE_MD)
+
+    def test_agents_md_project_content_byte_identical_only_pointer_block_removed(self):
+        _bootstrapped_repo(self.root)
+        items, verdict = self._run()
+        self.assertEqual(verdict, "RICE-UNINSTALLED", "\n".join(f"{i.name} {i.state}" for i in items))
+        self.assertEqual((self.root / "AGENTS.md").read_text(encoding="utf-8"), PROJECT_AGENTS_MD)
+
+    def test_agents_md_rice_created_only_pointer_block_is_removed_as_rice_created(self):
+        _bootstrapped_repo(self.root)
+        (self.root / "AGENTS.md").write_text(reconcile.AGENTS_POINTER, encoding="utf-8")
+        _, verdict = self._run()
+        self.assertEqual(verdict, "RICE-UNINSTALLED")
+        self.assertFalse((self.root / "AGENTS.md").exists())
 
     def test_claude_md_rice_created_only_import_line_is_removed_as_rice_created(self):
         _bootstrapped_repo(self.root)

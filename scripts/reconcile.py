@@ -35,6 +35,25 @@ import output_styles
 import settings_template
 
 IMPORT_LINE = "@.claude/rice.md"
+
+# RICE-BOOTSTRAP-042: AGENTS.md is the cross-agent entry point. Codex (and
+# every other AGENTS.md reader checked) concatenates the file verbatim and has
+# no import syntax, so the only thing that can be mechanical there is an
+# instruction to read the canonical file -- never a copy of it. Claude Code
+# reads CLAUDE.md, not AGENTS.md, and there `@.claude/rice.md` is a real
+# import, so Claude gets the rules mechanically through CLAUDE.md. Either way
+# the rules themselves live in exactly one place: .claude/rice.md.
+AGENTS_BEGIN = "<!-- rice:begin -->"
+AGENTS_END = "<!-- rice:end -->"
+AGENTS_POINTER = (
+    f"{AGENTS_BEGIN}\n"
+    "## Rice working rules\n"
+    "\n"
+    "Before doing anything in this repo, read `.claude/rice.md` and follow it.\n"
+    "It is the single canonical source of the OWNER's working rules for every\n"
+    "coding agent; nothing here restates it.\n"
+    f"{AGENTS_END}\n"
+)
 RICE_MD_RESOURCE = Path(__file__).resolve().parent.parent / "resources" / "rice.md"
 
 REF_PATH = settings_template.REF_PATH
@@ -198,6 +217,50 @@ def _claude_md_item(repo_root: Path, *, write: bool) -> ItemResult:
     return ItemResult("CLAUDE.md:import-line", "FAIL", "import line missing")
 
 
+def _agents_block_span(content: str) -> tuple[int, int] | None:
+    """(start, end) of the rice-owned block in AGENTS.md, markers included,
+    or None. Everything outside the markers is project-owned."""
+    b = content.find(AGENTS_BEGIN)
+    if b < 0:
+        return None
+    e = content.find(AGENTS_END, b)
+    if e < 0:
+        return None
+    e += len(AGENTS_END)
+    if content[e:e + 1] == "\n":
+        e += 1
+    return b, e
+
+
+def _agents_md_item(repo_root: Path, *, write: bool, is_rice_update: bool) -> ItemResult:
+    """The rice pointer block in AGENTS.md: created if the file or block is
+    missing, left alone when exact, and -- like rice.md -- treated as a
+    conflict when hand-edited unless a rice-update (or repair) is converging
+    the repo. Project-owned content outside the markers is never touched."""
+    name = "AGENTS.md:rice-pointer"
+    dest = repo_root / "AGENTS.md"
+    if not dest.exists():
+        if write:
+            dest.write_text(AGENTS_POINTER, encoding="utf-8")
+            return ItemResult(name, "created", "AGENTS.md did not exist; created with only the rice pointer block", kind=EXISTS)
+        return ItemResult(name, "FAIL", "AGENTS.md missing", kind=EXISTS)
+    content = dest.read_text(encoding="utf-8")
+    span = _agents_block_span(content)
+    if span is None:
+        if write:
+            sep = "" if (content.endswith("\n") or not content) else "\n"
+            dest.write_text(f"{content}{sep}\n{AGENTS_POINTER}" if content else AGENTS_POINTER, encoding="utf-8")
+            return ItemResult(name, "created", "rice pointer block appended; rest of file untouched", kind=EXISTS)
+        return ItemResult(name, "FAIL", "rice pointer block missing", kind=EXISTS)
+    if content[span[0]:span[1]] == AGENTS_POINTER:
+        return ItemResult(name, "noop" if write else "PASS", kind=EXISTS)
+    if write and is_rice_update:
+        dest.write_text(content[:span[0]] + AGENTS_POINTER + content[span[1]:], encoding="utf-8")
+        return ItemResult(name, "updated", "rice pointer block replaced; rest of file untouched", kind=EXISTS)
+    return ItemResult(name, "conflict" if write else "FAIL",
+                      "rice pointer block hand-edited or drifted; not overwritten", kind=EXISTS)
+
+
 MATT_HEADING = "## Agent skills"
 MATT_REQUIRED_DOCS = ("docs/agents/issue-tracker.md", "docs/agents/domain.md")
 MATT_TRIAGE_DOC = "docs/agents/triage-labels.md"
@@ -226,6 +289,24 @@ def _triage_capability_present(repo_root: Path, plugin_probe) -> bool:
     return False
 
 
+MATT_HEADING_LABEL = f"CLAUDE.md `{MATT_HEADING}` heading"
+
+
+def matt_presence(repo_root: Path, plugin_probe) -> dict[str, bool]:
+    """Every Matt artifact this repo requires -> is it there. Keys are the
+    labels the verifier reports (`MATT_HEADING_LABEL` for the CLAUDE.md
+    section, relative paths for the docs). Presence only, never content."""
+    claude_md = repo_root / "CLAUDE.md"
+    present = {MATT_HEADING_LABEL: claude_md.exists() and any(
+        l.strip() == MATT_HEADING for l in claude_md.read_text(encoding="utf-8").splitlines())}
+    required = list(MATT_REQUIRED_DOCS)
+    if _triage_capability_present(repo_root, plugin_probe):
+        required.append(MATT_TRIAGE_DOC)
+    for rel in required:
+        present[rel] = (repo_root / rel).is_file()
+    return present
+
+
 def _matt_item(repo_root: Path, plugin_probe) -> ItemResult:
     """Presence-only, never content-validated, never written here -- Matt's
     artifacts remain Matt/project-owned. Required shape is the real output
@@ -233,16 +314,9 @@ def _matt_item(repo_root: Path, plugin_probe) -> ItemResult:
     a `## Agent skills` heading line in CLAUDE.md, docs/agents/issue-tracker.md,
     docs/agents/domain.md, and docs/agents/triage-labels.md whenever the
     triage capability is present."""
-    missing = []
-    claude_md = repo_root / "CLAUDE.md"
-    if not (claude_md.exists() and any(l.strip() == MATT_HEADING for l in claude_md.read_text(encoding="utf-8").splitlines())):
-        missing.append(f"CLAUDE.md `{MATT_HEADING}` heading")
-    required = list(MATT_REQUIRED_DOCS)
-    if _triage_capability_present(repo_root, plugin_probe):
-        required.append(MATT_TRIAGE_DOC)
-    for rel in required:
-        if not (repo_root / rel).is_file():
-            missing.append(rel)
+    present = matt_presence(repo_root, plugin_probe)
+    missing = [label for label, ok in present.items() if not ok]
+    required = [label for label in present if label != MATT_HEADING_LABEL]
     if missing:
         return ItemResult("matt:artifacts", "FAIL", "official Matt setup artifacts missing: " + ", ".join(missing), kind=EXISTS)
     return ItemResult("matt:artifacts", "PASS", "present: " + ", ".join([f"`{MATT_HEADING}`", *required]), kind=EXISTS)
@@ -520,6 +594,7 @@ def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> list[ItemResult]:
     items.extend(settings_items)
     items.append(_rice_md_item(repo_root, write=False, is_rice_update=False))
     items.append(_claude_md_item(repo_root, write=False))
+    items.append(_agents_md_item(repo_root, write=False, is_rice_update=False))
     items.append(_archive_hook_item())
     items.append(_archive_sync_hook_item())
     items.append(_continuation_hook_item())
@@ -552,6 +627,7 @@ def apply(repo_root, *, is_rice_update: bool = False, rtk_probe=None,
 
     items.append(_rice_md_item(repo_root, write=True, is_rice_update=is_rice_update))
     items.append(_claude_md_item(repo_root, write=True))
+    items.append(_agents_md_item(repo_root, write=True, is_rice_update=is_rice_update))
     items.append(_matt_item(repo_root, plugin_probe))
     items.append(_rtk_item(rtk_probe))
     return items

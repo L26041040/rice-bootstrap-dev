@@ -102,6 +102,7 @@ def _make_correct_repo(root: Path, *, matt=False):
         (root / "docs" / "agents" / "issue-tracker.md").write_text("x", encoding="utf-8")
         (root / "docs" / "agents" / "domain.md").write_text("x", encoding="utf-8")
     (root / "CLAUDE.md").write_text(claude_md, encoding="utf-8")
+    (root / "AGENTS.md").write_text(reconcile.AGENTS_POINTER, encoding="utf-8")
 
 
 def _write_transcript(root: Path, *, git_denied=True, ts="2099-01-01T00:00:00.000Z"):

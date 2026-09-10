@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import reconcile  # noqa: E402  -- for the AGENTS.md pointer-block shape only
 import settings_template  # noqa: E402
 from bootstrap_state import MARKER_NAME  # noqa: E402
 from verify import VERSION_FILE  # noqa: E402  -- owned by verify.py; here it is only unlinked
@@ -107,13 +108,28 @@ def project_claude_md(text: str) -> str | None:
     return "".join(kept)
 
 
+def project_agents_md(text: str) -> str | None:
+    """AGENTS.md without the rice pointer block (and the blank line reconcile
+    put in front of it when appending). None = nothing project-owned was
+    ever in it (rice created it with only the block) -> remove."""
+    span = reconcile._agents_block_span(text)
+    if span is None:
+        return text
+    kept = text[:span[0]] + text[span[1]:]
+    if not kept.strip():
+        return None
+    if kept.endswith("\n\n"):
+        kept = kept[:-1]
+    return kept
+
+
 def expected_after(repo_root) -> dict:
     """Snapshot, taken BEFORE uninstall, of what must be on disk AFTER it:
     the projected settings/CLAUDE.md plus every other file byte-for-byte.
     `check(expected=...)` compares against this -- project content that
     changed during uninstall is a FAIL, whatever the reason."""
     repo_root = Path(repo_root)
-    exp = {"files": {}, "settings": None, "claude_md": None}
+    exp = {"files": {}, "settings": None, "claude_md": None, "agents_md": None}
     s_path = repo_root / ".claude" / "settings.json"
     if s_path.exists():
         s = _read_json(s_path)
@@ -121,7 +137,10 @@ def expected_after(repo_root) -> dict:
     c_path = repo_root / "CLAUDE.md"
     if c_path.exists():
         exp["claude_md"] = project_claude_md(c_path.read_text(encoding="utf-8"))
-    skip = {".claude/settings.json", "CLAUDE.md"} | {f".claude/{n}" for n in RICE_FILES}
+    a_path = repo_root / "AGENTS.md"
+    if a_path.exists():
+        exp["agents_md"] = project_agents_md(a_path.read_text(encoding="utf-8"))
+    skip = {".claude/settings.json", "CLAUDE.md", "AGENTS.md"} | {f".claude/{n}" for n in RICE_FILES}
     for p in repo_root.rglob("*"):
         if p.is_file() and ".git" not in p.relative_to(repo_root).parts:
             rel = str(p.relative_to(repo_root))
@@ -163,6 +182,14 @@ def uninstall(repo_root) -> list[str]:
             c_path.unlink(); actions.append("removed CLAUDE.md (rice-created, held only the import line)")
         elif projected != text:
             c_path.write_text(projected, encoding="utf-8"); actions.append(f"removed `{IMPORT_LINE}` line from CLAUDE.md")
+    a_path = repo_root / "AGENTS.md"
+    if a_path.exists():
+        text = a_path.read_text(encoding="utf-8")
+        projected = project_agents_md(text)
+        if projected is None:
+            a_path.unlink(); actions.append("removed AGENTS.md (rice-created, held only the rice pointer block)")
+        elif projected != text:
+            a_path.write_text(projected, encoding="utf-8"); actions.append("removed the rice pointer block from AGENTS.md")
     if claude_dir.is_dir() and not any(claude_dir.iterdir()):
         claude_dir.rmdir(); actions.append("removed empty .claude/")
     return actions
@@ -180,6 +207,9 @@ def _collect_items(repo_root: Path, expected: dict | None) -> list[Item]:
     c_path = repo_root / "CLAUDE.md"
     has_import = c_path.exists() and any(l.strip() == IMPORT_LINE for l in c_path.read_text(encoding="utf-8").splitlines())
     items.append(Item("claude-md:import-absent", "FAIL" if has_import else "PASS"))
+    a_path = repo_root / "AGENTS.md"
+    has_block = a_path.exists() and reconcile._agents_block_span(a_path.read_text(encoding="utf-8")) is not None
+    items.append(Item("agents-md:pointer-absent", "FAIL" if has_block else "PASS"))
 
     s_path = claude_dir / "settings.json"
     s = _read_json(s_path) if s_path.exists() else {}
@@ -210,6 +240,9 @@ def _collect_items(repo_root: Path, expected: dict | None) -> list[Item]:
         exp_c = expected["claude_md"]
         actual_c = c_path.read_text(encoding="utf-8") if c_path.exists() else None
         items.append(Item("sentinel:CLAUDE.md", "PASS" if actual_c == exp_c else "FAIL", "project-owned CLAUDE.md content differs"))
+        exp_a = expected["agents_md"]
+        actual_a = a_path.read_text(encoding="utf-8") if a_path.exists() else None
+        items.append(Item("sentinel:AGENTS.md", "PASS" if actual_a == exp_a else "FAIL", "project-owned AGENTS.md content differs"))
         for rel, data in sorted(expected["files"].items()):
             p = repo_root / rel
             ok = p.is_file() and p.read_bytes() == data

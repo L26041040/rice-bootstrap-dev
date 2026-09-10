@@ -50,7 +50,9 @@ subsystem for this; those two commands are the whole mechanism.
 ## What the script removes (exact matches only)
 
 `.claude/rice.md`; the `@.claude/rice.md` line in `CLAUDE.md` (the file
-itself only if rice created it with nothing but that line);
+itself only if rice created it with nothing but that line); the
+marker-delimited rice pointer block in `AGENTS.md` (the file itself only if
+rice created it with nothing but that block);
 `.claude/rice-version`; `WAITING_FOR_MATT`; the `rice-bootstrap`
 marketplace entry; `enabledPlugins.rice@rice-bootstrap`;
 `env.CLAUDE_CODE_SUBAGENT_MODEL` only while it still equals rice's `sonnet`;
@@ -64,8 +66,9 @@ left in it.
 
 `session-history/**`, custom output styles and any other `outputStyle`,
 `permissions.allow` / `permissions.ask`, deny rules rice did not add, other
-plugins and marketplaces, project env vars and hooks, Matt artifacts
-(`docs/agents/**`, CLAUDE.md sections), RTK, every other repo file, git
+plugins and marketplaces, project env vars and hooks, project-owned
+`AGENTS.md` content, Matt artifacts (`docs/agents/**`, CLAUDE.md sections),
+RTK, every other repo file, git
 history, and the user-level plugin install (see step 3).
 
 Rice only removes rice. If the repo had a different `/clear` archive

@@ -29,6 +29,7 @@ ALLOWLIST = (
     "scripts/verify.py",
     "scripts/bootstrap_state.py",
     "scripts/bootstrap_continue.py",
+    "scripts/repair.py",
     "scripts/archive_hook.py",
     "scripts/output_styles.py",
     "output-styles/laodi.md",

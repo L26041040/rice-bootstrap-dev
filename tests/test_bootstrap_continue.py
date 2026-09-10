@@ -12,6 +12,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -59,6 +60,7 @@ def _make_correct_repo(root: Path, *, matt: bool):
         (root / "docs" / "agents" / "issue-tracker.md").write_text("x", encoding="utf-8")
         (root / "docs" / "agents" / "domain.md").write_text("x", encoding="utf-8")
     (root / "CLAUDE.md").write_text(claude_md, encoding="utf-8")
+    (root / "AGENTS.md").write_text(reconcile.AGENTS_POINTER, encoding="utf-8")
 
 
 def _write_transcript(root: Path, ts="2099-01-01T00:00:00.000Z"):
@@ -132,7 +134,9 @@ class TestGuardsAreSilent(ContinuationBase):
         self.assertSilent(rc, out, err)
         self.assertFalse(self.version_file.exists())
 
-    def test_matt_artifacts_incomplete_is_silent(self):
+    def test_matt_not_yet_run_is_silent(self):
+        """Nothing of Matt's exists: the OWNER has not run the setup, there is
+        nothing to continue and nothing to repair."""
         _make_correct_repo(self.root, matt=False)
         _write_transcript(self.root)
         bootstrap_state.enter_waiting_for_matt(self.root)
@@ -141,11 +145,14 @@ class TestGuardsAreSilent(ContinuationBase):
         self.assertFalse(self.version_file.exists())
         self.assertTrue(bootstrap_state.is_waiting_for_matt(self.root))
 
-    def test_rtk_missing_is_silent(self):
+    def test_rtk_missing_is_reported_not_silent(self):
+        """RICE-BOOTSTRAP-042: once Matt's setup has run, nothing the
+        environment lacks may leave the bootstrap silently pending."""
         reconcile._default_rtk_probe = _missing_rtk
         self._ready_repo()
         rc, out, err = _run_hook(_payload(self.root))
-        self.assertSilent(rc, out, err)
+        self.assertEqual(rc, 2)
+        self.assertIn("rtk", err)
         self.assertFalse(self.version_file.exists())
         self.assertTrue(bootstrap_state.is_waiting_for_matt(self.root))
 
@@ -189,14 +196,15 @@ class TestContinuation(ContinuationBase):
 
     def test_final_fail_reports_blockers_only(self):
         self._ready_repo()
-        (self.root / ".claude" / "rice.md").write_text("hand-edited drift\n", encoding="utf-8")
+        shutil.rmtree(reconcile.transcript_dir(self.root))  # git-deny:behaves: no evidence, nothing repairs that
         rc, out, err = _run_hook(_payload(self.root))
         self.assertEqual(rc, 2)
         self.assertIn("did not pass", err)
-        self.assertIn("rice.md", err)
+        self.assertIn("git-deny:behaves", err)
         self.assertNotIn("FINAL-VERIFIED", err)
-        # never tell the OWNER to run rice again
-        for forbidden in ("/rice:bootstrap", "bootstrap this repo with rice", "re-run", "again"):
+        # never tell the OWNER to run rice again (the verifier's own "re-run
+        # verify" detail is the model's instruction, not the OWNER's)
+        for forbidden in ("/rice:bootstrap", "bootstrap this repo with rice", "rice again", "re-run rice", "rerun rice"):
             self.assertNotIn(forbidden, err)
         self.assertFalse(self.version_file.exists())
         self.assertTrue(bootstrap_state.is_waiting_for_matt(self.root))
@@ -278,11 +286,45 @@ class TestHandoffIsNeverLostOrDuplicated(ContinuationBase):
         spoke in, so a blocker the model clears inside that turn would never
         be re-verified unless the message says to run the verifier itself."""
         self._ready_repo()
-        (self.root / ".claude" / "rice.md").write_text("hand-edited drift\n", encoding="utf-8")
+        shutil.rmtree(reconcile.transcript_dir(self.root))
         _, _, err = _run_hook(_payload(self.root))
         self.assertIn("verify.py", err)
         self.assertIn("--final", err)
         self.assertIn("this same turn", err)
+
+
+class TestIncompleteMattIsNeverSilent(ContinuationBase):
+    """RICE-BOOTSTRAP-042: the moment Matt's setup has left anything behind,
+    an incomplete artifact set goes through the pipeline and is reported --
+    never left silently pending."""
+
+    def test_partial_matt_output_is_reported_with_what_repair_refused(self):
+        _make_correct_repo(self.root, matt=True)
+        (self.root / "docs" / "agents" / "domain.md").unlink()  # never committed: not reconstructible
+        _write_transcript(self.root)
+        bootstrap_state.enter_waiting_for_matt(self.root)
+        rc, out, err = _run_hook(_payload(self.root))
+        self.assertEqual(rc, 2)
+        self.assertIn("did not pass", err)
+        self.assertIn("Deterministic repair ran first", err)
+        self.assertIn("docs/agents/domain.md", err)
+        self.assertIn("only the official Matt setup", err)
+        self.assertIn("last fallback", err)
+        self.assertFalse((self.root / "docs" / "agents" / "domain.md").exists())  # nothing invented
+        self.assertFalse(self.version_file.exists())
+        self.assertTrue(bootstrap_state.is_waiting_for_matt(self.root))
+
+    def test_rice_owned_drift_is_repaired_before_the_model_hears_of_it(self):
+        self._ready_repo()
+        (self.root / ".claude" / "rice.md").write_text("hand-edited drift\n", encoding="utf-8")
+        (self.root / "AGENTS.md").unlink()
+        rc, _, err = _run_hook(_payload(self.root))
+        self.assertEqual(rc, 2)
+        self.assertIn(f"FINAL-VERIFIED {reconcile.build_version()}", err)
+        self.assertIn("Deterministic repair restored", err)
+        self.assertIn("rice.md", err)
+        self.assertIn("AGENTS.md", err)
+        self.assertEqual(self.version_file.read_text().strip(), reconcile.build_version())
 
 
 class TestSingleInvocationContract(unittest.TestCase):

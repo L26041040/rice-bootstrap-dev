@@ -45,6 +45,7 @@ def _make_correct_repo(repo_root: Path) -> None:
     rice_md_dest = repo_root / ".claude" / "rice.md"
     rice_md_dest.write_text(reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"), encoding="utf-8")
     (repo_root / "CLAUDE.md").write_text(f"# Some project\n\n{reconcile.IMPORT_LINE}\n", encoding="utf-8")
+    (repo_root / "AGENTS.md").write_text(reconcile.AGENTS_POINTER, encoding="utf-8")
 
 
 def _ok_rtk_probe(cmd):
@@ -268,6 +269,63 @@ class TestClaudeMdImportLine(ReconcileTestBase):
         self.assertEqual((self.repo_root / "CLAUDE.md").read_text(), original)
 
 
+class TestAgentsMdPointer(ReconcileTestBase):
+    """RICE-BOOTSTRAP-042: AGENTS.md is the cross-agent entry point. It holds
+    one rice-owned pointer block and never a copy of the rules; the rules
+    live only in .claude/rice.md."""
+
+    def test_fresh_bootstrap_creates_agents_md_with_only_the_pointer(self):
+        _write_settings(self.repo_root, _fully_correct_settings())
+        items = reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
+        self.assertEqual(_states(items)["AGENTS.md:rice-pointer"], "created")
+        self.assertEqual((self.repo_root / "AGENTS.md").read_text(encoding="utf-8"), reconcile.AGENTS_POINTER)
+        self.assertEqual(_states(reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe))["AGENTS.md:rice-pointer"], "PASS")
+        self.assertEqual(_states(reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe))["AGENTS.md:rice-pointer"], "noop")
+
+    def test_one_canonical_policy_source(self):
+        """CLAUDE.md imports the rules, AGENTS.md points at them, neither
+        restates them."""
+        _write_settings(self.repo_root, _fully_correct_settings())
+        (self.repo_root / "CLAUDE.md").write_text("# proj\n", encoding="utf-8")
+        (self.repo_root / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
+        reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe)
+        rules = (self.repo_root / ".claude" / "rice.md").read_text(encoding="utf-8")
+        self.assertEqual(rules, reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
+        claude_md = (self.repo_root / "CLAUDE.md").read_text(encoding="utf-8")
+        agents_md = (self.repo_root / "AGENTS.md").read_text(encoding="utf-8")
+        for body_heading in ("## Control hierarchy", "## Conversation numbering", "## Questions to the OWNER"):
+            self.assertIn(body_heading, rules)
+            self.assertNotIn(body_heading, claude_md)
+            self.assertNotIn(body_heading, agents_md)
+        self.assertIn(reconcile.IMPORT_LINE, claude_md)          # Claude: a real import
+        self.assertNotIn(reconcile.IMPORT_LINE, agents_md)       # other agents: no @import semantics
+        self.assertIn("`.claude/rice.md`", agents_md)             # ... so a pointer instruction
+        self.assertEqual(agents_md.count(reconcile.AGENTS_BEGIN), 1)
+
+    def test_project_owned_content_survives_bootstrap_and_update(self):
+        _write_settings(self.repo_root, _fully_correct_settings())
+        project = "# Agents\n\nProject-owned guidance.\n\n## Build\n\nmake\n"
+        (self.repo_root / "AGENTS.md").write_text(project, encoding="utf-8")
+        for mode in (False, True, True):
+            reconcile.apply(self.repo_root, is_rice_update=mode, rtk_probe=_ok_rtk_probe)
+            text = (self.repo_root / "AGENTS.md").read_text(encoding="utf-8")
+            self.assertTrue(text.startswith(project), text)
+            self.assertEqual(text.count(reconcile.AGENTS_BEGIN), 1)
+            self.assertTrue(text.endswith(reconcile.AGENTS_POINTER))
+
+    def test_hand_edited_block_is_conflict_until_update_or_repair_converges_it(self):
+        _write_settings(self.repo_root, _fully_correct_settings())
+        project = "# Agents\n\nkeep me\n"
+        (self.repo_root / "AGENTS.md").write_text(
+            project + f"\n{reconcile.AGENTS_BEGIN}\nedited by hand\n{reconcile.AGENTS_END}\n", encoding="utf-8")
+        self.assertEqual(_states(reconcile.check(self.repo_root, rtk_probe=_ok_rtk_probe))["AGENTS.md:rice-pointer"], "FAIL")
+        self.assertEqual(_states(reconcile.apply(self.repo_root, rtk_probe=_ok_rtk_probe))["AGENTS.md:rice-pointer"], "conflict")
+        self.assertIn("edited by hand", (self.repo_root / "AGENTS.md").read_text(encoding="utf-8"))
+        self.assertEqual(_states(reconcile.apply(self.repo_root, is_rice_update=True, rtk_probe=_ok_rtk_probe))["AGENTS.md:rice-pointer"], "updated")
+        text = (self.repo_root / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertEqual(text, project + "\n" + reconcile.AGENTS_POINTER)
+
+
 class TestMattAndRtkPresence(ReconcileTestBase):
     def _matt_repo(self, *, heading=True, issue=True, domain=True, triage_heading=False, triage_doc=False):
         import shutil
@@ -459,7 +517,8 @@ class TestRubricKinds(ReconcileTestBase):
             "plugin:installed", "plugin:build", "output-style:bundled", "output-style:choice",
             "settings:permissions.deny",
             "settings:env.CLAUDE_CODE_SUBAGENT_MODEL", "rice.md", "CLAUDE.md:import-line",
-            "archive-hook:exists", "archive-sync-hook:exists",
+            "AGENTS.md:rice-pointer",
+            "archive-hook:exists", "archive-sync-hook:exists", "continuation-hook:exists",
             "git-deny:behaves", "matt:artifacts", "rtk",
         ]:
             self.assertIn(required, names)

@@ -23,6 +23,20 @@ no-op-if-correct / conflict-if-drifted), so re-running on a partly or fully
 bootstrapped repo is always safe. Re-derive where you are from the verifier
 output each time; never assume a first run.
 
+The order is fixed (RICE-BOOTSTRAP-042) and you are the *last* step in it,
+never the first:
+
+```
+normal path -> verify -> FAIL -> deterministic repair -> verify again -> FAIL -> you
+```
+
+`scripts/repair.py <repo_root> [--final]` is that whole middle: it runs the
+verifier, and only on a FAIL applies the known lossless repair for every
+failure the verifier named, then runs the same verifier again. It has no
+verdict of its own. Do not analyse, hand-edit, or try commands before the
+verifier and `repair.py` have both had their turn; when `repair.py` still
+prints a FAIL, fix exactly what its remaining lines say and nothing else.
+
 Runtime facts (ticket #18, four real Cloud sessions plus local probes;
 RICE-BOOTSTRAP-035 reconfirmed with two fresh-Environment E2E rounds):
 declaring the marketplace/plugin in `.claude/settings.json` does not install
@@ -123,18 +137,39 @@ reconcile.apply(repo_root)          # never is_rice_update=True here
 ```
 
 Creates every rice-defined settings leaf, copies `.claude/rice.md`, ensures
-the `@.claude/rice.md` line in `CLAUDE.md`. Project-owned content is left
-alone.
+the `@.claude/rice.md` line in `CLAUDE.md`, and ensures the rice pointer
+block in `AGENTS.md` (created if absent). Project-owned content in either
+file is left alone.
 
-## Step 3 — Gate A: run the verifier until it says RICE-VERIFIED
+Three files, one policy (RICE-BOOTSTRAP-042): `.claude/rice.md` is the only
+place the working rules are written. `CLAUDE.md` is Claude's adapter — the
+`@.claude/rice.md` line is a real import for Claude Code, and Matt's
+`## Agent skills` section lives there too. `AGENTS.md` is the entry point for
+every other coding agent (Codex and any AGENTS.md reader): those tools
+concatenate the file verbatim and have no import syntax, so rice keeps only a
+marker-delimited instruction there to read `.claude/rice.md` — never a copy
+of it.
 
-Run `verify.py <repo_root>`. Every `[A]` item must be PASS. For each line
-under `RICE-GATE-A FAIL`, do exactly what its detail says, then re-run:
+## Step 3 — Gate A: verify, repair, verify, then you
 
-- `settings:*` / `rice.md` / `CLAUDE.md:import-line` → re-run Step 2 (a
-  `conflict` means a rice-owned value was hand-edited; report it, do not
-  overwrite outside `rice-update`).
-- `plugin:*` / `output-style:bundled` → Step 0 (wrong or missing build).
+Run `verify.py <repo_root>`. `RICE-VERIFIED <build>` → go to Step 4. On
+`RICE-GATE-A FAIL`, run once:
+
+```
+python3 "<plugin root>/scripts/repair.py" <repo_root>
+```
+
+It repairs, from this build's canonical state, every rice-owned failure the
+verifier named — `settings:*` for rice-defined keys (missing *or* drifted),
+`rice.md`, `CLAUDE.md:import-line`, `AGENTS.md:rice-pointer` — and re-runs
+the verifier. Its last lines are the verifier's own. `RICE-VERIFIED` → Step
+4. Only if it still prints `RICE-GATE-A FAIL` do you act, on exactly the
+remaining lines — these are the ones no script can repair:
+
+- `settings:*` for an owner-defined key → the Step 1 choice is missing;
+  ask it (or derive `ref`) and write it.
+- `plugin:*` / `output-style:bundled` / `*-hook:exists` → Step 0 (wrong or
+  missing build; hooks are part of the build, not the repo).
 - `output-style:choice` → the configured `outputStyle` points at nothing that
   exists; redo the Step 1 choice (or create the custom file it names).
 - `git-deny:behaves` → run **exactly** `git branch --show-current` through
@@ -185,11 +220,24 @@ is automatic; see Step 5.
 ## Step 5 — Gate B: final verification (continues by itself)
 
 On a fresh bootstrap that is genuinely waiting for Matt, you do not run this
-step by hand, and neither does the OWNER. `scripts/bootstrap_continue.py` is wired as a `Stop` hook, so at the
-end of the turn in which the OWNER's Matt setup lands, it checks — silently,
-on every turn until then — whether `WAITING_FOR_MATT` is pending and Matt's
-artifacts and RTK are present. When they are, it runs
-`verify.py <repo_root> --final` and hands the result to you (RICE-BOOTSTRAP-028).
+step by hand, and neither does the OWNER. `scripts/bootstrap_continue.py` is
+wired as a `Stop` hook. It stays silent on every turn until Matt's setup has
+left anything behind; from then on, at the end of each turn while
+`WAITING_FOR_MATT` is pending, it runs the same pipeline as Step 3 with
+`--final` — verify, deterministic repair on a FAIL, verify again — and hands
+the result to you (RICE-BOOTSTRAP-028, -042). An incomplete Matt setup is
+therefore never left silently pending: what repair could not restore is
+reported to you, turn after turn, until it is resolved.
+
+Matt's artifacts are the one thing repair restores only from this repo's own
+history (a doc tracked at HEAD but missing from the working tree; a
+`## Agent skills` section present in HEAD's `CLAUDE.md` but gone from the
+working copy). Every Matt file encodes the OWNER's answers to the official
+setup, so anything the repo never committed is reported as *unresolved*, by
+name. When you get such a line: never write Matt content yourself, never
+copy a template, never simulate the setup — tell the OWNER exactly which
+artifact is missing and that only `/mattpocock-skills:setup-matt-pocock-skills`
+can produce it.
 
 The `[B]` items need things only the OWNER/environment provide:
 
@@ -207,10 +255,11 @@ explicit diagnostic (`reconcile._archive_behaves_item`, read from git
 state) — deliberately not part of the standard verifier rubric, since it
 gates nothing; call it directly if you need that answer.
 
-When the continuation reports blockers, they are Gate A items you can fix
-yourself: fix them and run `verify.py <repo_root> --final` in that same turn,
-because the hook deliberately stays quiet for the rest of a turn it has
-already spoken in.
+When the continuation reports blockers, repair has already had its turn:
+fix exactly what the remaining lines name (an environment item like `rtk`
+is the OWNER's; a Matt line is the OWNER's, see above) and run
+`verify.py <repo_root> --final` in that same turn, because the hook
+deliberately stays quiet for the rest of a turn it has already spoken in.
 
 When the continuation reports `FINAL-VERIFIED <build>`, the verifier has
 already written `.claude/rice-version` and removed `WAITING_FOR_MATT`; commit

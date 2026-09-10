@@ -52,6 +52,7 @@ GATE_A = (
     *sorted(f"settings:{k}" for k in reconcile.settings_template.OWNER_DEFINED_KEYS),
     "rice.md",
     "CLAUDE.md:import-line",
+    "AGENTS.md:rice-pointer",
     "archive-hook:exists",
     "archive-sync-hook:exists",
     "continuation-hook:exists",

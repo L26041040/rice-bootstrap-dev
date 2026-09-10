@@ -4,8 +4,9 @@ One-instruction bootstrap and update for common Claude Code project
 configuration: git safety as native permission rules, a session archive with
 a mechanical index, Sonnet as the subagent default, an OWNER-chosen output
 style (the bundled 老弟 style recommended), the OWNER's soft working rules in
-`.claude/rice.md`, and an OWNER-driven handoff to Matt Pocock's official
-skill setup. One public repository is both the Claude Code
+`.claude/rice.md` (imported by `CLAUDE.md` for Claude, pointed at from
+`AGENTS.md` for every other coding agent), and an OWNER-driven handoff to
+Matt Pocock's official skill setup. One public repository is both the Claude Code
 plugin marketplace (`rice-bootstrap`) and the plugin (`rice`).
 
 # FOR AGENTS
@@ -87,20 +88,37 @@ rice" or equivalent). It decides nothing; it operates the verifier.
    - delivery `ref` = upstream `main`'s exact commit SHA (delivery
      mechanism only — no git tag or GitHub release is used).
 3. `reconcile.apply` (rice-owned settings leaves, `.claude/rice.md`, the
-   `@.claude/rice.md` line in `CLAUDE.md`).
-4. Gate A: run the verifier, fix exactly what a FAIL line says, re-run,
-   until it prints `RICE-VERIFIED <build>`. Commit and push.
+   `@.claude/rice.md` line in `CLAUDE.md`, the rice pointer block in
+   `AGENTS.md`). One policy source: the rules are written only in
+   `.claude/rice.md`; `CLAUDE.md` imports them (a real `@` import for
+   Claude Code) and `AGENTS.md` carries a marker-delimited instruction to
+   read them (AGENTS.md readers such as Codex concatenate the file verbatim
+   and have no import syntax). Project-owned content in both files is
+   never touched.
+4. Gate A: `verify.py <repo>`. On a FAIL, `scripts/repair.py <repo>` once —
+   it re-runs the verifier, applies the deterministic repair for every
+   rice-owned failure the verifier named (canonical settings leaves,
+   `rice.md`, the `CLAUDE.md` import line, the `AGENTS.md` pointer), and
+   runs the same verifier again; it has no verdict of its own. Only what
+   still fails after that is the agent's to fix. Order is always
+   normal path → verify → repair → verify → agent last. Commit and push on
+   `RICE-VERIFIED <build>`.
 5. `WAITING_FOR_MATT`: hand off tersely, ending with exactly
    `/mattpocock-skills:setup-matt-pocock-skills`. Never run or simulate it.
 6. The continuation is automatic: a `Stop` hook
-   (`scripts/bootstrap_continue.py`) watches silently for
-   `WAITING_FOR_MATT` + Matt's artifacts + RTK, then runs
-   `verify.py <repo> --final` itself and hands the result back. Only its
-   `FINAL-VERIFIED <build>` line means done; that pass writes
-   `.claude/rice-version` and clears `WAITING_FOR_MATT`. Matt's setup
-   artifacts and RTK are required: without both there is no
-   `FINAL-VERIFIED`. A fresh bootstrap costs the OWNER exactly one
-   `rice:bootstrap` invocation — rice never asks for a second one.
+   (`scripts/bootstrap_continue.py`) stays silent until Matt's setup has
+   left anything behind while `WAITING_FOR_MATT` is pending, then runs the
+   same pipeline with `--final` (verify → deterministic repair → verify)
+   and hands the result back. Only the verifier's `FINAL-VERIFIED <build>`
+   line means done; that pass writes `.claude/rice-version` and clears
+   `WAITING_FOR_MATT`. Matt's setup artifacts and RTK are required:
+   without both there is no `FINAL-VERIFIED`. Matt artifacts are repaired
+   only from the repo's own history (tracked at HEAD, missing from the
+   working tree); anything never committed is reported as unresolved by
+   name — never generated, never copied from a template — so an
+   incomplete Matt setup is never left silently pending. A fresh bootstrap
+   costs the OWNER exactly one `rice:bootstrap` invocation — rice never
+   asks for a second one.
 
 If the repo already had its own `/clear` archive hook before rice, the OWNER
 removes that old hook/script before enabling rice's archive; an existing
@@ -133,13 +151,15 @@ trigger. Entrypoint: the `rice:rice-uninstall` skill, which runs
 `python3 <plugin root>/scripts/uninstall.py <repo>`.
 
 - Target repo cleanup: exact subtraction of rice-owned state only
-  (`.claude/rice.md`, the `@.claude/rice.md` line, `.claude/rice-version`,
+  (`.claude/rice.md`, the `@.claude/rice.md` line, the rice pointer block
+  in `AGENTS.md`, `.claude/rice-version`,
   `WAITING_FOR_MATT`, the rice marketplace/plugin declaration, the Sonnet
   subagent default when still rice's value, `RICE_SESSION_ARCHIVE`, rice's
   own deny rules, `outputStyle` only when it is exactly `rice:老弟`).
 - Kept: `session-history/`, custom output styles and any other
   `outputStyle`, `permissions.allow`/`ask`, project deny rules, other
-  plugins/marketplaces, Matt artifacts, RTK, all repo files and history.
+  plugins/marketplaces, project-owned `AGENTS.md`/`CLAUDE.md` content,
+  Matt artifacts, RTK, all repo files and history.
 - Only the script's `RICE-UNINSTALLED` line means the repo is clean. Plain
   repo-scoped intent stops here — no follow-up question about the
   user-level plugin/marketplace; other repos in the same environment may

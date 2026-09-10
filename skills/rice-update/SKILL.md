@@ -74,18 +74,22 @@ against the new desired state; `plugin:build` fails it by construction.
 Detect this case by: delivery `ref` already at the target, and
 `claude plugin list` showing that version installed.
 
-6. `reconcile.apply(repo_root, is_rice_update=True)` — rice-defined leaves
-   and `.claude/rice.md` that drifted from the new build's desired state
-   are overwritten wholesale; project-owned content untouched. The OWNER's
-   `outputStyle` choice (including an absent key = Claude default, and any
-   custom `.claude/output-styles/*.md`) is never touched by an update.
-7. **Gate A**: `verify.py <repo_root>`. Fix exactly what each listed item
-   says (see bootstrap Step 3), re-run, until `RICE-VERIFIED <build>`.
+6. `reconcile.apply(repo_root, is_rice_update=True)` — rice-defined leaves,
+   `.claude/rice.md` and the rice pointer block in `AGENTS.md` that drifted
+   from the new build's desired state are overwritten wholesale;
+   project-owned content in `CLAUDE.md` / `AGENTS.md` (including Matt's
+   `## Agent skills` section) untouched. The OWNER's `outputStyle` choice
+   (including an absent key = Claude default, and any custom
+   `.claude/output-styles/*.md`) is never touched by an update.
+7. **Gate A**: `verify.py <repo_root>`. On a FAIL, run
+   `repair.py <repo_root>` once (verify → deterministic repair → verify;
+   see bootstrap Step 3), and only fix by hand what it still lists.
    `plugin:build` failing means you are still on the old build — that is
    Session 1's step 4/5 not done; stop and say so.
-8. **Gate B**: `verify.py <repo_root> --final`. On `FINAL-VERIFIED <build>`
-   the verifier has written `.claude/rice-version`; commit and push and
-   quote the line verbatim. On `FINAL FAIL`, `rice-version` still holds the
+8. **Gate B**: `verify.py <repo_root> --final`, and on a FAIL
+   `repair.py <repo_root> --final` once. On `FINAL-VERIFIED <build>` the
+   verifier has written `.claude/rice-version`; commit and push and quote
+   the line verbatim. On `FINAL FAIL`, `rice-version` still holds the
    previous version — report the listed items; nothing is "updated".
 
 ## What this deliberately does not do
