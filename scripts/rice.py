@@ -49,6 +49,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import output_styles  # noqa: E402
+import evidence  # noqa: E402
 import reconcile  # noqa: E402
 import repair  # noqa: E402
 import settings_template  # noqa: E402
@@ -87,8 +88,8 @@ def _memoized(probe):
 def default_probes() -> dict:
     """The probes every caller should pass unless it has its own: the real
     commands, asked at most once each."""
-    return {"plugin_probe": _memoized(reconcile._default_plugin_probe),
-            "rtk_probe": _memoized(reconcile._default_rtk_probe)}
+    return {"plugin_probe": _memoized(evidence._default_plugin_probe),
+            "rtk_probe": _memoized(evidence._default_rtk_probe)}
 
 
 @dataclass
@@ -146,8 +147,8 @@ def _pipeline(repo_root, *, final: bool, carried: repair.RepairResult | None = N
 def _matt_started(repo_root, **probes) -> bool:
     """Has the OWNER's Matt setup left anything behind? Asked of reconcile,
     which owns what Matt's artifacts are -- never inspected here."""
-    plugin_probe = probes.get("plugin_probe") or reconcile._default_plugin_probe
-    return any(reconcile.matt_presence(Path(repo_root), plugin_probe).values())
+    plugin_probe = probes.get("plugin_probe") or evidence._default_plugin_probe
+    return any(evidence.matt_presence(Path(repo_root), plugin_probe).values())
 
 
 # --------------------------------------------------------------------------
@@ -184,12 +185,12 @@ def _upstream_head(run) -> tuple[str | None, str]:
 def _canonical_install(**probes) -> tuple[list[str] | None, list[str]]:
     """(versions installed at the canonical scope, directive).
 
-    The decision is `reconcile.classify_install`'s -- the same one the
+    The decision is `evidence.classify_install`'s -- the same one the
     verifier's `plugin:scope` item reports, so rice never holds a second
     truth about what a supported install is. What rice adds is the shape the
     OWNER needs: a definite stop with every scope named and the exact
     cleanup commands, never a restart they can be sent around forever."""
-    versions, state, detail, scopes = reconcile.classify_install(probes.get("plugin_probe"))
+    versions, state, detail, scopes = evidence.classify_install(probes.get("plugin_probe"))
     if state == "PASS":
         return versions, []
     if state != "FAIL":
@@ -226,9 +227,9 @@ def _update_install(run) -> tuple[bool, list[str]]:
 def styles(repo_root, **probes) -> list[dict]:
     """Every output-style value that would resolve in this repo, for the
     OWNER's Step 1 choice."""
-    plugin_probe = probes.get("plugin_probe") or reconcile._default_plugin_probe
+    plugin_probe = probes.get("plugin_probe") or evidence._default_plugin_probe
     return output_styles.available(repo_root, plugin_probe,
-                                   self_plugin=(settings_template.PLUGIN_NAME, reconcile.PLUGIN_ROOT))
+                                   self_plugin=(settings_template.PLUGIN_NAME, evidence.PLUGIN_ROOT))
 
 
 def bootstrap(repo_root, *, ref=None, archive=None, output_style=UNSET, run=None, **probes) -> Outcome:
@@ -267,7 +268,7 @@ def bootstrap(repo_root, *, ref=None, archive=None, output_style=UNSET, run=None
         if ref_state == "empty":
             ref = REF_STOPGAP  # upstream has no commits yet: the documented stopgap
     reconcile.write_owner_choices(repo_root, ref=ref, archive=archive, output_style=output_style)
-    reconcile.apply(repo_root, **probes)
+    reconcile.apply(repo_root)
 
     gate_a = _pipeline(repo_root, final=False, **probes)
     if not gate_a.ok:
@@ -308,7 +309,7 @@ def update(repo_root, *, run=None, **probes) -> Outcome:
         return Outcome(stage="blocked", blocked=True, directive=directive)
 
     pinned = reconcile.current_ref(repo_root)
-    build = reconcile.build_version()
+    build = evidence.build_version()
 
     if pinned != sha:
         moved = reconcile.move_ref(repo_root, sha)
@@ -322,7 +323,7 @@ def update(repo_root, *, run=None, **probes) -> Outcome:
         # this session still runs the build it started with
         return Outcome(stage="restart-required", directive=_restart_pending_directive(sha, versions, build))
 
-    reconcile.apply(repo_root, is_rice_update=True, **probes)
+    reconcile.apply(repo_root, is_rice_update=True)
     gate_a = _pipeline(repo_root, final=False, **probes)
     if not gate_a.ok:
         return Outcome(report=gate_a.report, repaired=gate_a.repaired, stage="blocked",
@@ -441,11 +442,11 @@ def _unsupported_install_directive(detail: str, scopes: dict) -> list[str]:
         *[f"  - {scope} scope: {sorted(set(v))}" for scope, v in sorted(scopes.items())],
         "",
         "Minimal cleanup -- keep the canonical"
-        f" {reconcile.CANONICAL_SCOPE}-scope install, remove every other rice install:",
+        f" {evidence.CANONICAL_SCOPE}-scope install, remove every other rice install:",
         *[f"    claude plugin uninstall {settings_template.PLUGIN_KEY} --scope {scope}"
-          for scope in sorted(scopes) if scope != reconcile.CANONICAL_SCOPE],
+          for scope in sorted(scopes) if scope != evidence.CANONICAL_SCOPE],
         *([f"    claude plugin install {settings_template.PLUGIN_KEY}"]
-          if reconcile.CANONICAL_SCOPE not in scopes else []),
+          if evidence.CANONICAL_SCOPE not in scopes else []),
         "",
         "Nothing was written. Rice will not remove either install for you, and will not"
         " guess which one should win. Do the cleanup, then run /rice:rice-update again.",
@@ -491,7 +492,7 @@ def _restart_directive(moved, log, sha: str) -> list[str]:
 def _restart_pending_directive(sha: str, versions: list[str], build: str) -> list[str]:
     return [
         f"This repo is already pinned to upstream main ({sha}), and the canonical"
-        f" {reconcile.CANONICAL_SCOPE}-scope install reports {sorted(set(versions)) or 'nothing'},"
+        f" {evidence.CANONICAL_SCOPE}-scope install reports {sorted(set(versions)) or 'nothing'},"
         f" but the build running right now is {build}.",
         "",
         "Start a new session and run /rice:rice-update again -- a session keeps its"

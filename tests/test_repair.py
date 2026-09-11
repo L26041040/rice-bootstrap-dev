@@ -21,6 +21,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import evidence  # noqa: E402
 import reconcile  # noqa: E402
 import repair  # noqa: E402
 import rice  # noqa: E402
@@ -45,7 +46,7 @@ def _ok_rtk(cmd):
 
 
 def _installed(cmd):
-    return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": reconcile.build_version(),
+    return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": evidence.build_version(),
                               "scope": "user", "enabled": True}]))
 
 
@@ -73,7 +74,7 @@ def _matt_state(root: Path, *, section=True, issue=True, domain=True):
 
 
 def _git_denied_transcript(root: Path, ts="2099-01-01T00:00:00.000Z"):
-    tdir = reconcile.transcript_dir(root)
+    tdir = evidence.transcript_dir(root)
     tdir.mkdir(parents=True, exist_ok=True)
     recs = [
         {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [
@@ -136,14 +137,14 @@ class TestRepairActsOnlyOnNamedFailures(RepairBase):
         (self.root / ".claude" / "rice.md").write_text("hand-edited\n", encoding="utf-8")
         (self.root / "AGENTS.md").unlink()
         s = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        del s["env"]["CLAUDE_CODE_SUBAGENT_MODEL"]
+        del s["enabledPlugins"]["rice@rice-bootstrap"]
         (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
 
         done, after = self.repair_once()
         self.assertTrue(after.ok, after.lines)
         self.assertTrue(any(a.startswith("rice.md") for a in done.applied), done.applied)
         self.assertTrue(any(a.startswith("AGENTS.md") for a in done.applied), done.applied)
-        self.assertTrue(any(a.startswith("settings:env.CLAUDE_CODE_SUBAGENT_MODEL") for a in done.applied))
+        self.assertTrue(any(a.startswith("settings:enabledPlugins") for a in done.applied))
         self.assertEqual(done.unresolved, [])
         self.assertEqual((self.root / ".claude" / "rice.md").read_text(encoding="utf-8"),
                          reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
@@ -221,7 +222,7 @@ class TestMattRepair(RepairBase):
         self.assertEqual(now["docs/agents/domain.md"], committed["docs/agents/domain.md"])
         self.assertEqual(now["CLAUDE.md"], committed["CLAUDE.md"])
         # and the verifier -- not repair -- finished the job
-        self.assertEqual(self.version_file.read_text().strip(), reconcile.build_version())
+        self.assertEqual(self.version_file.read_text().strip(), evidence.build_version())
         self.assertFalse(is_waiting_for_matt(self.root))
 
     def test_never_committed_artifacts_are_unresolved_never_invented(self):
@@ -238,7 +239,7 @@ class TestMattRepair(RepairBase):
         joined = "\n".join(done.unresolved)
         self.assertTrue(all(u.startswith("matt:artifacts") and "only the official Matt setup" in u
                             for u in done.unresolved))
-        self.assertIn(reconcile.MATT_HEADING_LABEL, joined)
+        self.assertIn(evidence.MATT_HEADING_LABEL, joined)
         self.assertIn("docs/agents/domain.md", joined)
         self.assertNotIn("issue-tracker.md", joined)  # the one Matt did write is not "missing"
         self.assertEqual(_tree(self.root), before)  # nothing written, nothing guessed
@@ -250,7 +251,7 @@ class TestMattRepair(RepairBase):
         _matt_state(self.root, section=False)
         done, after = self.repair_once(final=True)
         self.assertFalse(after.ok)
-        self.assertTrue(any(reconcile.MATT_HEADING_LABEL in u for u in done.unresolved))
+        self.assertTrue(any(evidence.MATT_HEADING_LABEL in u for u in done.unresolved))
 
     def test_restored_section_stops_at_the_next_top_level_heading(self):
         text = "# proj\n\n@.claude/rice.md\n\n## Agent skills\n\n### Issue tracker\n\nx\n\n## Something else\n\ny\n"

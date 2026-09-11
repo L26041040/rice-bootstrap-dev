@@ -38,7 +38,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import evidence  # noqa: E402
 import reconcile  # noqa: E402
+import settings_template  # noqa: E402
 from reconcile import MARKER_NAME  # noqa: E402
 
 VERSION_FILE = ".claude/rice-version"
@@ -49,9 +51,9 @@ GATE_A = (
     "plugin:scope",
     "output-style:bundled",
     "output-style:choice",
-    *sorted(f"settings:{k}" for k in reconcile.settings_template.RICE_DEFINED_KEYS),
-    f"settings:{reconcile.settings_template.DENY_PATH}",
-    *sorted(f"settings:{k}" for k in reconcile.settings_template.OWNER_DEFINED_KEYS),
+    *sorted(f"settings:{k}" for k in settings_template.RICE_DEFINED_KEYS),
+    f"settings:{settings_template.DENY_PATH}",
+    *sorted(f"settings:{k}" for k in settings_template.OWNER_DEFINED_KEYS),
     "rice.md",
     "CLAUDE.md:import-line",
     "AGENTS.md:rice-pointer",
@@ -123,10 +125,14 @@ def gate_passes(items, required) -> tuple[bool, list[str]]:
 
 
 def _collect(repo_root, **probes):
-    """Every exception inside item collection becomes an ERROR item rather
-    than a crash -- and ERROR is not PASS, so the gate fails closed."""
+    """The rubric, from its two collectors: what rice owns in this repo
+    (`reconcile`) and what is true about the environment (`evidence`).
+    Neither has a verdict; this module is the only thing that does.
+
+    Every exception inside collection becomes an ERROR item rather than a
+    crash -- and ERROR is not PASS, so the gate fails closed."""
     try:
-        return reconcile.check(repo_root, **probes)
+        return reconcile.check_owned(repo_root) + evidence.collect(repo_root, **probes)
     except Exception as exc:  # noqa: BLE001 - fail closed on anything
         return [reconcile.ItemResult("verifier", "ERROR", f"{type(exc).__name__}: {exc}", kind="ERROR")]
 
@@ -138,7 +144,7 @@ def read_version(repo_root) -> str | None:
 
 def run(repo_root, *, final: bool = False, **probes) -> Report:
     repo_root = Path(repo_root)
-    build = reconcile.build_version()
+    build = evidence.build_version()
     items = _collect(repo_root, **probes)
     a_ok, a_reasons = gate_passes(items, GATE_A)
     lines = [f"[{'B' if i.name in GATE_B_EXTRA else 'A'}] {i.kind:<7} {i.state:<12} {i.name}"

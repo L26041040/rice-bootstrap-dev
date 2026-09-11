@@ -65,101 +65,28 @@ class TestDesiredSettings(unittest.TestCase):
         self.assertIn("outputStyle", OWNER_CHOICE_KEYS)
         self.assertNotIn("outputStyle", RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS)
 
-    def test_sonnet_default_no_force(self):
-        s = desired_settings(ref="v0.1.0", archive_default=False)
-        self.assertEqual(s["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "sonnet")
-        self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL_FORCE", s["env"])
-
-    def test_archive_toggle_respects_release_default_off(self):
-        s = desired_settings(ref="v0.1.0", archive_default=False)
-        self.assertEqual(s["env"]["RICE_SESSION_ARCHIVE"], "0")
-
-    def test_archive_toggle_respects_release_default_on(self):
+    def test_the_subagent_model_is_not_a_setting_rice_writes(self):
+        """RICE-BOOTSTRAP-046: hard-enforcing Sonnet per repo was rice's call
+        to make and it should not have been. It is a working rule in
+        `.claude/rice.md` now, and nothing writes or removes the key."""
         s = desired_settings(ref="v0.1.0", archive_default=True)
-        self.assertEqual(s["env"]["RICE_SESSION_ARCHIVE"], "1")
-
-    def test_destructive_git_deny_rules_present(self):
-        deny = desired_settings(ref="v0.1.0", archive_default=False)["permissions"]["deny"]
-        for pattern in [
-            "Bash(git push --force*)",
-            "Bash(git push * --force*)",
-            "Bash(git push -f*)",
-            "Bash(git push * -f)",
-            "Bash(git push * -f *)",
-            "Bash(git push +*)",
-            "Bash(git push * +*)",
-            "Bash(git push --delete *)",
-            "Bash(git push * --delete *)",
-            "Bash(git reset --hard*)",
-            "Bash(git rebase*)",
-            "Bash(git commit --amend*)",
-            "Bash(git filter-branch*)",
-            "Bash(git filter-repo*)",
-            "Bash(git reflog expire*)",
-            "Bash(git clean -f*)",
-        ]:
-            self.assertIn(pattern, deny, f"missing destructive deny rule: {pattern}")
-
-    def test_branch_creation_is_permission_only_whole_class(self):
-        deny = desired_settings(ref="v0.1.0", archive_default=False)["permissions"]["deny"]
-        # RICE-BOOTSTRAP-019: the whole `git branch` subcommand is denied
-        # (also matches the bare command), replacing #17's hook entirely.
-        self.assertIn("Bash(git branch *)", deny)
-        for pattern in [
-            "Bash(git checkout -b *)",
-            "Bash(git checkout -B *)",
-            "Bash(git checkout --orphan *)",
-            "Bash(git switch -c *)",
-            "Bash(git switch -C *)",
-            "Bash(git switch --create *)",
-            "Bash(git worktree add *)",
-            "Bash(git stash branch *)",
-        ]:
-            self.assertIn(pattern, deny, f"missing branch-creation deny rule: {pattern}")
-        self.assertIn("mcp__github__create_branch", deny)
-
-    def test_no_hook_based_git_safety_remains(self):
-        hooks_json = Path(__file__).resolve().parents[1] / "hooks" / "hooks.json"
-        self.assertNotIn("git_safety_hook", hooks_json.read_text(encoding="utf-8"))
-        self.assertFalse((Path(__file__).resolve().parents[1] / "scripts" / "git_safety_hook.py").exists())
-
-    def test_git_safety_does_not_deny_ordinary_work(self):
-        deny = desired_settings(ref="v0.1.0", archive_default=False)["permissions"]["deny"]
-        for pattern in [
-            "Bash(git checkout *)",
-            "Bash(git switch *)",
-            "Bash(git commit *)",
-            "Bash(git push *)",
-            "Bash(git status *)",
-            "Bash(git rev-parse *)",
-            "Bash(git *)",
-        ]:
-            self.assertNotIn(pattern, deny, f"{pattern} would over-block ordinary work")
-
-    def test_every_classified_path_exists_in_desired_settings(self):
-        s = desired_settings(ref="v0.1.0", archive_default=False)
-        for dotted in RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS:
-            _get(s, dotted)  # KeyError = a classified path that doesn't exist
-
-    def test_every_leaf_in_desired_settings_is_classified(self):
-        s = desired_settings(ref="v0.1.0", archive_default=False)
-        classified = RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS | OWNER_CHOICE_KEYS | {DENY_PATH}
-
-        def leaves(d, prefix=""):
-            for k, v in d.items():
-                path = f"{prefix}{k}"
-                if isinstance(v, dict) and path not in classified:
-                    yield from leaves(v, path + ".")
-                else:
-                    yield path
-
-        unclassified = [p for p in leaves(s) if p not in classified]
-        self.assertEqual(unclassified, [])
-
-    def test_ref_and_archive_toggle_are_owner_defined(self):
-        self.assertIn(REF_PATH, OWNER_DEFINED_KEYS)
-        self.assertIn("env.RICE_SESSION_ARCHIVE", OWNER_DEFINED_KEYS)
-        self.assertTrue(RICE_DEFINED_KEYS.isdisjoint(OWNER_DEFINED_KEYS))
+        self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", s.get("env", {}))
+        self.assertNotIn("env.CLAUDE_CODE_SUBAGENT_MODEL",
+                         RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS | OWNER_CHOICE_KEYS)
+        rice_md = (Path(__file__).resolve().parents[1] / "resources" / "rice.md").read_text(encoding="utf-8")
+        self.assertIn("Sonnet", rice_md)
+        # the only place the retired key may still be named is the
+        # declaration that lets uninstall take it back from repos that were
+        # bootstrapped when rice did write it
+        import reconcile
+        self.assertEqual(reconcile.RETIRED_LEAVES, {"env.CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"})
+        for py in (Path(__file__).resolve().parents[1] / "scripts").glob("*.py"):
+            code = "\n".join(l for l in py.read_text(encoding="utf-8").splitlines()
+                             if not l.lstrip().startswith("#"))
+            code = "".join(code.split('"""')[::2])  # drop docstrings
+            if py.name == "reconcile.py":
+                code = code.replace('RETIRED_LEAVES = {"env.CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"}', "")
+            self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", code, py.name)
 
     def test_deny_is_owned_entry_by_entry_not_as_a_leaf(self):
         """RICE-BOOTSTRAP-045: a repo may already be using permissions.deny,

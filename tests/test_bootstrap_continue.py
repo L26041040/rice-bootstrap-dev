@@ -22,6 +22,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import bootstrap_continue  # noqa: E402
+import evidence  # noqa: E402
 import reconcile  # noqa: E402
 import settings_template  # noqa: E402
 import verify  # noqa: E402
@@ -43,7 +44,7 @@ def _missing_rtk(cmd):
 
 
 def _installed(cmd):
-    return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": reconcile.build_version(),
+    return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": evidence.build_version(),
                               "scope": "user", "enabled": True}]))
 
 
@@ -63,7 +64,7 @@ def _make_correct_repo(root: Path, *, matt: bool):
 
 
 def _write_transcript(root: Path, ts="2099-01-01T00:00:00.000Z"):
-    tdir = reconcile.transcript_dir(root)
+    tdir = evidence.transcript_dir(root)
     tdir.mkdir(parents=True, exist_ok=True)
     recs = [
         {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [
@@ -98,13 +99,13 @@ class ContinuationBase(unittest.TestCase):
         self._env.start()
         # the hook calls verify/reconcile without probes, so the module-level
         # defaults are what it actually uses
-        self._real_plugin, self._real_rtk = reconcile._default_plugin_probe, reconcile._default_rtk_probe
-        reconcile._default_plugin_probe = _installed
-        reconcile._default_rtk_probe = _ok_rtk
+        self._real_plugin, self._real_rtk = evidence._default_plugin_probe, evidence._default_rtk_probe
+        evidence._default_plugin_probe = _installed
+        evidence._default_rtk_probe = _ok_rtk
 
     def tearDown(self):
-        reconcile._default_plugin_probe = self._real_plugin
-        reconcile._default_rtk_probe = self._real_rtk
+        evidence._default_plugin_probe = self._real_plugin
+        evidence._default_rtk_probe = self._real_rtk
         self._env.stop()
         self._tmp.cleanup()
 
@@ -147,7 +148,7 @@ class TestGuardsAreSilent(ContinuationBase):
     def test_rtk_missing_is_reported_not_silent(self):
         """RICE-BOOTSTRAP-042: once Matt's setup has run, nothing the
         environment lacks may leave the bootstrap silently pending."""
-        reconcile._default_rtk_probe = _missing_rtk
+        evidence._default_rtk_probe = _missing_rtk
         self._ready_repo()
         rc, out, err = _run_hook(_payload(self.root))
         self.assertEqual(rc, 2)
@@ -179,10 +180,10 @@ class TestContinuation(ContinuationBase):
         self._ready_repo()
         rc, out, err = _run_hook(_payload(self.root))
         self.assertEqual(rc, 2, err)  # exit 2 -> stderr reaches the model
-        self.assertIn(f"FINAL-VERIFIED {reconcile.build_version()}", err)
+        self.assertIn(f"FINAL-VERIFIED {evidence.build_version()}", err)
         self.assertIn("Commit and push", err)
         # the verifier -- not the hook -- did the writing
-        self.assertEqual(self.version_file.read_text().strip(), reconcile.build_version())
+        self.assertEqual(self.version_file.read_text().strip(), evidence.build_version())
         self.assertFalse(reconcile.is_waiting_for_matt(self.root))
 
     def test_idempotent_second_run_is_silent(self):
@@ -195,7 +196,7 @@ class TestContinuation(ContinuationBase):
 
     def test_final_fail_reports_blockers_only(self):
         self._ready_repo()
-        shutil.rmtree(reconcile.transcript_dir(self.root))  # git-deny:behaves: no evidence, nothing repairs that
+        shutil.rmtree(evidence.transcript_dir(self.root))  # git-deny:behaves: no evidence, nothing repairs that
         rc, out, err = _run_hook(_payload(self.root))
         self.assertEqual(rc, 2)
         self.assertIn("did not pass", err)
@@ -257,7 +258,7 @@ class TestHandoffIsNeverLostOrDuplicated(ContinuationBase):
         with mock.patch("sys.stdin", stdin), contextlib.redirect_stderr(_Boom()):
             rc = bootstrap_continue.main()
         self.assertEqual(rc, 2)
-        self.assertEqual(self.version_file.read_text().strip(), reconcile.build_version())
+        self.assertEqual(self.version_file.read_text().strip(), evidence.build_version())
 
     def test_each_external_probe_runs_at_most_once_per_hook_run(self):
         """The readiness check and the verifier ask the same two questions;
@@ -273,8 +274,8 @@ class TestHandoffIsNeverLostOrDuplicated(ContinuationBase):
             calls.append(tuple(cmd))
             return _ok_rtk(cmd)
 
-        reconcile._default_plugin_probe = counting_plugin
-        reconcile._default_rtk_probe = counting_rtk
+        evidence._default_plugin_probe = counting_plugin
+        evidence._default_rtk_probe = counting_rtk
         self._ready_repo()
         self.assertEqual(_run_hook(_payload(self.root))[0], 2)
         duplicated = [c for c in set(calls) if calls.count(c) > 1]
@@ -286,7 +287,7 @@ class TestHandoffIsNeverLostOrDuplicated(ContinuationBase):
         spoke in, so a blocker the model clears inside that turn would never
         be re-verified unless the message says to run the verifier itself."""
         self._ready_repo()
-        shutil.rmtree(reconcile.transcript_dir(self.root))
+        shutil.rmtree(evidence.transcript_dir(self.root))
         _, _, err = _run_hook(_payload(self.root))
         self.assertIn("verify.py", err)
         self.assertIn("--final", err)
@@ -320,11 +321,11 @@ class TestIncompleteMattIsNeverSilent(ContinuationBase):
         (self.root / "AGENTS.md").unlink()
         rc, _, err = _run_hook(_payload(self.root))
         self.assertEqual(rc, 2)
-        self.assertIn(f"FINAL-VERIFIED {reconcile.build_version()}", err)
+        self.assertIn(f"FINAL-VERIFIED {evidence.build_version()}", err)
         self.assertIn("Deterministic repair restored", err)
         self.assertIn("rice.md", err)
         self.assertIn("AGENTS.md", err)
-        self.assertEqual(self.version_file.read_text().strip(), reconcile.build_version())
+        self.assertEqual(self.version_file.read_text().strip(), evidence.build_version())
 
 
 class TestSingleInvocationContract(unittest.TestCase):

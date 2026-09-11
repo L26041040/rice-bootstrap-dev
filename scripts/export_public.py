@@ -26,6 +26,7 @@ ALLOWLIST = (
     "scripts/settings_template.py",
     "scripts/uninstall.py",
     "scripts/reconcile.py",
+    "scripts/evidence.py",
     "scripts/verify.py",
     "scripts/rice.py",
     "scripts/bootstrap_continue.py",

@@ -36,6 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import evidence  # noqa: E402
 import reconcile  # noqa: E402
 
 MATT = "matt:artifacts"
@@ -84,18 +85,18 @@ def _section_from(text: str, heading: str) -> str | None:
 
 def _restore_matt(repo_root: Path, plugin_probe) -> tuple[list[str], list[str]]:
     applied, unresolved = [], []
-    for label, present in reconcile.matt_presence(repo_root, plugin_probe).items():
+    for label, present in evidence.matt_presence(repo_root, plugin_probe).items():
         if present:
             continue
-        if label == reconcile.MATT_HEADING_LABEL:
+        if label == evidence.MATT_HEADING_LABEL:
             head = _head_text(repo_root, "CLAUDE.md")
-            section = _section_from(head, reconcile.MATT_HEADING) if head else None
+            section = _section_from(head, evidence.MATT_HEADING) if head else None
             if section:
                 dest = repo_root / "CLAUDE.md"
                 current = dest.read_text(encoding="utf-8") if dest.exists() else ""
                 sep = "" if (not current or current.endswith("\n")) else "\n"
                 dest.write_text(f"{current}{sep}\n{section}" if current else section, encoding="utf-8")
-                applied.append(f"{MATT}: restored the `{reconcile.MATT_HEADING}` section of CLAUDE.md from HEAD")
+                applied.append(f"{MATT}: restored the `{evidence.MATT_HEADING}` section of CLAUDE.md from HEAD")
             else:
                 unresolved.append(f"{MATT}: {label} is not in this repo's HEAD; only the official Matt setup can write it")
             continue
@@ -110,18 +111,18 @@ def _restore_matt(repo_root: Path, plugin_probe) -> tuple[list[str], list[str]]:
 # the repair boundary
 # --------------------------------------------------------------------------
 
-def repair(repo_root, report, *, rtk_probe=None, plugin_probe=None) -> RepairResult:
+def repair(repo_root, report, *, plugin_probe=None, **_unused) -> RepairResult:
     """Apply the known repair for every failure in `report.failing` -- the
     items the verifier required for the gate it just evaluated and did not
     get as PASS. Returns what was done and what could not be; says nothing
     about whether the repo now passes. Run the verifier for that."""
     repo_root = Path(repo_root)
-    plugin_probe = plugin_probe or reconcile._default_plugin_probe
+    plugin_probe = plugin_probe or evidence._default_plugin_probe
     failing = report.failing
     result = RepairResult()
     converged = {}
     if any(i.owned for i in failing):
-        for a in reconcile.apply(repo_root, is_rice_update=True, rtk_probe=rtk_probe, plugin_probe=plugin_probe):
+        for a in reconcile.apply(repo_root, is_rice_update=True):
             converged[a.name] = a
             if a.state in ("created", "updated"):
                 result.applied.append(f"{a.name}: {a.state} from canonical state" + (f" ({a.detail})" if a.detail else ""))

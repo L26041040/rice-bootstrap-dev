@@ -16,12 +16,20 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import evidence  # noqa: E402
 import reconcile  # noqa: E402
 import settings_template  # noqa: E402
 import verify  # noqa: E402
 from reconcile import enter_waiting_for_matt, is_waiting_for_matt  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+
+def _rubric(repo_root, **probes):
+    """The full rubric the verifier evaluates: rice-owned state plus
+    environment evidence (RICE-BOOTSTRAP-046 split them)."""
+    return reconcile.check_owned(repo_root) + evidence.collect(repo_root, **probes)
 
 
 class _R:
@@ -75,7 +83,7 @@ class TestGateInvariant(unittest.TestCase):
             root = Path(d)
             _make_correct_repo(root)
             with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(root / "cfg")}):
-                items = reconcile.check(root, rtk_probe=_ok_rtk, plugin_probe=_installed)
+                items = _rubric(root, rtk_probe=_ok_rtk, plugin_probe=_installed)
         names = {i.name for i in items}
         self.assertEqual(names - set(verify.GATE_B), set(), "unrequired items exist")
         self.assertEqual(set(verify.GATE_B) - names, set(), "required items the rubric never produces")
@@ -86,7 +94,7 @@ def _ok_rtk(cmd):
 
 
 def _installed(cmd):
-    return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": reconcile.build_version(),
+    return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": evidence.build_version(),
                               "scope": "user", "enabled": True}]))
 
 
@@ -106,7 +114,7 @@ def _make_correct_repo(root: Path, *, matt=False):
 
 
 def _write_transcript(root: Path, *, git_denied=True, ts="2099-01-01T00:00:00.000Z"):
-    tdir = reconcile.transcript_dir(root)
+    tdir = evidence.transcript_dir(root)
     tdir.mkdir(parents=True, exist_ok=True)
     recs = []
     if git_denied:
@@ -153,7 +161,7 @@ class TestGateA(VerifierRunBase):
         _write_transcript(self.root)
         rep = self.run_verify()
         self.assertTrue(rep.gate_a, rep.lines)
-        self.assertIn(f"RICE-VERIFIED {reconcile.build_version()}", rep.lines)
+        self.assertIn(f"RICE-VERIFIED {evidence.build_version()}", rep.lines)
 
     def test_gate_a_never_writes_version(self):
         _make_correct_repo(self.root)
@@ -171,7 +179,7 @@ class TestGateA(VerifierRunBase):
 
     def test_wrong_probe_command_does_not_count(self):
         _make_correct_repo(self.root)
-        tdir = reconcile.transcript_dir(self.root); tdir.mkdir(parents=True)
+        tdir = evidence.transcript_dir(self.root); tdir.mkdir(parents=True)
         recs = [
             {"type": "assistant", "timestamp": "2099-01-01T00:00:00Z", "message": {"role": "assistant", "content": [
                 {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "git branch probe"}}]}},
@@ -192,9 +200,9 @@ class TestGateBAndVersionAuthority(VerifierRunBase):
         enter_waiting_for_matt(self.root)
         rep = self.run_verify(final=True)
         self.assertTrue(rep.gate_b, rep.lines)
-        self.assertEqual(rep.version_written, reconcile.build_version())
-        self.assertEqual((self.root / verify.VERSION_FILE).read_text().strip(), reconcile.build_version())
-        self.assertIn(f"FINAL-VERIFIED {reconcile.build_version()}", rep.lines)
+        self.assertEqual(rep.version_written, evidence.build_version())
+        self.assertEqual((self.root / verify.VERSION_FILE).read_text().strip(), evidence.build_version())
+        self.assertIn(f"FINAL-VERIFIED {evidence.build_version()}", rep.lines)
         self.assertFalse(is_waiting_for_matt(self.root))
 
     def test_final_fail_leaves_existing_version_byte_identical_and_marker(self):
@@ -243,7 +251,7 @@ class TestGateBAndVersionAuthority(VerifierRunBase):
 
     def test_collection_exception_fails_closed(self):
         _make_correct_repo(self.root, matt=True)
-        with mock.patch.object(reconcile, "check", side_effect=RuntimeError("boom")):
+        with mock.patch.object(reconcile, "check_owned", side_effect=RuntimeError("boom")):
             rep = verify.run(self.root, final=True)
         self.assertFalse(rep.gate_a); self.assertFalse(rep.gate_b)
         self.assertEqual(rep.items[0].state, "ERROR")
@@ -258,7 +266,7 @@ class TestSoleAuthority(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); _make_correct_repo(root)
             with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(root / "cfg")}):
-                out = reconcile.check(root, rtk_probe=_ok_rtk, plugin_probe=_installed)
+                out = _rubric(root, rtk_probe=_ok_rtk, plugin_probe=_installed)
         self.assertIsInstance(out, list)
         blob = " ".join(f"{i.name} {i.state} {i.detail}" for i in out)
         self.assertNotRegex(blob, r"RICE-VERIFIED|FINAL-VERIFIED|MECHANICAL-VERIFIED")
@@ -284,8 +292,8 @@ class TestSoleAuthority(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); _make_correct_repo(root)
             with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(root / "cfg")}), \
-                 mock.patch.object(reconcile, "_default_plugin_probe", _installed), \
-                 mock.patch.object(reconcile, "_default_rtk_probe", _ok_rtk):
+                 mock.patch.object(evidence, "_default_plugin_probe", _installed), \
+                 mock.patch.object(evidence, "_default_rtk_probe", _ok_rtk):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     rc = verify.main([str(root)])

@@ -333,5 +333,18 @@ class TestSourceIdentity(unittest.TestCase):
         self.assertEqual(identity["head_sha"], release._git_head_sha(ROOT))
 
 
+class TestPublishWorkspaceIsCleanedUp(unittest.TestCase):
+    def test_the_scratch_clone_never_outlives_the_call(self):
+        """It used to leak a `rice-publish-*` directory on every run."""
+        before = set(Path(tempfile.gettempdir()).glob("rice-publish-*"))
+        ok, detail = release.publish(Path(tempfile.gettempdir()) / "nonexistent-export",
+                                     "0.0.0", public_repo=None)
+        self.assertFalse(ok)
+        with mock.patch.object(release, "_run", return_value=(1, "no remote")):
+            release.publish(Path(tempfile.gettempdir()) / "nonexistent-export", "0.0.0",
+                            public_repo="/tmp/definitely-not-a-repo")
+        self.assertEqual(set(Path(tempfile.gettempdir()).glob("rice-publish-*")), before)
+
+
 if __name__ == "__main__":
     unittest.main()

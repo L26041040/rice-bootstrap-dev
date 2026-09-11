@@ -253,6 +253,13 @@ def _replace_worktree_with_export(git_root: Path, export_dir: Path) -> None:
 
 
 def publish(dest: Path, version: str, public_repo: str | None, source_sha: str = "") -> tuple[bool, str]:
+    """Publish, in a scratch clone that is always cleaned up -- success,
+    failure or exception alike (the workspace used to leak on every run)."""
+    with tempfile.TemporaryDirectory(prefix="rice-publish-") as tmp:
+        return _publish(Path(tmp), dest, version, public_repo, source_sha)
+
+
+def _publish(ws: Path, dest: Path, version: str, public_repo: str | None, source_sha: str = "") -> tuple[bool, str]:
     """Publish the exported surface to the public repository. Only called
     after a PASS verdict. No git tag or GitHub release is ever created,
     pushed, or checked (RICE-BOOTSTRAP-030) -- success is public `main`
@@ -282,7 +289,6 @@ def publish(dest: Path, version: str, public_repo: str | None, source_sha: str =
         return False, f"could not reach public repository: {out.strip()[-300:]}"
     is_first_release = not out.strip()
 
-    ws = Path(tempfile.mkdtemp(prefix="rice-publish-"))
     steps = [["git", "init", "-q", "-b", "main"], ["git", "remote", "add", "public", public_repo]]
     if not is_first_release:
         steps += [["git", "fetch", "-q", "public", "main"], ["git", "checkout", "-q", "-B", "main", "public/main"]]

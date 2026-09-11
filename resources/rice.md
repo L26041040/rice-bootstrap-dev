@@ -15,6 +15,15 @@ Setting → Permission → Skill/Script → Hook → DELETE-or-Policy
 - If a requirement is not worth enough on its own, delete it. Do not add a
   framework for the sake of completeness.
 
+## Subagent model
+
+Subagents default to Sonnet: it is the right trade for search, review and
+mechanical work. When a task genuinely needs a stronger model, name it out
+loud when dispatching the subagent -- there is no approval gate for that,
+and no setting pinning it either (RICE-BOOTSTRAP-046: rice stopped writing
+`env.CLAUDE_CODE_SUBAGENT_MODEL`, because that is the OWNER's call per repo,
+not rice's).
+
 ## Conversation numbering
 
 Every reply starts with a sequential conversation number, e.g.

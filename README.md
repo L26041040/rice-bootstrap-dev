@@ -2,7 +2,7 @@
 
 One-instruction bootstrap and update for common Claude Code project
 configuration: git safety as native permission rules, a session archive with
-a mechanical index, Sonnet as the subagent default, an OWNER-chosen output
+a mechanical index, an OWNER-chosen output
 style (the bundled 老弟 style recommended), the OWNER's soft working rules in
 `.claude/rice.md` (imported by `CLAUDE.md` for Claude, pointed at from
 `AGENTS.md` for every other coding agent), and an OWNER-driven handoff to
@@ -104,8 +104,8 @@ The lifecycle engine (`scripts/rice.py`) decides everything else:
    as an absent key and a custom project style the agent writes to
    `.claude/output-styles/<name>.md` — are written once, only if absent.
    `rice.py styles <repo>` lists what resolves.
-3. Rice-owned state is reconciled: settings leaves, rice's own
-   `permissions.deny` entries, `.claude/rice.md`, the `@.claude/rice.md`
+3. Rice-owned state is reconciled: settings leaves, one occurrence of each
+   of rice's own `permissions.deny` rules, `.claude/rice.md`, the `@.claude/rice.md`
    line in `CLAUDE.md`, the rice pointer block in `AGENTS.md`. Ownership is
    declared once, in `scripts/reconcile.py`, and install, update, repair and
    uninstall are verbs over that one declaration. Three shapes, and the
@@ -193,12 +193,14 @@ trigger. Entrypoint: the `rice:rice-uninstall` skill, which runs
 - Target repo cleanup: exact subtraction of rice-owned state only, from the
   same declaration install used (`.claude/rice.md`, the `@.claude/rice.md`
   line, the rice pointer block in `AGENTS.md`, `.claude/rice-version`,
-  `WAITING_FOR_MATT`, the rice marketplace/plugin declaration, the Sonnet
-  subagent default when still rice's value, `RICE_SESSION_ARCHIVE`, rice's
-  own deny entries one by one, `outputStyle` only when it is exactly
-  `rice:老弟`). A project value that is byte-identical to rice's canonical
-  one is indistinguishable from rice's and goes with it; rice keeps no
-  install manifest to tell them apart.
+  `WAITING_FOR_MATT`, the rice marketplace/plugin declaration,
+  `RICE_SESSION_ARCHIVE`, the retired subagent pin while it still holds
+  rice's old value, one occurrence of each of rice's own deny rules,
+  `outputStyle` only when it is exactly `rice:老弟`). Deny rules are a
+  multiset: rice adds its own occurrence beside a rule the repo already had
+  and takes back exactly that one, so an identical project rule survives. A
+  rice-defined *leaf* whose value the project set to exactly rice's own is
+  still indistinguishable and goes with it; rice keeps no install manifest.
 - Kept: `session-history/`, custom output styles and any other
   `outputStyle`, `permissions.allow`/`ask`, project deny rules, other
   plugins/marketplaces, project-owned `AGENTS.md`/`CLAUDE.md` content,

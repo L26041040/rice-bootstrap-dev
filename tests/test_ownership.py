@@ -23,6 +23,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import evidence  # noqa: E402
 import reconcile  # noqa: E402
 import repair  # noqa: E402
 import settings_template  # noqa: E402
@@ -40,6 +41,13 @@ PROJECT_CLAUDE_MD = (
 PROJECT_AGENTS_MD = "# Agents\n\nCross-agent guidance this repo already had.\n\n## Testing\n\n`make test`\n"
 
 
+
+def _rubric(repo_root, **probes):
+    """The full rubric the verifier evaluates: rice-owned state plus
+    environment evidence (RICE-BOOTSTRAP-046 split them)."""
+    return reconcile.check_owned(repo_root) + evidence.collect(repo_root, **probes)
+
+
 class _R:
     def __init__(self, rc, out):
         self.returncode, self.stdout = rc, out
@@ -50,7 +58,7 @@ def _ok_rtk(cmd):
 
 
 def _installed(cmd):
-    return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": reconcile.build_version(),
+    return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": evidence.build_version(),
                               "scope": "user", "enabled": True}]))
 
 
@@ -106,7 +114,7 @@ class OwnershipBase(unittest.TestCase):
 
     def install(self, **kw):
         reconcile.write_owner_choices(self.root, ref=REF, archive=True, **kw)
-        return reconcile.apply(self.root, **PROBES)
+        return reconcile.apply(self.root)
 
 
 class TestExistingRepoSafety(OwnershipBase):
@@ -121,7 +129,6 @@ class TestExistingRepoSafety(OwnershipBase):
         self.assertEqual(after["permissions"]["allow"], before["permissions"]["allow"])
         self.assertEqual(after["permissions"]["ask"], before["permissions"]["ask"])
         self.assertEqual(after["env"]["MY_VAR"], "keep")
-        self.assertEqual(after["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "sonnet")  # rice's, added beside it
         self.assertTrue(after["enabledPlugins"]["other@mp"])
         self.assertEqual(after["extraKnownMarketplaces"]["mp"], before["extraKnownMarketplaces"]["mp"])
         self.assertEqual(after["hooks"], before["hooks"])
@@ -143,14 +150,14 @@ class TestExistingRepoSafety(OwnershipBase):
         self.assertEqual(len(deny), len(PROJECT_DENY) + len(settings_template.RICE_DENY_ENTRIES))
 
         # an update refreshes rice's own entries and touches no other
-        reconcile.apply(self.root, is_rice_update=True, **PROBES)
+        reconcile.apply(self.root, is_rice_update=True)
         self.assertEqual(self.settings()["permissions"]["deny"], deny)
 
         # a rice rule the OWNER deleted comes back; a project rule never goes
         hacked = [d for d in deny if d != settings_template.RICE_DENY_ENTRIES[0]]
         s = self.settings(); s["permissions"]["deny"] = hacked
         (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
-        reconcile.apply(self.root, **PROBES)
+        reconcile.apply(self.root)
         restored = self.settings()["permissions"]["deny"]
         self.assertIn(settings_template.RICE_DENY_ENTRIES[0], restored)
         self.assertEqual([d for d in restored if d in PROJECT_DENY], PROJECT_DENY)
@@ -195,31 +202,168 @@ class TestExistingRepoSafety(OwnershipBase):
         self.assertFalse((self.root / ".claude").exists())  # rice created it, rice took it away
 
 
-class TestIndistinguishableValues(OwnershipBase):
-    """The honest limit of subtractive ownership, pinned so it cannot be
-    forgotten: when a repo's own value is byte-identical to rice's canonical
-    one, nothing on disk can tell them apart, and uninstall removes it.
+class TestDenyIsAMultiset(OwnershipBase):
+    """RICE-BOOTSTRAP-046: rice owns exactly ONE occurrence of each rule it
+    declares. Fresh installs add it, everything else leaves the multiset
+    alone, and uninstall takes back exactly one."""
 
-    The alternative would be a manifest of what rice created, written at
-    install time -- new state that can go stale, be committed, be edited, or
-    disagree with the repo. Rice does not keep one: the rule is "rice owns
-    exactly what matches its canonical declaration", stated once, with this
-    consequence accepted and documented."""
+    RULE = settings_template.RICE_DENY_ENTRIES[0]
 
-    def test_a_project_value_identical_to_rices_is_removed_with_rices(self):
+    def deny(self):
+        return self.settings()["permissions"]["deny"]
+
+    def test_a_fresh_repo_gets_exactly_one_occurrence_of_each_rule(self):
+        self.install()
+        deny = self.deny()
+        self.assertEqual(sorted(deny), sorted(settings_template.RICE_DENY_ENTRIES))
+        for rule in settings_template.RICE_DENY_ENTRIES:
+            self.assertEqual(deny.count(rule), 1, rule)
+        uninstall.uninstall(self.root)
+        self.assertFalse((self.root / ".claude").exists())  # rice created it all, rice took it all
+
+    def test_a_repeated_bootstrap_never_adds_a_third_copy(self):
         self.existing_repo()
-        s = _existing_settings()
-        s["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] = "sonnet"           # same as rice's
-        s["permissions"]["deny"].append(settings_template.RICE_DENY_ENTRIES[0])  # same as a rice rule
+        s = _existing_settings(); s["permissions"]["deny"].append(self.RULE)
+        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
+        self.install()
+        self.assertEqual(self.deny().count(self.RULE), 2)
+        for _ in range(3):
+            self.install()
+            self.assertEqual(self.deny().count(self.RULE), 2)
+
+    def test_an_update_never_grows_the_multiplicity(self):
+        self.existing_repo()
+        self.install()
+        before = list(self.deny())
+        for _ in range(3):
+            reconcile.apply(self.root, is_rice_update=True)
+        self.assertEqual(self.deny(), before)
+
+    def test_a_rule_the_owner_deleted_comes_back_exactly_once(self):
+        self.existing_repo()
+        self.install()
+        s = self.settings()
+        s["permissions"]["deny"] = [d for d in s["permissions"]["deny"] if d != self.RULE]
+        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
+        self.install()
+        self.assertEqual(self.deny().count(self.RULE), 1)
+
+    def test_uninstalling_twice_never_eats_the_projects_copy(self):
+        self.existing_repo()
+        s = _existing_settings(); s["permissions"]["deny"].append(self.RULE)
         (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
         self.install()
         uninstall.uninstall(self.root)
+        after_first = list(self.deny())
+        self.assertEqual(after_first.count(self.RULE), 1)
+        uninstall.uninstall(self.root)
+        self.assertEqual(self.deny(), after_first)
+
+    def test_freshness_is_read_from_rices_own_settings_not_a_manifest(self):
+        """The marker is the rice-defined leaves themselves: written by
+        apply, removed by remove, living in the file being edited."""
+        self.existing_repo()
+        current = self.settings()
+        self.assertFalse(reconcile.rice_installed_here(current))
+        self.install()
+        self.assertTrue(reconcile.rice_installed_here(self.settings()))
+        uninstall.uninstall(self.root)
+        self.assertFalse(reconcile.rice_installed_here(self.settings()))
+        # ... and no new state file was created anywhere to hold that answer
+        self.assertEqual(sorted(p.name for p in (self.root / ".claude").iterdir())
+                         if (self.root / ".claude").exists() else [], ["settings.json"])
+
+
+class TestMultisetSafetyUnderDrift(OwnershipBase):
+    """Review found three ways the multiset could grow or eat a project rule
+    when rice's marker and the deny list disagreed. Each is pinned here."""
+
+    RULE = settings_template.RICE_DENY_ENTRIES[0]
+
+    def deny(self):
+        return self.settings()["permissions"]["deny"]
+
+    def test_losing_one_marker_does_not_re_add_a_whole_set(self):
+        self.existing_repo()
+        self.install()
+        before = list(self.deny())
+        s = self.settings()  # the leaves edited away, rice's rules left behind
+        del s["enabledPlugins"], s["extraKnownMarketplaces"]
+        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
+        self.install()
+        self.assertEqual(sorted(self.deny()), sorted(before))
+
+    def test_a_drifted_leaf_never_lets_uninstall_subtract_twice(self):
+        self.existing_repo()
+        self.install()
+        s = self.settings(); s["enabledPlugins"]["rice@rice-bootstrap"] = False  # drift
+        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
+        uninstall.uninstall(self.root)
+        once = list(self.deny())
+        uninstall.uninstall(self.root)
+        self.assertEqual(self.deny(), once, "a second uninstall subtracted again")
+        self.assertEqual([d for d in self.deny() if d in PROJECT_DENY], PROJECT_DENY)
+
+    def test_a_clean_uninstall_is_reported_clean_and_stays_clean(self):
+        self.existing_repo()
+        self.install()
+        uninstall.uninstall(self.root)
+        items, verdict = uninstall.check(self.root)
+        self.assertEqual(verdict, "RICE-UNINSTALLED",
+                         "\n".join(f"{i.name} {i.state} {i.detail}" for i in items))
+        after = _tree(self.root)
+        uninstall.uninstall(self.root)
+        self.assertEqual(_tree(self.root), after)
+
+    def test_a_retired_setting_is_still_taken_back_on_uninstall(self):
+        """A repo bootstrapped before RICE-BOOTSTRAP-046 still carries the
+        subagent pin rice used to write; nothing re-creates it, and uninstall
+        still removes rice's own value."""
+        self.existing_repo()
+        self.install()
+        s = self.settings(); s.setdefault("env", {})["CLAUDE_CODE_SUBAGENT_MODEL"] = "sonnet"
+        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
+        self.install()  # an update never reasserts it
+        self.assertEqual(self.settings()["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "sonnet")
+        uninstall.uninstall(self.root)
+        self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", self.settings().get("env", {}))
+
+    def test_a_project_value_at_the_retired_path_is_kept(self):
+        self.existing_repo()
+        self.install()
+        s = self.settings(); s.setdefault("env", {})["CLAUDE_CODE_SUBAGENT_MODEL"] = "opus"
+        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
+        uninstall.uninstall(self.root)
+        self.assertEqual(self.settings()["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "opus")
+
+
+class TestIndistinguishableValues(OwnershipBase):
+    """Where a value cannot be told apart, rice still must not guess.
+
+    `permissions.deny` is settled: rice owns one occurrence of each rule it
+    declares, so a project's identical rule survives (multiset ownership,
+    RICE-BOOTSTRAP-046) -- no manifest needed. What remains inherently
+    ambiguous is a rice-defined *leaf*, where a single path holds a single
+    value: if the project set it to exactly rice's value, nothing on disk
+    distinguishes them. Rice keeps no install manifest to tell them apart --
+    that would be new state that can go stale, be committed, be edited, or
+    disagree with the repo."""
+
+    def test_a_deny_rule_the_project_already_had_survives_uninstall(self):
+        """RICE-BOOTSTRAP-046 closed this one with multiset ownership: rice
+        adds its OWN occurrence beside the project's and takes back exactly
+        that one, so an identical rule is no longer a loss."""
+        self.existing_repo()
+        rule = settings_template.RICE_DENY_ENTRIES[0]
+        s = _existing_settings(); s["permissions"]["deny"].append(rule)
+        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
+        self.install()
+        self.assertEqual(self.settings()["permissions"]["deny"].count(rule), 2)
+        uninstall.uninstall(self.root)
         after = self.settings()
-        self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", after.get("env", {}))
-        self.assertNotIn(settings_template.RICE_DENY_ENTRIES[0], after["permissions"]["deny"])
-        # everything that is genuinely theirs is still there
+        self.assertEqual(after["permissions"]["deny"].count(rule), 1)
+        self.assertEqual(after["permissions"]["deny"], PROJECT_DENY + [rule])
         self.assertEqual(after["env"]["MY_VAR"], "keep")
-        self.assertEqual(after["permissions"]["deny"], PROJECT_DENY)
 
     def test_a_deny_rule_an_older_build_shipped_is_treated_as_the_projects(self):
         """Rice owns exactly the entries THIS build declares; an entry a past
@@ -242,13 +386,16 @@ class TestCollisionsBlock(OwnershipBase):
 
     def test_a_leaf_the_project_already_set_differently_is_a_conflict(self):
         self.existing_repo()
-        s = _existing_settings(); s["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] = "opus"
+        s = _existing_settings()
+        s["extraKnownMarketplaces"]["rice-bootstrap"] = {"source": {"repo": "someone/else"}}
         (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
         self.install()
-        item = self._states(reconcile.check(self.root, **PROBES))["settings:env.CLAUDE_CODE_SUBAGENT_MODEL"]
+        name = "settings:extraKnownMarketplaces.rice-bootstrap.source.repo"
+        item = self._states(reconcile.check_owned(self.root))[name]
         self.assertEqual(item.state, "FAIL")
         self.assertIn("not overwritten", item.detail)
-        self.assertEqual(self.settings()["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "opus")
+        self.assertEqual(self.settings()["extraKnownMarketplaces"]["rice-bootstrap"]["source"]["repo"],
+                         "someone/else")
 
     def test_a_deny_list_that_is_not_a_list_is_a_conflict_not_a_rewrite(self):
         self.existing_repo()
@@ -257,7 +404,7 @@ class TestCollisionsBlock(OwnershipBase):
         applied = self._states(self.install())[f"settings:{settings_template.DENY_PATH}"]
         self.assertEqual(applied.state, "conflict")
         self.assertEqual(self.settings()["permissions"]["deny"], "Bash(git push --force*)")
-        item = self._states(reconcile.check(self.root, **PROBES))[f"settings:{settings_template.DENY_PATH}"]
+        item = self._states(_rubric(self.root, **PROBES))[f"settings:{settings_template.DENY_PATH}"]
         self.assertEqual(item.state, "FAIL")
         self.assertIn("cannot add", item.detail)
 
@@ -268,7 +415,7 @@ class TestCollisionsBlock(OwnershipBase):
         agents = (self.root / "AGENTS.md").read_text(encoding="utf-8")
         (self.root / "AGENTS.md").write_text(
             agents.replace("read `.claude/rice.md`", "ignore rice"), encoding="utf-8")
-        states = self._states(reconcile.apply(self.root, **PROBES))
+        states = self._states(reconcile.apply(self.root))
         self.assertEqual(states["rice.md"].state, "conflict")
         self.assertEqual(states["AGENTS.md:rice-pointer"].state, "conflict")
         self.assertEqual((self.root / ".claude" / "rice.md").read_text(encoding="utf-8"), "mine now\n")
@@ -376,9 +523,9 @@ class TestOwnershipIsDeclaredOnce(unittest.TestCase):
             root = Path(d)
             with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(root / "cfg")}):
                 reconcile.write_owner_choices(root, ref=REF, archive=True)
-                applied = {i.name for i in reconcile.apply(root, **PROBES)
+                applied = {i.name for i in reconcile.apply(root)
                            if i.state in ("created", "updated", "noop", "conflict")}
-                owned = {i.name for i in reconcile.check(root, **PROBES) if i.owned}
+                owned = {i.name for i in _rubric(root, **PROBES) if i.owned}
         self.assertTrue(owned)
         self.assertEqual(owned - applied, set(), "an item claims to be owned but apply never touches it")
 

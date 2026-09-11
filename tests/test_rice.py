@@ -25,6 +25,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import evidence  # noqa: E402
 import reconcile  # noqa: E402
 import repair  # noqa: E402
 import rice  # noqa: E402
@@ -49,7 +50,7 @@ def _missing_rtk(cmd):
 
 
 def _installed(cmd):
-    return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": reconcile.build_version(),
+    return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": evidence.build_version(),
                               "scope": "user", "enabled": True}]))
 
 
@@ -75,7 +76,7 @@ MATT_SECTION = "## Agent skills\n\n### Issue tracker\n\nGitHub Issues. See `docs
 
 def _git_denied_transcript(root: Path, ts="2099-01-01T00:00:00.000Z"):
     """The harness-recorded denial Gate A's git-deny:behaves item reads."""
-    tdir = reconcile.transcript_dir(root)
+    tdir = evidence.transcript_dir(root)
     tdir.mkdir(parents=True, exist_ok=True)
     recs = [
         {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [
@@ -169,7 +170,7 @@ class TestCanonicalFlow(LifecycleBase):
 
     def test_still_failing_after_repair_is_left_for_the_model(self):
         self.bootstrap()
-        shutil.rmtree(reconcile.transcript_dir(self.root))  # git-deny evidence: nothing repairs it
+        shutil.rmtree(evidence.transcript_dir(self.root))  # git-deny evidence: nothing repairs it
         seen, spy = self._verify_spy()
         with spy:
             outcome = self.bootstrap()
@@ -202,7 +203,7 @@ class TestSingleInvocation(LifecycleBase):
         outcome = rice.continue_after_matt(self.root, **PROBES)
         self.assertIsNotNone(outcome)
         self.assertTrue(outcome.ok, outcome.lines)
-        self.assertEqual(self.version_file.read_text().strip(), reconcile.build_version())
+        self.assertEqual(self.version_file.read_text().strip(), evidence.build_version())
         self.assertFalse(reconcile.is_waiting_for_matt(self.root))
 
     def test_matt_already_complete_finishes_inside_the_one_invocation(self):
@@ -210,11 +211,11 @@ class TestSingleInvocation(LifecycleBase):
         outcome = self.bootstrap()
         self.assertTrue(outcome.ok, outcome.lines)
         self.assertFalse(outcome.waiting_for_matt)  # never ask for a setup already done
-        self.assertEqual(self.version_file.read_text().strip(), reconcile.build_version())
+        self.assertEqual(self.version_file.read_text().strip(), evidence.build_version())
         self.assertFalse(reconcile.is_waiting_for_matt(self.root))
 
     def test_gate_a_failure_does_not_park_the_repo(self):
-        shutil.rmtree(reconcile.transcript_dir(self.root))
+        shutil.rmtree(evidence.transcript_dir(self.root))
         outcome = self.bootstrap()
         self.assertFalse(outcome.ok)
         self.assertFalse(reconcile.is_waiting_for_matt(self.root))
@@ -307,7 +308,7 @@ class TestUpdateStages(LifecycleBase):
         self.assertTrue(outcome.ok, outcome.lines)
         self.assertEqual((self.root / ".claude" / "rice.md").read_text(encoding="utf-8"),
                          reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
-        self.assertEqual(self.version_file.read_text().strip(), reconcile.build_version())
+        self.assertEqual(self.version_file.read_text().strip(), evidence.build_version())
 
 
 class TestUnknownIsNeverAFact(LifecycleBase):
@@ -389,7 +390,7 @@ class TestCanonicalInstallPolicy(LifecycleBase):
 
     def setUp(self):
         super().setUp()
-        self.BUILD = reconcile.build_version()
+        self.BUILD = evidence.build_version()
 
     def test_a_user_scope_install_is_the_normal_path(self):
         _matt_artifacts(self.root)
@@ -440,7 +441,7 @@ class TestCanonicalInstallPolicy(LifecycleBase):
 
     def test_the_verifier_not_rice_decides_a_duplicate_install_is_unhealthy(self):
         """No second truth in rice.py: the rubric item is what fails a repo."""
-        item = reconcile._plugin_scope_item(_entries(("user", self.BUILD), ("project", self.BUILD)))
+        item = evidence._plugin_scope_item(_entries(("user", self.BUILD), ("project", self.BUILD)))
         self.assertEqual(item.name, "plugin:scope")
         self.assertEqual(item.state, "FAIL")
         self.assertIn("plugin:scope", verify.GATE_A)
@@ -474,7 +475,7 @@ class TestCanonicalInstallPolicy(LifecycleBase):
         def no_scope(cmd):
             return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": self.BUILD}]))
 
-        item = reconcile._plugin_scope_item(no_scope)
+        item = evidence._plugin_scope_item(no_scope)
         self.assertEqual(item.state, "NOT_VERIFIED")
         self.assertNotIn("--scope ?", item.detail)
         outcome = rice.update(self.root, run=fake_run(), rtk_probe=_ok_rtk, plugin_probe=no_scope)
@@ -500,7 +501,7 @@ class TestCanonicalInstallPolicy(LifecycleBase):
     def test_the_blocker_text_names_real_scopes_and_runnable_commands(self):
         """On the bootstrap path the rubric item's detail is the whole text
         the OWNER sees, so it may not contain a placeholder."""
-        item = reconcile._plugin_scope_item(_entries(("user", self.BUILD), ("project", "0.0.1")))
+        item = evidence._plugin_scope_item(_entries(("user", self.BUILD), ("project", "0.0.1")))
         self.assertNotIn("<scope>", item.detail)
         self.assertIn("--scope project", item.detail)
 
@@ -582,7 +583,7 @@ class TestDirectives(LifecycleBase):
         self.assertIn("no Matt hand-off", directive)
 
     def test_blockers_are_the_verifiers_reasons_and_nothing_invented(self):
-        shutil.rmtree(reconcile.transcript_dir(self.root))
+        shutil.rmtree(evidence.transcript_dir(self.root))
         outcome = self.bootstrap()
         self.assertEqual(outcome.stage, "blocked")
         for reason in outcome.report.reasons:
@@ -642,7 +643,7 @@ class TestVerifierSoleAuthority(LifecycleBase):
         self.bootstrap()
         _matt_artifacts(self.root)
         outcome = rice.continue_after_matt(self.root, **PROBES)
-        self.assertEqual(outcome.verdict, f"FINAL-VERIFIED {reconcile.build_version()}")
+        self.assertEqual(outcome.verdict, f"FINAL-VERIFIED {evidence.build_version()}")
         self.assertEqual(outcome.report.reasons, [])
         self.assertIn(outcome.verdict, rice.continuation_message(self.root, outcome))
 
@@ -757,8 +758,8 @@ class TestCliTranslation(unittest.TestCase):
             calls.append(tuple(cmd))
             return _installed(cmd) if "plugin" in cmd else _ok_rtk(cmd)
 
-        with mock.patch.object(reconcile, "_default_plugin_probe", counting), \
-             mock.patch.object(reconcile, "_default_rtk_probe", counting), \
+        with mock.patch.object(evidence, "_default_plugin_probe", counting), \
+             mock.patch.object(evidence, "_default_rtk_probe", counting), \
              tempfile.TemporaryDirectory() as d, \
              mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": d + "/cfg"}):
             rice.main(["bootstrap", d, "--ref", REF, "--archive", "1", "--output-style", "none"])

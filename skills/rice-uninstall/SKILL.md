@@ -55,11 +55,13 @@ marker-delimited rice pointer block in `AGENTS.md` (the file itself only if
 rice created it with nothing but that block);
 `.claude/rice-version`; `WAITING_FOR_MATT`; the `rice-bootstrap`
 marketplace entry; `enabledPlugins.rice@rice-bootstrap`;
-`env.CLAUDE_CODE_SUBAGENT_MODEL` only while it still equals rice's `sonnet`;
-`env.RICE_SESSION_ARCHIVE`; exactly rice's own `permissions.deny` entries,
-subtracted one by one so a repo's own rules keep their values and their
-order (an entry already gone is a no-op, and an entry rice never declared is
-the project's); `outputStyle` only when it is exactly `rice:老弟`. Containers rice
+`env.RICE_SESSION_ARCHIVE`; `env.CLAUDE_CODE_SUBAGENT_MODEL` only while it
+still holds the `sonnet` rice used to write there before that pin was
+retired (RICE-BOOTSTRAP-046); one occurrence of each of rice's own
+`permissions.deny` rules, so a repo that already had the same rule keeps its
+own copy in its own position (an entry already gone is a no-op, and an entry
+rice never declared is the project's); `outputStyle` only when it is exactly
+`rice:老弟`. Containers rice
 emptied are dropped; `.claude/` stays whenever anything project-owned is
 left in it.
 

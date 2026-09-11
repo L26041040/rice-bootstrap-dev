@@ -13,8 +13,16 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import output_styles  # noqa: E402
+import evidence  # noqa: E402
 import reconcile  # noqa: E402
 import settings_template  # noqa: E402
+
+
+
+def _rubric(repo_root, **probes):
+    """The full rubric the verifier evaluates: rice-owned state plus
+    environment evidence (RICE-BOOTSTRAP-046 split them)."""
+    return reconcile.check_owned(repo_root) + evidence.collect(repo_root, **probes)
 
 
 class _R:
@@ -62,7 +70,7 @@ class TestResolve(unittest.TestCase):
 
     def test_rice_bundled_style_resolves_via_this_build(self):
         ok, detail = output_styles.resolve(settings_template.RICE_STYLE, self.root, _probe_with([]),
-                                           self_plugin=(settings_template.PLUGIN_NAME, reconcile.PLUGIN_ROOT))
+                                           self_plugin=(settings_template.PLUGIN_NAME, evidence.PLUGIN_ROOT))
         self.assertTrue(ok, detail)
 
     def test_nonexistent_style_fails(self):
@@ -74,7 +82,7 @@ class TestResolve(unittest.TestCase):
         d = self.root / ".claude" / "output-styles"; d.mkdir(parents=True)
         (d / "p.md").write_text("---\nname: proj\n---\n", encoding="utf-8")
         got = {s["value"]: s["source"] for s in output_styles.available(self.root, _probe_with([]),
-                                                                           self_plugin=("rice", reconcile.PLUGIN_ROOT))}
+                                                                           self_plugin=("rice", evidence.PLUGIN_ROOT))}
         self.assertEqual(got["proj"], "project")
         self.assertIn(settings_template.RICE_STYLE, got)
         self.assertEqual(got["default"], "builtin")
@@ -85,14 +93,14 @@ class TestVerifierChoiceItem(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(); self.root = Path(self._tmp.name)
         self._env = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.root / "cfg")}); self._env.start()
         (self.root / ".claude").mkdir()
-        self.probe = _probe_with([{"id": "rice@rice-bootstrap", "version": reconcile.build_version(), "scope": "user", "enabled": True}])
+        self.probe = _probe_with([{"id": "rice@rice-bootstrap", "version": evidence.build_version(), "scope": "user", "enabled": True}])
 
     def tearDown(self):
         self._env.stop(); self._tmp.cleanup()
 
     def _state(self, settings):
         (self.root / ".claude" / "settings.json").write_text(json.dumps(settings, ensure_ascii=False), encoding="utf-8")
-        items = reconcile.check(self.root, rtk_probe=lambda c: _R(0, "rtk"), plugin_probe=self.probe)
+        items = _rubric(self.root, rtk_probe=lambda c: _R(0, "rtk"), plugin_probe=self.probe)
         return {i.name: i for i in items}["output-style:choice"]
 
     def test_default_absent_passes(self):

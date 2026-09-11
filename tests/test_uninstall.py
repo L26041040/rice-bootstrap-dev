@@ -218,11 +218,13 @@ class TestUninstallCheck(UninstallBase):
             "marketplace": lambda s: s.setdefault("extraKnownMarketplaces", {}).__setitem__(
                 "rice-bootstrap", {"source": {"source": "github", "repo": "L26041040/rice-bootstrap"}}),
             "enabled-plugin": lambda s: s.setdefault("enabledPlugins", {}).__setitem__("rice@rice-bootstrap", True),
-            "subagent-default": lambda s: s.setdefault("env", {}).__setitem__("CLAUDE_CODE_SUBAGENT_MODEL", "sonnet"),
             "archive-switch": lambda s: s.setdefault("env", {}).__setitem__("RICE_SESSION_ARCHIVE", "1"),
-            "a rice deny rule": lambda s: s.setdefault("permissions", {}).setdefault("deny", []).append("Bash(git rebase*)"),
             "rice output style": lambda s: s.__setitem__("outputStyle", settings_template.RICE_STYLE),
         }
+        # not listed: a lone deny rule. Under multiset ownership
+        # (RICE-BOOTSTRAP-046) a single occurrence with no other rice state is
+        # indistinguishable from a project rule, and rice keeps no manifest --
+        # so it is the project's, and leaving it is the correct answer.
         for what, plant in settings_leftovers.items():
             _bootstrapped_repo(self.root); self._run()
             p = self.root / ".claude" / "settings.json"
