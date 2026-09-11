@@ -56,9 +56,10 @@ rice created it with nothing but that block);
 `.claude/rice-version`; `WAITING_FOR_MATT`; the `rice-bootstrap`
 marketplace entry; `enabledPlugins.rice@rice-bootstrap`;
 `env.CLAUDE_CODE_SUBAGENT_MODEL` only while it still equals rice's `sonnet`;
-`env.RICE_SESSION_ARCHIVE`; exactly rice's own `permissions.deny` entries
-(current list minus this build's canonical entries; an entry already gone is
-a no-op); `outputStyle` only when it is exactly `rice:老弟`. Containers rice
+`env.RICE_SESSION_ARCHIVE`; exactly rice's own `permissions.deny` entries,
+subtracted one by one so a repo's own rules keep their values and their
+order (an entry already gone is a no-op, and an entry rice never declared is
+the project's); `outputStyle` only when it is exactly `rice:老弟`. Containers rice
 emptied are dropped; `.claude/` stays whenever anything project-owned is
 left in it.
 

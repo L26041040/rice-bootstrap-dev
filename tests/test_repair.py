@@ -210,7 +210,7 @@ class TestMattRepair(RepairBase):
         (self.root / "docs" / "agents" / "domain.md").unlink()
         c = self.root / "CLAUDE.md"
         c.write_text(c.read_text(encoding="utf-8").split("\n## Agent skills")[0], encoding="utf-8")
-        from bootstrap_state import enter_waiting_for_matt, is_waiting_for_matt
+        from reconcile import enter_waiting_for_matt, is_waiting_for_matt
         enter_waiting_for_matt(self.root)
 
         done, after = self.repair_once(final=True)

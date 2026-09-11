@@ -22,7 +22,6 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import bootstrap_continue  # noqa: E402
-import bootstrap_state  # noqa: E402
 import reconcile  # noqa: E402
 import settings_template  # noqa: E402
 import verify  # noqa: E402
@@ -114,7 +113,7 @@ class ContinuationBase(unittest.TestCase):
         present, and bootstrap still waiting for Matt."""
         _make_correct_repo(self.root, matt=True)
         _write_transcript(self.root)
-        bootstrap_state.enter_waiting_for_matt(self.root)
+        reconcile.enter_waiting_for_matt(self.root)
 
     def assertSilent(self, rc, out, err):
         self.assertEqual(rc, 0)
@@ -139,11 +138,11 @@ class TestGuardsAreSilent(ContinuationBase):
         nothing to continue and nothing to repair."""
         _make_correct_repo(self.root, matt=False)
         _write_transcript(self.root)
-        bootstrap_state.enter_waiting_for_matt(self.root)
+        reconcile.enter_waiting_for_matt(self.root)
         rc, out, err = _run_hook(_payload(self.root))
         self.assertSilent(rc, out, err)
         self.assertFalse(self.version_file.exists())
-        self.assertTrue(bootstrap_state.is_waiting_for_matt(self.root))
+        self.assertTrue(reconcile.is_waiting_for_matt(self.root))
 
     def test_rtk_missing_is_reported_not_silent(self):
         """RICE-BOOTSTRAP-042: once Matt's setup has run, nothing the
@@ -154,14 +153,14 @@ class TestGuardsAreSilent(ContinuationBase):
         self.assertEqual(rc, 2)
         self.assertIn("rtk", err)
         self.assertFalse(self.version_file.exists())
-        self.assertTrue(bootstrap_state.is_waiting_for_matt(self.root))
+        self.assertTrue(reconcile.is_waiting_for_matt(self.root))
 
     def test_stop_hook_active_is_silent(self):
         self._ready_repo()
         rc, out, err = _run_hook(_payload(self.root, stop_hook_active=True))
         self.assertSilent(rc, out, err)
         self.assertFalse(self.version_file.exists())
-        self.assertTrue(bootstrap_state.is_waiting_for_matt(self.root))
+        self.assertTrue(reconcile.is_waiting_for_matt(self.root))
 
     def test_missing_or_malformed_payload_is_silent(self):
         for payload in ("", "not json", "[]", json.dumps({"hook_event_name": "Stop"})):
@@ -184,7 +183,7 @@ class TestContinuation(ContinuationBase):
         self.assertIn("Commit and push", err)
         # the verifier -- not the hook -- did the writing
         self.assertEqual(self.version_file.read_text().strip(), reconcile.build_version())
-        self.assertFalse(bootstrap_state.is_waiting_for_matt(self.root))
+        self.assertFalse(reconcile.is_waiting_for_matt(self.root))
 
     def test_idempotent_second_run_is_silent(self):
         self._ready_repo()
@@ -207,7 +206,7 @@ class TestContinuation(ContinuationBase):
         for forbidden in ("/rice:bootstrap", "bootstrap this repo with rice", "rice again", "re-run rice", "rerun rice"):
             self.assertNotIn(forbidden, err)
         self.assertFalse(self.version_file.exists())
-        self.assertTrue(bootstrap_state.is_waiting_for_matt(self.root))
+        self.assertTrue(reconcile.is_waiting_for_matt(self.root))
 
     def test_hook_never_writes_version_or_clears_marker_itself(self):
         """Sole authority (RICE-BOOTSTRAP-021): stamping the version and
@@ -223,7 +222,7 @@ class TestContinuation(ContinuationBase):
         self.assertEqual(rc, 2)
         self.assertIn("FINAL-VERIFIED 9.9.9", err)
         self.assertFalse(self.version_file.exists())
-        self.assertTrue(bootstrap_state.is_waiting_for_matt(self.root))
+        self.assertTrue(reconcile.is_waiting_for_matt(self.root))
 
     def test_hook_runs_no_git_command(self):
         source = (REPO / "scripts" / "bootstrap_continue.py").read_text(encoding="utf-8")
@@ -303,7 +302,7 @@ class TestIncompleteMattIsNeverSilent(ContinuationBase):
         _make_correct_repo(self.root, matt=True)
         (self.root / "docs" / "agents" / "domain.md").unlink()  # never committed: not reconstructible
         _write_transcript(self.root)
-        bootstrap_state.enter_waiting_for_matt(self.root)
+        reconcile.enter_waiting_for_matt(self.root)
         rc, out, err = _run_hook(_payload(self.root))
         self.assertEqual(rc, 2)
         self.assertIn("did not pass", err)
@@ -313,7 +312,7 @@ class TestIncompleteMattIsNeverSilent(ContinuationBase):
         self.assertIn("last fallback", err)
         self.assertFalse((self.root / "docs" / "agents" / "domain.md").exists())  # nothing invented
         self.assertFalse(self.version_file.exists())
-        self.assertTrue(bootstrap_state.is_waiting_for_matt(self.root))
+        self.assertTrue(reconcile.is_waiting_for_matt(self.root))
 
     def test_rice_owned_drift_is_repaired_before_the_model_hears_of_it(self):
         self._ready_repo()

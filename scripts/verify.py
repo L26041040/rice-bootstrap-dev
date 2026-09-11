@@ -39,7 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import reconcile  # noqa: E402
-from bootstrap_state import MARKER_NAME  # noqa: E402
+from reconcile import MARKER_NAME  # noqa: E402
 
 VERSION_FILE = ".claude/rice-version"
 
@@ -50,6 +50,7 @@ GATE_A = (
     "output-style:bundled",
     "output-style:choice",
     *sorted(f"settings:{k}" for k in reconcile.settings_template.RICE_DEFINED_KEYS),
+    f"settings:{reconcile.settings_template.DENY_PATH}",
     *sorted(f"settings:{k}" for k in reconcile.settings_template.OWNER_DEFINED_KEYS),
     "rice.md",
     "CLAUDE.md:import-line",

@@ -12,6 +12,8 @@ from settings_template import (  # noqa: E402
     desired_settings,
     RICE_DEFINED_KEYS,
     OWNER_DEFINED_KEYS,
+    DENY_PATH,
+    RICE_DENY_ENTRIES,
     OWNER_CHOICE_KEYS,
     REF_PATH,
     RICE_STYLE,
@@ -141,7 +143,7 @@ class TestDesiredSettings(unittest.TestCase):
 
     def test_every_leaf_in_desired_settings_is_classified(self):
         s = desired_settings(ref="v0.1.0", archive_default=False)
-        classified = RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS | OWNER_CHOICE_KEYS
+        classified = RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS | OWNER_CHOICE_KEYS | {DENY_PATH}
 
         def leaves(d, prefix=""):
             for k, v in d.items():
@@ -158,6 +160,14 @@ class TestDesiredSettings(unittest.TestCase):
         self.assertIn(REF_PATH, OWNER_DEFINED_KEYS)
         self.assertIn("env.RICE_SESSION_ARCHIVE", OWNER_DEFINED_KEYS)
         self.assertTrue(RICE_DEFINED_KEYS.isdisjoint(OWNER_DEFINED_KEYS))
+
+    def test_deny_is_owned_entry_by_entry_not_as_a_leaf(self):
+        """RICE-BOOTSTRAP-045: a repo may already be using permissions.deny,
+        so rice owns the entries it adds and never the list itself."""
+        self.assertNotIn(DENY_PATH, RICE_DEFINED_KEYS | OWNER_DEFINED_KEYS | OWNER_CHOICE_KEYS)
+        self.assertEqual(list(desired_settings(ref="v0.1.0", archive_default=False)["permissions"]["deny"]),
+                         list(RICE_DENY_ENTRIES))
+        self.assertTrue(RICE_DENY_ENTRIES)
 
     def test_permissions_allow_is_project_owned(self):
         self.assertNotIn("permissions", RICE_DEFINED_KEYS)

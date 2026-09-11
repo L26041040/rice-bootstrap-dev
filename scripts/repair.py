@@ -9,11 +9,12 @@ handed a `verify.Report`, acts on `report.failing`, and the caller
 
 What is mechanically repairable here, and from where:
 
-- rice-owned settings leaves, `.claude/rice.md`, the `@.claude/rice.md`
-  line in CLAUDE.md, the rice pointer block in AGENTS.md -- from this
-  build's canonical desired state, via `reconcile.apply(is_rice_update=True)`
-  (the verifier has already declared the drift a FAIL, so converging on the
-  canonical value is the one repair that exists).
+- anything `reconcile` owns -- the item says so itself (`ItemResult.owned`),
+  so this module keeps no second list of what rice owns
+  (RICE-BOOTSTRAP-045). One `reconcile.apply(is_rice_update=True)` converges
+  every one of them from this build's canonical state; the verifier has
+  already declared the drift a FAIL, so converging is the one repair that
+  exists.
 - Matt's setup artifacts -- only from this repo's own history: a doc that
   is tracked at HEAD but missing from the working tree is checked out
   again; a `## Agent skills` section present in HEAD's CLAUDE.md but gone
@@ -37,11 +38,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import reconcile  # noqa: E402
 
-# Failure identities reconcile.apply repairs from canonical state.
-RECONCILE_OWNED = frozenset(
-    {f"settings:{k}" for k in reconcile.settings_template.RICE_DEFINED_KEYS}
-    | {"rice.md", "CLAUDE.md:import-line", "AGENTS.md:rice-pointer"}
-)
 MATT = "matt:artifacts"
 
 
@@ -123,12 +119,22 @@ def repair(repo_root, report, *, rtk_probe=None, plugin_probe=None) -> RepairRes
     plugin_probe = plugin_probe or reconcile._default_plugin_probe
     failing = report.failing
     result = RepairResult()
-    if any(i.name in RECONCILE_OWNED for i in failing):
+    converged = {}
+    if any(i.owned for i in failing):
         for a in reconcile.apply(repo_root, is_rice_update=True, rtk_probe=rtk_probe, plugin_probe=plugin_probe):
+            converged[a.name] = a
             if a.state in ("created", "updated"):
                 result.applied.append(f"{a.name}: {a.state} from canonical state" + (f" ({a.detail})" if a.detail else ""))
     for i in failing:
-        if i.name in RECONCILE_OWNED:
+        if i.owned:
+            # owned means apply is the repair -- not that it succeeded. An
+            # artifact apply could not converge losslessly (a `conflict`) is
+            # reported, never silently counted as handled.
+            a = converged.get(i.name)
+            if a is not None and a.state in ("created", "updated", "noop"):
+                continue
+            state, detail = (a.state, a.detail) if a is not None else (i.state, i.detail)
+            result.unresolved.append(f"{i.name}: {state}" + (f" -- {detail}" if detail else ""))
             continue
         if i.name == MATT:
             applied, unresolved = _restore_matt(repo_root, plugin_probe)

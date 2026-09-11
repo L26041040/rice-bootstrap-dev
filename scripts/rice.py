@@ -48,7 +48,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import bootstrap_state  # noqa: E402
 import output_styles  # noqa: E402
 import reconcile  # noqa: E402
 import repair  # noqa: E402
@@ -274,7 +273,7 @@ def bootstrap(repo_root, *, ref=None, archive=None, output_style=UNSET, run=None
     if not gate_a.ok:
         return Outcome(report=gate_a.report, repaired=gate_a.repaired, stage="blocked",
                        directive=_blockers_directive(gate_a.report))
-    bootstrap_state.enter_waiting_for_matt(repo_root)
+    reconcile.enter_waiting_for_matt(repo_root)
     matt = gate_a.report.item("matt:artifacts")
     if matt is not None and matt.state == "PASS":
         final = _pipeline(repo_root, final=True, carried=gate_a.repaired, **probes)
@@ -342,7 +341,7 @@ def continue_after_matt(repo_root, **probes) -> Outcome | None:
     flow to Gate B, so an incomplete Matt setup is reported rather than left
     silently pending (RICE-BOOTSTRAP-042)."""
     repo_root = Path(repo_root)
-    if not bootstrap_state.is_waiting_for_matt(repo_root):
+    if not reconcile.is_waiting_for_matt(repo_root):
         return None
     if not _matt_started(repo_root, **probes):
         return None

@@ -34,7 +34,67 @@ import archive_hook
 import output_styles
 import settings_template
 
+# --------------------------------------------------------------------------
+# What rice owns in a target repo -- declared once (RICE-BOOTSTRAP-045).
+#
+# Every lifecycle is a different verb over these same declarations: install
+# and update converge them, repair restores exactly the ones the verifier
+# failed, uninstall subtracts them. No other module keeps a list.
+#
+# Three ownership shapes, and the shape decides what "safe on an existing
+# repo" means for that artifact:
+#
+#   whole-file   `.claude/rice.md` -- rice wrote the file, so rice may
+#                replace it wholesale on an update. Hand-edited at the same
+#                version is a collision: reported, never overwritten.
+#   additive     the `@.claude/rice.md` line in CLAUDE.md, the marker block
+#                in AGENTS.md, rice's own `permissions.deny` entries -- rice
+#                owns exactly what it added and nothing around it. Install
+#                adds what is missing, uninstall subtracts exactly that, and
+#                project-owned bytes are never read as drift.
+#   leaf         one rice-defined settings value at one dotted path. A
+#                different value already there is a collision that cannot be
+#                merged losslessly: reported, never guessed at.
+#
+# The pending marker is rice-created repo state too, so it lives here with
+# the rest of what rice puts in a repo (RICE-BOOTSTRAP-045 folded the old
+# bootstrap_state module in). Only verify.py removes it, on a Gate B pass.
 IMPORT_LINE = "@.claude/rice.md"
+
+MARKER_NAME = "WAITING_FOR_MATT"
+_MARKER_CONTENT = (
+    "rice bootstrap is waiting for you to personally run the official\n"
+    "Matt Pocock setup skill (setup-matt-pocock-skills). Claude cannot\n"
+    "invoke it for you -- see .claude/rice.md.\n"
+    "\n"
+    "This file is removed automatically once that setup is verified\n"
+    "complete.\n"
+)
+
+
+# Files rice creates in a target repo. The verified-version file is NOT one
+# of them: verify.py owns that, and only verify.py writes it.
+OWNED_FILES = {
+    ".claude/rice.md": "rice-md:absent",
+    f".claude/{MARKER_NAME}": "waiting-marker:absent",
+}
+
+
+def _marker_path(repo_root) -> Path:
+    return Path(repo_root) / ".claude" / MARKER_NAME
+
+
+def enter_waiting_for_matt(repo_root) -> None:
+    """The deterministic pending marker (#13 directive H): a fresh session can
+    check it instead of Claude remembering across turns."""
+    p = _marker_path(repo_root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if not p.exists():
+        p.write_text(_MARKER_CONTENT, encoding="utf-8")
+
+
+def is_waiting_for_matt(repo_root) -> bool:
+    return _marker_path(repo_root).exists()
 
 # RICE-BOOTSTRAP-042: AGENTS.md is the cross-agent entry point. Codex (and
 # every other AGENTS.md reader checked) concatenates the file verbatim and has
@@ -81,6 +141,8 @@ class ItemResult:
     state: str
     detail: str = ""
     kind: str = MATCHES
+    owned: bool = False  # rice owns this artifact: apply() can converge it,
+    #                      so repair asks the item instead of keeping a list
 
 
 def build_version() -> str:
@@ -107,6 +169,19 @@ def _set_path(d: dict, dotted: str, value) -> None:
     for part in parts[:-1]:
         cur = cur.setdefault(part, {})
     cur[parts[-1]] = value
+
+
+def current_settings(repo_root) -> dict | None:
+    """The repo's settings.json as a dict, or None when it exists but is not
+    a JSON object (which uninstall must not silently treat as empty)."""
+    p = Path(repo_root) / ".claude" / "settings.json"
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _current_settings(repo_root: Path) -> dict:
@@ -148,19 +223,20 @@ def _settings_items(current: dict, ref: str | None, *, write: bool, is_rice_upda
         if cur is _MISSING:
             if write:
                 _set_path(current, key, des)
-                items.append(ItemResult(f"settings:{key}", "created", f"set to {des!r}"))
+                items.append(ItemResult(f"settings:{key}", "created", f"set to {des!r}", owned=True))
             else:
-                items.append(ItemResult(f"settings:{key}", "FAIL", f"missing; desired={des!r}"))
+                items.append(ItemResult(f"settings:{key}", "FAIL", f"missing; desired={des!r}", owned=True))
         elif cur == des:
-            items.append(ItemResult(f"settings:{key}", "noop" if write else "PASS"))
+            items.append(ItemResult(f"settings:{key}", "noop" if write else "PASS", owned=True))
         elif write and is_rice_update:
             _set_path(current, key, des)
-            items.append(ItemResult(f"settings:{key}", "updated", f"{cur!r} -> {des!r}"))
+            items.append(ItemResult(f"settings:{key}", "updated", f"{cur!r} -> {des!r}", owned=True))
         else:
             items.append(ItemResult(
                 f"settings:{key}", "conflict" if write else "FAIL",
-                f"drift: current={cur!r} desired={des!r} (not overwritten)",
+                f"drift: current={cur!r} desired={des!r} (not overwritten)", owned=True,
             ))
+    items.append(_deny_item(current, write=write))
 
     for key in _OWNER_LEAF_KEYS:
         cur = _get_path(current, key)
@@ -179,6 +255,47 @@ def _settings_items(current: dict, ref: str | None, *, write: bool, is_rice_upda
     return items, current
 
 
+DENY_PATH = settings_template.DENY_PATH
+RICE_DENY_ENTRIES = settings_template.RICE_DENY_ENTRIES
+
+
+def _deny_entries(current: dict):
+    """(the repo's deny list, is it usable). A non-list value is not
+    something rice can add to without destroying it."""
+    cur = _get_path(current, DENY_PATH)
+    if cur is _MISSING:
+        return [], True
+    return (cur, True) if isinstance(cur, list) else (cur, False)
+
+
+def _deny_item(current: dict, *, write: bool) -> ItemResult:
+    """Additive ownership (RICE-BOOTSTRAP-045): rice owns the entries it adds
+    to `permissions.deny`, never the list. Whatever the repo already denies
+    stays exactly as it is -- same values, same order -- and is never read as
+    drift. An update needs no special case: adding what is missing IS the
+    convergence."""
+    name = f"settings:{DENY_PATH}"
+    cur, usable = _deny_entries(current)
+    if not usable:
+        return ItemResult(name, "conflict" if write else "FAIL",
+                          f"{DENY_PATH} is {type(cur).__name__}, not a list -- rice cannot add its "
+                          "rules without destroying what is there", kind=EXISTS, owned=True)
+    missing = [e for e in RICE_DENY_ENTRIES if e not in cur]
+    if not missing:
+        return ItemResult(name, "noop" if write else "PASS",
+                          f"all {len(RICE_DENY_ENTRIES)} rice rules present; "
+                          f"{len(cur) - len(RICE_DENY_ENTRIES)} project rule(s) untouched",
+                          kind=EXISTS, owned=True)
+    if write:
+        _set_path(current, DENY_PATH, list(cur) + missing)
+        return ItemResult(name, "created" if not cur else "updated",
+                          f"added {len(missing)} rice rule(s); project rules untouched",
+                          kind=EXISTS, owned=True)
+    return ItemResult(name, "FAIL", f"{len(missing)} rice rule(s) missing: "
+                      + ", ".join(missing[:3]) + ("..." if len(missing) > 3 else ""),
+                      kind=EXISTS, owned=True)
+
+
 def _rice_md_item(repo_root: Path, *, write: bool, is_rice_update: bool) -> ItemResult:
     desired = RICE_MD_RESOURCE.read_text(encoding="utf-8")
     dest = repo_root / ".claude" / "rice.md"
@@ -186,17 +303,17 @@ def _rice_md_item(repo_root: Path, *, write: bool, is_rice_update: bool) -> Item
         if write:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(desired, encoding="utf-8")
-            return ItemResult("rice.md", "created")
-        return ItemResult("rice.md", "FAIL", "missing; run apply")
+            return ItemResult("rice.md", "created", owned=True)
+        return ItemResult("rice.md", "FAIL", "missing; run apply", owned=True)
     current = dest.read_text(encoding="utf-8")
     if current == desired:
-        return ItemResult("rice.md", "noop" if write else "PASS")
+        return ItemResult("rice.md", "noop" if write else "PASS", owned=True)
     if write and is_rice_update:
         dest.write_text(desired, encoding="utf-8")
-        return ItemResult("rice.md", "updated")
+        return ItemResult("rice.md", "updated", owned=True)
     return ItemResult(
         "rice.md", "conflict" if write else "FAIL",
-        "hand-edited or drifted at the same version; not overwritten",
+        "hand-edited or drifted at the same version; not overwritten", owned=True,
     )
 
 
@@ -205,16 +322,16 @@ def _claude_md_item(repo_root: Path, *, write: bool) -> ItemResult:
     if not dest.exists():
         if write:
             dest.write_text(f"{IMPORT_LINE}\n", encoding="utf-8")
-            return ItemResult("CLAUDE.md:import-line", "created", "CLAUDE.md did not exist; created with only the import line")
-        return ItemResult("CLAUDE.md:import-line", "FAIL", "CLAUDE.md missing")
+            return ItemResult("CLAUDE.md:import-line", "created", "CLAUDE.md did not exist; created with only the import line", owned=True)
+        return ItemResult("CLAUDE.md:import-line", "FAIL", "CLAUDE.md missing", owned=True)
     content = dest.read_text(encoding="utf-8")
     if any(line.strip() == IMPORT_LINE for line in content.splitlines()):
-        return ItemResult("CLAUDE.md:import-line", "noop" if write else "PASS")
+        return ItemResult("CLAUDE.md:import-line", "noop" if write else "PASS", owned=True)
     if write:
         sep = "" if content.endswith("\n") else "\n"
         dest.write_text(f"{content}{sep}\n{IMPORT_LINE}\n", encoding="utf-8")
-        return ItemResult("CLAUDE.md:import-line", "created", "import line appended; rest of file untouched")
-    return ItemResult("CLAUDE.md:import-line", "FAIL", "import line missing")
+        return ItemResult("CLAUDE.md:import-line", "created", "import line appended; rest of file untouched", owned=True)
+    return ItemResult("CLAUDE.md:import-line", "FAIL", "import line missing", owned=True)
 
 
 def _agents_block_span(content: str) -> tuple[int, int] | None:
@@ -242,23 +359,23 @@ def _agents_md_item(repo_root: Path, *, write: bool, is_rice_update: bool) -> It
     if not dest.exists():
         if write:
             dest.write_text(AGENTS_POINTER, encoding="utf-8")
-            return ItemResult(name, "created", "AGENTS.md did not exist; created with only the rice pointer block", kind=EXISTS)
-        return ItemResult(name, "FAIL", "AGENTS.md missing", kind=EXISTS)
+            return ItemResult(name, "created", "AGENTS.md did not exist; created with only the rice pointer block", kind=EXISTS, owned=True)
+        return ItemResult(name, "FAIL", "AGENTS.md missing", kind=EXISTS, owned=True)
     content = dest.read_text(encoding="utf-8")
     span = _agents_block_span(content)
     if span is None:
         if write:
             sep = "" if (content.endswith("\n") or not content) else "\n"
             dest.write_text(f"{content}{sep}\n{AGENTS_POINTER}" if content else AGENTS_POINTER, encoding="utf-8")
-            return ItemResult(name, "created", "rice pointer block appended; rest of file untouched", kind=EXISTS)
-        return ItemResult(name, "FAIL", "rice pointer block missing", kind=EXISTS)
+            return ItemResult(name, "created", "rice pointer block appended; rest of file untouched", kind=EXISTS, owned=True)
+        return ItemResult(name, "FAIL", "rice pointer block missing", kind=EXISTS, owned=True)
     if content[span[0]:span[1]] == AGENTS_POINTER:
-        return ItemResult(name, "noop" if write else "PASS", kind=EXISTS)
+        return ItemResult(name, "noop" if write else "PASS", kind=EXISTS, owned=True)
     if write and is_rice_update:
         dest.write_text(content[:span[0]] + AGENTS_POINTER + content[span[1]:], encoding="utf-8")
-        return ItemResult(name, "updated", "rice pointer block replaced; rest of file untouched", kind=EXISTS)
+        return ItemResult(name, "updated", "rice pointer block replaced; rest of file untouched", kind=EXISTS, owned=True)
     return ItemResult(name, "conflict" if write else "FAIL",
-                      "rice pointer block hand-edited or drifted; not overwritten", kind=EXISTS)
+                      "rice pointer block hand-edited or drifted; not overwritten", kind=EXISTS, owned=True)
 
 
 MATT_HEADING = "## Agent skills"
@@ -770,3 +887,147 @@ def apply(repo_root, *, is_rice_update: bool = False, rtk_probe=None,
     items.append(_matt_item(repo_root, plugin_probe))
     items.append(_rtk_item(rtk_probe))
     return items
+
+
+# --------------------------------------------------------------------------
+# The subtractive half: exactly what apply() added, and nothing else
+# (RICE-BOOTSTRAP-045). uninstall.py operates this; it keeps no list of its
+# own, so what rice adds and what rice removes can never drift apart.
+# --------------------------------------------------------------------------
+
+def project_settings(current: dict) -> dict:
+    """`current` minus rice's own entries. Leaves go only when they still hold
+    rice's canonical value (a project value that replaced one is theirs now);
+    deny entries are subtracted one by one, keeping every project rule in its
+    original order; containers rice emptied are dropped, containers with
+    project content stay."""
+    out = json.loads(json.dumps(current))  # deep copy, JSON-shaped
+    desired = settings_template.desired_settings("x", True)
+    for key in _RICE_LEAF_KEYS:
+        if _get_path(out, key) == _get_path(desired, key):
+            _del_path(out, key)
+    for key in _OWNER_LEAF_KEYS:
+        _del_path(out, key)
+    cur, usable = _deny_entries(out)
+    if usable and cur:
+        kept = [d for d in cur if d not in RICE_DENY_ENTRIES]
+        if kept:
+            _set_path(out, DENY_PATH, kept)
+        else:
+            _del_path(out, DENY_PATH)
+    if _get_path(out, "outputStyle") == settings_template.RICE_STYLE:
+        _del_path(out, "outputStyle")
+    return _prune_emptied(out, current)
+
+
+def _del_path(d: dict, dotted: str) -> None:
+    parts = dotted.split(".")
+    cur = d
+    for part in parts[:-1]:
+        if not isinstance(cur, dict) or part not in cur:
+            return
+        cur = cur[part]
+    if isinstance(cur, dict):
+        cur.pop(parts[-1], None)
+
+
+def _prune_emptied(projected, original):
+    """Drop only the containers this projection emptied. A container the
+    project itself left empty (`"hooks": {}`) is project-owned and stays --
+    dropping it would be rice deleting something it never put there."""
+    if not isinstance(projected, dict):
+        return projected
+    was = original if isinstance(original, dict) else {}
+    out = {}
+    for k, v in projected.items():
+        v = _prune_emptied(v, was.get(k))
+        if isinstance(v, dict) and not v and was.get(k) != {}:
+            continue  # rice emptied it
+        out[k] = v
+    return out
+
+
+def project_claude_md(text: str) -> str | None:
+    """CLAUDE.md without the rice import line (and the blank line apply put in
+    front of it when appending). None = nothing project-owned was ever in it
+    (rice created it with only the import line) -> the file goes too."""
+    lines = text.splitlines(keepends=True)
+    kept = [l for l in lines if l.strip() != IMPORT_LINE]
+    if not "".join(kept).strip():
+        return None
+    if len(kept) < len(lines):
+        while len(kept) >= 2 and kept[-1].strip() == "" and kept[-2].endswith("\n"):
+            kept.pop()
+    return "".join(kept)
+
+
+def project_agents_md(text: str) -> str | None:
+    """AGENTS.md without the rice pointer block. None = rice created the file
+    with nothing but that block."""
+    span = _agents_block_span(text)
+    if span is None:
+        return text
+    kept = text[:span[0]] + text[span[1]:]
+    if not kept.strip():
+        return None
+    if kept.endswith("\n\n"):
+        kept = kept[:-1]
+    return kept
+
+
+def remove(repo_root) -> list[str]:
+    """Subtract rice from this repo. Returns the actions taken; idempotent,
+    and byte-for-byte a no-op on everything rice does not own."""
+    repo_root = Path(repo_root)
+    actions = []
+    for rel in OWNED_FILES:
+        path = repo_root / rel
+        if path.exists():
+            path.unlink(); actions.append(f"removed {rel}")
+    s_path = repo_root / ".claude" / "settings.json"
+    current = current_settings(repo_root) if s_path.exists() else None
+    if current is not None:  # None = not a JSON object: rice touches nothing it cannot read
+        projected = project_settings(current)
+        if projected != current:
+            if projected:
+                s_path.write_text(json.dumps(projected, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+                                  encoding="utf-8")
+                actions.append("removed rice entries from .claude/settings.json")
+            else:
+                s_path.unlink(); actions.append("removed .claude/settings.json (held only rice entries)")
+    for rel, project_view, what in (("CLAUDE.md", project_claude_md, f"`{IMPORT_LINE}` line"),
+                                    ("AGENTS.md", project_agents_md, "rice pointer block")):
+        path = repo_root / rel
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        projected = project_view(text)
+        if projected is None:
+            path.unlink(); actions.append(f"removed {rel} (rice-created, held only the {what})")
+        elif projected != text:
+            path.write_text(projected, encoding="utf-8"); actions.append(f"removed the {what} from {rel}")
+    return actions
+
+
+def remnants(repo_root) -> dict:
+    """{label: detail or ""} for every rice-owned thing still present after a
+    removal -- the mechanical answer to "is rice gone". An empty detail means
+    the label is clean; uninstall.py turns this into its PASS/FAIL items."""
+    repo_root = Path(repo_root)
+    out = {}
+    for rel, label in OWNED_FILES.items():
+        out[label] = f"{rel} is still there" if (repo_root / rel).exists() else ""
+    for rel, label, project_view, what in (
+            ("CLAUDE.md", "claude-md:import-absent", project_claude_md, f"the `{IMPORT_LINE}` line"),
+            ("AGENTS.md", "agents-md:pointer-absent", project_agents_md, "the rice pointer block")):
+        path = repo_root / rel
+        text = path.read_text(encoding="utf-8") if path.exists() else None
+        out[label] = f"{rel} still carries {what}" if (text is not None and project_view(text) != text) else ""
+    current = current_settings(repo_root)
+    if current is None:
+        out["settings:rice-absent"] = ".claude/settings.json is not a JSON object"
+    else:
+        out["settings:rice-absent"] = ("rice entries remain in .claude/settings.json"
+                                       if project_settings(current) != current else "")
+    return out
+

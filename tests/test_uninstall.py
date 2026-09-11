@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import reconcile  # noqa: E402
 import settings_template  # noqa: E402
 import uninstall  # noqa: E402
-from bootstrap_state import enter_waiting_for_matt  # noqa: E402
+from reconcile import enter_waiting_for_matt  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 PROJECT_CLAUDE_MD = "# My project\n\nProject-owned instructions.\n\n## Agent skills\n\n### Issue tracker\n\nsee docs/agents/issue-tracker.md\n"
@@ -212,20 +212,25 @@ class TestUninstallCheck(UninstallBase):
             items, verdict = uninstall.check(self.root)
             self.assertTrue(verdict.startswith("RICE-UNINSTALL FAIL"), name)
             self.assertEqual(_states(items)[name], "FAIL", name)
+        # every kind of rice settings leftover, caught by the one item whose
+        # answer comes from reconcile's own projection (RICE-BOOTSTRAP-045)
         settings_leftovers = {
-            "settings:marketplace-absent": lambda s: s.setdefault("extraKnownMarketplaces", {}).__setitem__("rice-bootstrap", {"source": {}}),
-            "settings:enabled-plugin-absent": lambda s: s.setdefault("enabledPlugins", {}).__setitem__("rice@rice-bootstrap", True),
-            "settings:subagent-default-absent": lambda s: s.setdefault("env", {}).__setitem__("CLAUDE_CODE_SUBAGENT_MODEL", "sonnet"),
-            "settings:archive-switch-absent": lambda s: s.setdefault("env", {}).__setitem__("RICE_SESSION_ARCHIVE", "1"),
-            "settings:rice-deny-absent": lambda s: s.setdefault("permissions", {}).setdefault("deny", []).append("Bash(git rebase*)"),
-            "settings:rice-output-style-absent": lambda s: s.__setitem__("outputStyle", settings_template.RICE_STYLE),
+            "marketplace": lambda s: s.setdefault("extraKnownMarketplaces", {}).__setitem__(
+                "rice-bootstrap", {"source": {"source": "github", "repo": "L26041040/rice-bootstrap"}}),
+            "enabled-plugin": lambda s: s.setdefault("enabledPlugins", {}).__setitem__("rice@rice-bootstrap", True),
+            "subagent-default": lambda s: s.setdefault("env", {}).__setitem__("CLAUDE_CODE_SUBAGENT_MODEL", "sonnet"),
+            "archive-switch": lambda s: s.setdefault("env", {}).__setitem__("RICE_SESSION_ARCHIVE", "1"),
+            "a rice deny rule": lambda s: s.setdefault("permissions", {}).setdefault("deny", []).append("Bash(git rebase*)"),
+            "rice output style": lambda s: s.__setitem__("outputStyle", settings_template.RICE_STYLE),
         }
-        for name, plant in settings_leftovers.items():
+        for what, plant in settings_leftovers.items():
             _bootstrapped_repo(self.root); self._run()
-            p = self.root / ".claude" / "settings.json"; s = json.loads(p.read_text()); plant(s); p.write_text(json.dumps(s))
+            p = self.root / ".claude" / "settings.json"
+            s = json.loads(p.read_text()) if p.exists() else {}
+            plant(s); p.parent.mkdir(exist_ok=True); p.write_text(json.dumps(s))
             items, verdict = uninstall.check(self.root)
-            self.assertTrue(verdict.startswith("RICE-UNINSTALL FAIL"), name)
-            self.assertEqual(_states(items)[name], "FAIL", name)
+            self.assertTrue(verdict.startswith("RICE-UNINSTALL FAIL"), what)
+            self.assertEqual(_states(items)["settings:rice-absent"], "FAIL", what)
 
     def test_sentinel_drift_fails(self):
         _bootstrapped_repo(self.root)

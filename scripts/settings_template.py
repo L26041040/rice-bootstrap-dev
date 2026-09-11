@@ -35,15 +35,23 @@ REF_PATH = f"{_MP}.ref"
 
 RICE_STYLE = "rice:老弟"  # the plugin's bundled style, namespaced <plugin>:<name> (runtime-verified, #18)
 
+# Leaves rice owns outright: one value, at one dotted path, compared for
+# equality. A leaf whose value is not rice's canonical one is a collision,
+# never something to overwrite outside an update.
 RICE_DEFINED_KEYS = {
     f"{_MP}.source",
     f"{_MP}.repo",
     f"enabledPlugins.{PLUGIN_KEY}",
     "env.CLAUDE_CODE_SUBAGENT_MODEL",
-    # rice owns the deny list wholesale; `permissions.allow`, `permissions.ask`
-    # and any other permissions key stay project-owned.
-    "permissions.deny",
 }
+
+# `permissions.deny` is NOT a rice-owned leaf (RICE-BOOTSTRAP-045): it is a
+# list a repo may already be using, so rice owns exactly the entries it adds
+# and nothing else. Install adds the missing ones, an update refreshes them,
+# uninstall subtracts them, and a project's own rules are never read as
+# drift, never reordered, and never removed. `permissions.allow`,
+# `permissions.ask` and every other permissions key stay project-owned.
+DENY_PATH = "permissions.deny"
 
 OWNER_DEFINED_KEYS = {
     REF_PATH,
@@ -107,6 +115,12 @@ _MCP_DENY = [
     "mcp__github__create_branch",
 ]
 
+# The exact deny entries this build owns. Entries an older build shipped that
+# are no longer listed here are indistinguishable from a project's own rules,
+# so they are treated as project-owned: never re-added, never removed.
+RICE_DENY_ENTRIES = tuple(_DESTRUCTIVE_DENY + _BRANCH_CREATION_DENY + _MCP_DENY)
+
+
 def desired_settings(ref: str, archive_default: bool, output_style: str | None = RICE_STYLE) -> dict:
     """The full desired-state settings.json content for the given pinned
     ref, this release's archive default, and the OWNER's output-style
@@ -134,7 +148,7 @@ def desired_settings(ref: str, archive_default: bool, output_style: str | None =
             "RICE_SESSION_ARCHIVE": "1" if archive_default else "0",
         },
         "permissions": {
-            "deny": _DESTRUCTIVE_DENY + _BRANCH_CREATION_DENY + _MCP_DENY,
+            "deny": list(RICE_DENY_ENTRIES),
         },
     }
     if output_style is not None:

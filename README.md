@@ -104,9 +104,19 @@ The lifecycle engine (`scripts/rice.py`) decides everything else:
    as an absent key and a custom project style the agent writes to
    `.claude/output-styles/<name>.md` — are written once, only if absent.
    `rice.py styles <repo>` lists what resolves.
-3. Rice-owned state is reconciled: settings leaves, `.claude/rice.md`, the
-   `@.claude/rice.md` line in `CLAUDE.md`, the rice pointer block in
-   `AGENTS.md`. One policy source: the rules are written only in
+3. Rice-owned state is reconciled: settings leaves, rice's own
+   `permissions.deny` entries, `.claude/rice.md`, the `@.claude/rice.md`
+   line in `CLAUDE.md`, the rice pointer block in `AGENTS.md`. Ownership is
+   declared once, in `scripts/reconcile.py`, and install, update, repair and
+   uninstall are verbs over that one declaration. Three shapes, and the
+   shape is what makes an existing repo safe: `.claude/rice.md` is
+   whole-file (rice wrote it, rice may replace it); the CLAUDE.md line, the
+   AGENTS.md block and the deny entries are **additive** — rice owns
+   exactly what it added, a repo's own deny rules keep their values and
+   their order, and uninstall subtracts only rice's; a settings leaf is one
+   value at one path, and a different value already there is a collision
+   that is reported, never overwritten. One policy source: the rules are
+   written only in
    `.claude/rice.md`; `CLAUDE.md` imports them (a real `@` import for
    Claude Code) and `AGENTS.md` carries a marker-delimited instruction to
    read them (AGENTS.md readers such as Codex concatenate the file verbatim
@@ -180,12 +190,15 @@ rice-bootstrap", "把 rice 從這個 repo 拿掉"); vague discussion is not a
 trigger. Entrypoint: the `rice:rice-uninstall` skill, which runs
 `python3 <plugin root>/scripts/uninstall.py <repo>`.
 
-- Target repo cleanup: exact subtraction of rice-owned state only
-  (`.claude/rice.md`, the `@.claude/rice.md` line, the rice pointer block
-  in `AGENTS.md`, `.claude/rice-version`,
+- Target repo cleanup: exact subtraction of rice-owned state only, from the
+  same declaration install used (`.claude/rice.md`, the `@.claude/rice.md`
+  line, the rice pointer block in `AGENTS.md`, `.claude/rice-version`,
   `WAITING_FOR_MATT`, the rice marketplace/plugin declaration, the Sonnet
   subagent default when still rice's value, `RICE_SESSION_ARCHIVE`, rice's
-  own deny rules, `outputStyle` only when it is exactly `rice:老弟`).
+  own deny entries one by one, `outputStyle` only when it is exactly
+  `rice:老弟`). A project value that is byte-identical to rice's canonical
+  one is indistinguishable from rice's and goes with it; rice keeps no
+  install manifest to tell them apart.
 - Kept: `session-history/`, custom output styles and any other
   `outputStyle`, `permissions.allow`/`ask`, project deny rules, other
   plugins/marketplaces, project-owned `AGENTS.md`/`CLAUDE.md` content,

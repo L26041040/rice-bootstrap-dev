@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import reconcile  # noqa: E402
 import settings_template  # noqa: E402
 import verify  # noqa: E402
-from bootstrap_state import enter_waiting_for_matt, is_waiting_for_matt  # noqa: E402
+from reconcile import enter_waiting_for_matt, is_waiting_for_matt  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 

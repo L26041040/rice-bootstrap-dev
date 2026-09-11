@@ -25,7 +25,6 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-import bootstrap_state  # noqa: E402
 import reconcile  # noqa: E402
 import repair  # noqa: E402
 import rice  # noqa: E402
@@ -194,7 +193,7 @@ class TestSingleInvocation(LifecycleBase):
         outcome = self.bootstrap()
         self.assertTrue(outcome.ok, outcome.lines)
         self.assertTrue(outcome.waiting_for_matt)
-        self.assertTrue(bootstrap_state.is_waiting_for_matt(self.root))
+        self.assertTrue(reconcile.is_waiting_for_matt(self.root))
         self.assertFalse(self.version_file.exists())  # Gate A never stamps
 
     def test_the_owners_matt_setup_is_continued_without_a_second_invocation(self):
@@ -204,7 +203,7 @@ class TestSingleInvocation(LifecycleBase):
         self.assertIsNotNone(outcome)
         self.assertTrue(outcome.ok, outcome.lines)
         self.assertEqual(self.version_file.read_text().strip(), reconcile.build_version())
-        self.assertFalse(bootstrap_state.is_waiting_for_matt(self.root))
+        self.assertFalse(reconcile.is_waiting_for_matt(self.root))
 
     def test_matt_already_complete_finishes_inside_the_one_invocation(self):
         _matt_artifacts(self.root)
@@ -212,19 +211,19 @@ class TestSingleInvocation(LifecycleBase):
         self.assertTrue(outcome.ok, outcome.lines)
         self.assertFalse(outcome.waiting_for_matt)  # never ask for a setup already done
         self.assertEqual(self.version_file.read_text().strip(), reconcile.build_version())
-        self.assertFalse(bootstrap_state.is_waiting_for_matt(self.root))
+        self.assertFalse(reconcile.is_waiting_for_matt(self.root))
 
     def test_gate_a_failure_does_not_park_the_repo(self):
         shutil.rmtree(reconcile.transcript_dir(self.root))
         outcome = self.bootstrap()
         self.assertFalse(outcome.ok)
-        self.assertFalse(bootstrap_state.is_waiting_for_matt(self.root))
+        self.assertFalse(reconcile.is_waiting_for_matt(self.root))
 
     def test_continue_is_silent_until_there_is_something_to_continue(self):
         self.assertIsNone(rice.continue_after_matt(self.root, **PROBES))  # no marker
         self.bootstrap()
         self.assertIsNone(rice.continue_after_matt(self.root, **PROBES))  # Matt has not started
-        self.assertTrue(bootstrap_state.is_waiting_for_matt(self.root))
+        self.assertTrue(reconcile.is_waiting_for_matt(self.root))
 
     def test_incomplete_matt_output_is_reported_not_silently_pending(self):
         self.bootstrap()
@@ -629,7 +628,7 @@ class TestVerifierSoleAuthority(LifecycleBase):
         self.assertTrue(outcome.ok)
         self.assertEqual(outcome.verdict, "FINAL-VERIFIED 9.9.9")
         self.assertFalse(self.version_file.exists())
-        self.assertTrue(bootstrap_state.is_waiting_for_matt(self.root))
+        self.assertTrue(reconcile.is_waiting_for_matt(self.root))
 
     def test_no_module_but_verify_builds_a_verdict_or_re_evaluates_a_gate(self):
         for py in (REPO / "scripts").glob("*.py"):
