@@ -23,16 +23,27 @@ parse evidence, rebuild a verdict, or repair anything itself:
                the verified-version file and remover of the pending marker
     repair     owns which failure identity maps to which lossless restore
 
-What this module owns instead is sequence: which of those runs when, and
-the one lifecycle decision that is genuinely about order -- whether this
-repo still has to wait for the OWNER's Matt setup, or can go straight to
-final verification because Matt's artifacts are already there. The skills
-and the Stop hook are adapters over these verbs; they carry no steps of
-their own (RICE-BOOTSTRAP-044).
+What this module owns instead is sequence -- which of those runs when --
+and every decision that follows from it (RICE-BOOTSTRAP-044/-044B):
+
+- whether rice is even loaded here, or the OWNER must install it first;
+- whether this repo still has to wait for the OWNER's Matt setup, or can
+  go straight to final verification because Matt's artifacts are there;
+- for an update: whether upstream is already what this repo is pinned to,
+  whether the delivery ref must move, whether the install must be updated,
+  whether the OWNER must start a new session before verification can mean
+  anything, and only then whether to converge and verify.
+
+Each verb returns, besides the verifier's word, a `directive`: the exact
+text the OWNER must see. The skills and the Stop hook are adapters -- they
+collect answers, run one verb, and present the directive verbatim. They
+carry no steps, no branching on gates, and no lifecycle knowledge of their
+own.
 """
 import argparse
+import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -46,6 +57,10 @@ import verify  # noqa: E402
 
 VERIFIER = Path(__file__).resolve().parent / "verify.py"
 UNSET = reconcile.UNSET  # "the OWNER was not asked" (see reconcile.write_owner_choices)
+
+UPSTREAM_URL = f"https://github.com/{settings_template.MARKETPLACE_REPO}.git"
+UPSTREAM_BRANCH = "main"  # upstream serves exactly one thing; no tag, no release (RICE-BOOTSTRAP-030)
+REF_STOPGAP = UPSTREAM_BRANCH  # the literal string to pin when upstream has no commits yet
 
 
 def _memoized(probe):
@@ -79,26 +94,39 @@ def default_probes() -> dict:
 
 @dataclass
 class Outcome:
-    """What a verb did: the verifier's last word, what repair restored on the
-    way (None when the normal path passed and repair never ran), and whether
-    the repo is now parked waiting for the OWNER's Matt setup."""
-    report: verify.Report
+    """What a verb did: the verifier's last word (None when the stage never
+    got far enough to verify), what repair restored on the way, whether the
+    repo is now parked waiting for the OWNER's Matt setup, which lifecycle
+    stage produced this, and the text the adapter must present verbatim."""
+    report: verify.Report | None = None
     repaired: repair.RepairResult | None = None
     waiting_for_matt: bool = False
+    stage: str = ""
+    directive: list = field(default_factory=list)
+    blocked: bool = False
 
     @property
     def ok(self) -> bool:
-        return self.report.ok
+        """Did this stage complete everything that was not the OWNER's or the
+        environment's to do? The verifier decides whenever it ran; otherwise
+        the stage does -- handing off to the OWNER is a success, a probe that
+        could not answer is not."""
+        return self.report.ok if self.report is not None else not self.blocked
 
     @property
     def verdict(self) -> str:
-        return self.report.verdict
+        return self.report.verdict if self.report is not None else ""
 
     @property
     def lines(self) -> list[str]:
-        head = self.repaired.lines if self.repaired is not None else ["repair: not needed (normal path passed)"]
-        tail = ["waiting: the OWNER's Matt setup has not run yet"] if self.waiting_for_matt else []
-        return head + self.report.lines + tail
+        out = []
+        if self.repaired is not None:
+            out += self.repaired.lines
+        elif self.report is not None and self.report.ok:
+            out.append("repair: not needed (normal path passed)")
+        if self.report is not None:
+            out += self.report.lines
+        return out
 
 
 def _pipeline(repo_root, *, final: bool, carried: repair.RepairResult | None = None, **probes) -> Outcome:
@@ -124,6 +152,69 @@ def _matt_started(repo_root, **probes) -> bool:
 
 
 # --------------------------------------------------------------------------
+# the environment: upstream, and the official install
+# --------------------------------------------------------------------------
+
+def _default_run(cmd, timeout=180):
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
+def _upstream_head(run) -> tuple[str | None, str]:
+    """(sha, state) for upstream `main` -- the only thing upstream serves and
+    the only identity a delivery ref may carry (RICE-BOOTSTRAP-030).
+
+    Three answers, never conflated: "ok" with a sha; "empty" when upstream
+    answered but has no commits on that branch yet (the one case with a
+    documented stopgap); "unreadable" when the question could not be asked
+    at all, which is never guessed around."""
+    try:
+        r = run(["git", "ls-remote", UPSTREAM_URL, UPSTREAM_BRANCH])
+    except (OSError, subprocess.SubprocessError):
+        return None, "unreadable"
+    if r.returncode != 0:
+        return None, "unreadable"
+    out = (r.stdout or "").strip()
+    if not out:
+        return None, "empty"
+    sha = out.split()[0].strip()
+    if len(sha) < 7 or not all(c in "0123456789abcdef" for c in sha.lower()):
+        return None, "unreadable"
+    return sha, "ok"
+
+
+def _install_state(**probes) -> tuple[list[str], bool, str | None]:
+    """(installed versions of this plugin, is any of them project-scope, error).
+
+    An error is not "nothing is installed": acting on a probe that could not
+    answer would tell the OWNER to restart sessions forever, or quietly drop
+    `--scope project` from the install command."""
+    entries, err = reconcile.installed_entries(probes.get("plugin_probe"))
+    if err:
+        return [], False, err
+    entries = entries or []
+    return ([str(e.get("version")) for e in entries],
+            any(e.get("scope") == "project" for e in entries), None)
+
+
+def _update_install(run, project_scope: bool) -> tuple[bool, list[str]]:
+    """The official two commands, exactly as the OWNER would run them."""
+    cmds = [["claude", "plugin", "marketplace", "update", settings_template.MARKETPLACE_NAME],
+            ["claude", "plugin", "update", settings_template.PLUGIN_KEY]
+            + (["--scope", "project"] if project_scope else [])]
+    done = []
+    for cmd in cmds:
+        try:
+            r = run(cmd)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, done + [f"`{' '.join(cmd)}` could not run: {exc}"]
+        done.append(f"`{' '.join(cmd)}` exited {r.returncode}")
+        if r.returncode != 0:
+            output = ((r.stdout or "") + "\n" + (getattr(r, "stderr", "") or "")).strip()
+            return False, done + [output[:400]]
+    return True, done
+
+
+# --------------------------------------------------------------------------
 # the four verbs
 # --------------------------------------------------------------------------
 
@@ -135,39 +226,100 @@ def styles(repo_root, **probes) -> list[dict]:
                                    self_plugin=(settings_template.PLUGIN_NAME, reconcile.PLUGIN_ROOT))
 
 
-def bootstrap(repo_root, *, ref=None, archive=None, output_style=UNSET, **probes) -> Outcome:
+def bootstrap(repo_root, *, ref=None, archive=None, output_style=UNSET, run=None, **probes) -> Outcome:
     """A fresh repo, up to (and when possible past) the Matt hand-off.
 
-    The OWNER's answers are written once if absent, rice-owned state is
-    reconciled, then Gate A goes through the canonical flow. On a Gate A
-    pass the repo enters the pending state -- and if Matt's artifacts are
-    already present (a re-bootstrap, or a repo that had them all along),
-    final verification happens here and now rather than asking the OWNER
-    for a setup they have already done. Either way the OWNER invokes
-    bootstrap exactly once (RICE-BOOTSTRAP-028)."""
+    Rice must be loaded before any of this means anything, so that is asked
+    first and nothing is written when it is not. Then the OWNER's answers
+    are written once if absent, rice-owned state is reconciled, and Gate A
+    goes through the canonical flow. On a Gate A pass the repo enters the
+    pending state -- and if Matt's artifacts are already present (a
+    re-bootstrap, or a repo that had them all along), final verification
+    happens here and now rather than asking the OWNER for a setup they have
+    already done. Either way the OWNER invokes bootstrap exactly once
+    (RICE-BOOTSTRAP-028)."""
     repo_root = Path(repo_root)
+    loaded = verify.run(repo_root, **probes)
+    installed = loaded.item("plugin:installed")
+    state = installed.state if installed is not None else "MISSING"
+    if state == "FAIL":
+        return Outcome(report=loaded, stage="install-required", blocked=True,
+                       directive=_install_directive())
+    if state != "PASS":
+        # the probe could not answer -- not the same as "rice is not installed"
+        return Outcome(report=loaded, stage="blocked", blocked=True,
+                       directive=_unknown_install_directive(installed))
+
+    if ref is None and reconcile.current_ref(repo_root) is None:
+        ref, ref_state = _upstream_head(run or _default_run)
+        if ref_state == "unreadable":
+            return Outcome(report=loaded, stage="blocked", blocked=True,
+                           directive=_upstream_unreadable_directive())
+        if ref_state == "empty":
+            ref = REF_STOPGAP  # upstream has no commits yet: the documented stopgap
     reconcile.write_owner_choices(repo_root, ref=ref, archive=archive, output_style=output_style)
     reconcile.apply(repo_root, **probes)
+
     gate_a = _pipeline(repo_root, final=False, **probes)
     if not gate_a.ok:
-        return gate_a
+        return Outcome(report=gate_a.report, repaired=gate_a.repaired, stage="blocked",
+                       directive=_blockers_directive(gate_a.report))
     bootstrap_state.enter_waiting_for_matt(repo_root)
     matt = gate_a.report.item("matt:artifacts")
     if matt is not None and matt.state == "PASS":
-        return _pipeline(repo_root, final=True, carried=gate_a.repaired, **probes)
-    return Outcome(report=gate_a.report, repaired=gate_a.repaired, waiting_for_matt=True)
+        final = _pipeline(repo_root, final=True, carried=gate_a.repaired, **probes)
+        final.stage = "finalized" if final.ok else "blocked"
+        final.directive = (_finalized_directive(final.report.verdict) if final.ok
+                           else _blockers_directive(final.report))
+        return final
+    return Outcome(report=gate_a.report, repaired=gate_a.repaired, waiting_for_matt=True,
+                   stage="waiting-for-matt", directive=_matt_handoff_directive(gate_a.report.verdict))
 
 
-def update(repo_root, **probes) -> Outcome:
-    """Converge onto the build running this code, then verify to the end.
-    Same flow as bootstrap's second half; the OWNER's choices are never
-    touched (`is_rice_update=True` converges rice-owned state only)."""
+def update(repo_root, *, run=None, **probes) -> Outcome:
+    """Move this repo onto whatever upstream `main` is now.
+
+    Every stage of that is decided here from mechanical facts -- upstream's
+    commit, this repo's pinned ref, what is installed, and which build is
+    actually running -- because an update spans two sessions (ticket #19: a
+    session keeps its cached build until `claude plugin update`, and only a
+    new session loads the new one). Verifying in the old session would run
+    the old build's verifier against the new desired state."""
     repo_root = Path(repo_root)
+    run = run or _default_run
+    sha, ref_state = _upstream_head(run)
+    if sha is None:
+        return Outcome(stage="blocked", blocked=True,
+                       directive=_upstream_unreadable_directive(empty=(ref_state == "empty")))
+
+    pinned = reconcile.current_ref(repo_root)
+    versions, project_scope, err = _install_state(**probes)
+    if err:
+        return Outcome(stage="blocked", blocked=True, directive=_install_unreadable_directive(err))
+    build = reconcile.build_version()
+
+    if pinned != sha:
+        moved = reconcile.move_ref(repo_root, sha)
+        ok, log = _update_install(run, project_scope)
+        if not ok:
+            return Outcome(stage="blocked", blocked=True, directive=_install_failed_directive(moved, log))
+        return Outcome(stage="session-1", directive=_restart_directive(moved, log, sha))
+
+    if set(versions) != {build}:
+        # every install of this plugin must be the build running right now:
+        # a leftover old install can still be what the next session loads
+        return Outcome(stage="restart-required", directive=_restart_pending_directive(sha, versions, build))
+
     reconcile.apply(repo_root, is_rice_update=True, **probes)
     gate_a = _pipeline(repo_root, final=False, **probes)
     if not gate_a.ok:
-        return gate_a
-    return _pipeline(repo_root, final=True, carried=gate_a.repaired, **probes)
+        return Outcome(report=gate_a.report, repaired=gate_a.repaired, stage="blocked",
+                       directive=_blockers_directive(gate_a.report))
+    final = _pipeline(repo_root, final=True, carried=gate_a.repaired, **probes)
+    final.stage = "finalized" if final.ok else "blocked"
+    final.directive = (_finalized_directive(final.report.verdict) if final.ok
+                       else _blockers_directive(final.report))
+    return final
 
 
 def continue_after_matt(repo_root, **probes) -> Outcome | None:
@@ -181,7 +333,137 @@ def continue_after_matt(repo_root, **probes) -> Outcome | None:
         return None
     if not _matt_started(repo_root, **probes):
         return None
-    return _pipeline(repo_root, final=True, **probes)
+    outcome = _pipeline(repo_root, final=True, **probes)
+    outcome.stage = "finalized" if outcome.ok else "blocked"
+    return outcome
+
+
+# --------------------------------------------------------------------------
+# directives: the exact text the OWNER must see, decided here, presented by
+# the adapter verbatim
+# --------------------------------------------------------------------------
+
+def _install_directive() -> list[str]:
+    return [
+        "rice isn't loaded in this environment yet, so nothing has been written to this repo.",
+        "The official install is:",
+        "",
+        f"    claude plugin marketplace add {settings_template.MARKETPLACE_REPO}",
+        f"    claude plugin install {settings_template.PLUGIN_KEY}",
+        "",
+        "- Local machine: those two commands can be run now, then start a new session",
+        "  and ask for the bootstrap there.",
+        "- Claude Code on the web: the fix belongs at the Environment level, not this",
+        "  session -- add those two commands to a Cloud Environment's setup script (a",
+        "  dedicated rice Environment, or an existing one alongside mattpocock-skills /",
+        "  RTK), then start a new session from it. Every session from that Environment",
+        "  onward already has rice loaded. Running them only inside this session is a",
+        "  one-off recovery: it does not survive to the next container.",
+    ]
+
+
+def _matt_handoff_directive(verdict: str) -> list[str]:
+    """The terse hand-off, and nothing after it (RICE-BOOTSTRAP-028)."""
+    return [
+        f"`{verdict}`",
+        "",
+        "還差 Matt repo setup；完成後 Rice 會自動續接 final verification。",
+        "",
+        "/mattpocock-skills:setup-matt-pocock-skills",
+    ]
+
+
+def _finalized_directive(verdict: str) -> list[str]:
+    return [
+        f"`{verdict}`",
+        "",
+        "The verifier has stamped the verified-version file. Commit and push the"
+        " changes in the working tree and quote that line verbatim. This repo needs"
+        " no Matt hand-off: the setup is already there.",
+    ]
+
+
+def _blockers_directive(report) -> list[str]:
+    return [
+        "Deterministic repair has already had its turn; what is left is yours, and"
+        " only what is listed:",
+        *[f"  - {r}" for r in report.reasons],
+        "",
+        "Do exactly what each line's detail says, then run this same command again."
+        " Never write Matt setup content yourself -- a missing Matt artifact is the"
+        " OWNER's to produce, with /mattpocock-skills:setup-matt-pocock-skills.",
+    ]
+
+
+def _upstream_unreadable_directive(*, empty: bool = False) -> list[str]:
+    if empty:
+        return [
+            f"Upstream {settings_template.MARKETPLACE_REPO} answered but has no commits on"
+            f" `{UPSTREAM_BRANCH}` yet, so there is no build to move to. Nothing was"
+            " written. Report this and stop.",
+        ]
+    return [
+        f"Upstream {settings_template.MARKETPLACE_REPO} could not be read"
+        f" (`git ls-remote {UPSTREAM_URL} {UPSTREAM_BRANCH}`), so there is no target"
+        " commit. Nothing was written. Report this and stop -- a delivery ref is"
+        " never guessed, and the floating branch name is not a version.",
+    ]
+
+
+def _unknown_install_directive(item) -> list[str]:
+    return [
+        "Whether rice is loaded here could not be determined, so nothing was written:",
+        f"  - {item.detail if item is not None else 'the verifier produced no install result'}",
+        "",
+        "Report this and stop. Do not install, and do not assume either answer.",
+    ]
+
+
+def _install_unreadable_directive(err: str) -> list[str]:
+    return [
+        f"The install state could not be read ({err}), so there is no way to tell"
+        " which build this session would load. Nothing was written.",
+        "",
+        "Report this and stop -- an update never runs against an unknown install.",
+    ]
+
+
+def _install_failed_directive(moved, log) -> list[str]:
+    return [
+        f"The delivery ref was repinned ({moved.detail}), but the official install did"
+        " not complete:",
+        *[f"  - {l}" for l in log if l],
+        "",
+        "Commit and push the ref change, report this failure, and stop. This repo's"
+        " verified version is unchanged.",
+    ]
+
+
+def _restart_directive(moved, log, sha: str) -> list[str]:
+    return [
+        f"Delivery ref moved to upstream main: {moved.detail}.",
+        *[f"  - {l}" for l in log if l],
+        "",
+        "Now, in order:",
+        "1. Commit and push the ref change. This repo's verified version is still"
+        " whatever the verified-version file says -- it is not 'on' the new version yet.",
+        "2. In Cloud, the container-start install line must move to this same commit"
+        f" SHA ({sha}), or the next container installs the old build.",
+        "3. Start a new session and run /rice:rice-update again: only a new session"
+        " loads the new build, and verifying in this one would run the old build's"
+        " verifier against the new desired state.",
+    ]
+
+
+def _restart_pending_directive(sha: str, versions: list[str], build: str) -> list[str]:
+    return [
+        f"This repo is already pinned to upstream main ({sha}), and the install reports"
+        f" {sorted(set(versions)) or 'nothing'}, which is not exactly the build running"
+        f" right now ({build}).",
+        "",
+        "Start a new session and run /rice:rice-update again -- a session keeps its"
+        " cached build until it restarts. Nothing was written.",
+    ]
 
 
 def continuation_message(repo_root, outcome: Outcome) -> str:
@@ -257,6 +539,9 @@ def main(argv=None) -> int:
             print("continue: nothing to continue (not mid-bootstrap, or Matt setup has not started)")
             return 0
     print("\n".join(outcome.lines))
+    if outcome.directive:
+        print("\n--- present this to the OWNER verbatim ---")
+        print("\n".join(outcome.directive))
     return 0 if outcome.ok else 1
 
 

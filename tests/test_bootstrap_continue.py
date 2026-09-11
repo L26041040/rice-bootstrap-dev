@@ -340,17 +340,13 @@ class TestSingleInvocationContract(unittest.TestCase):
         self.assertNotIn('saying "bootstrap this repo with rice" again', skill)
         self.assertNotIn("again and I'll run the final verifier", skill)
 
-    def test_skill_skips_the_matt_handoff_when_artifacts_already_exist(self):
-        """In a repo that already has Matt's setup, the lifecycle engine
-        finishes inside the one invocation -- so the skill must branch on the
-        verdict it gets back, never print the hand-off and a FINAL-VERIFIED
-        line in the same breath."""
+    def test_the_skill_presents_the_engine_directive_rather_than_branching(self):
+        """Which reply the OWNER gets -- a Matt hand-off, a verdict to quote,
+        an install, blockers -- is the engine's decision (RICE-BOOTSTRAP-044B).
+        The skill's contract is to pass it on verbatim and add nothing."""
         skill = (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8")
-        branch = " ".join(skill.split("**`FINAL-VERIFIED <build>`**")[1]
-                          .split("**`RICE-VERIFIED")[0].split())
-        self.assertIn("already had the official Matt setup", branch)
-        self.assertIn("one invocation", branch)
-        self.assertIn("do **not** print the Matt hand-off", branch)
+        self.assertIn("present this to the OWNER verbatim", skill)
+        self.assertIn("nothing after it", skill)
 
     def test_readme_describes_no_second_rice_invocation(self):
         readme = (REPO / "README.md").read_text(encoding="utf-8")

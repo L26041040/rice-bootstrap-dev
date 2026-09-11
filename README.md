@@ -75,54 +75,55 @@ Cloud flow, and does not persist to the next container on its own.
 
 Entrypoint: the `rice:bootstrap` skill (trigger: "bootstrap this repo with
 rice" or equivalent). It decides nothing and holds no steps: it asks the
-OWNER's choices and runs one command (RICE-BOOTSTRAP-044).
+OWNER's two bounded choices and runs one command (RICE-BOOTSTRAP-044B).
 
-1. Verifier `python3 <plugin root>/scripts/verify.py <repo>`; if
-   `plugin:installed` is FAIL → Installation above.
-2. OWNER choices, asked once, written only if absent — they are the flags
-   of the command below:
-   - session archive on/off (`--archive`, writes `env.RICE_SESSION_ARCHIVE`);
-   - output style (`--output-style`): (1) `rice:老弟` — recommended;
-     (2) `none` = Claude default (no `outputStyle` key); (3) an existing
-     project/user/plugin style, listed by `rice.py styles <repo>` and
-     verified to exist; (4) a custom style the agent writes to
-     `.claude/output-styles/<name>.md` (project-owned; rice never rewrites
-     it).
-   - `--ref` = upstream `main`'s exact commit SHA (delivery mechanism only
-     — no git tag or GitHub release is used).
-3. `python3 <plugin root>/scripts/rice.py bootstrap <repo> --ref <SHA>
-   [--archive 0|1] [--output-style <name>|none]` — the whole lifecycle:
-   it writes those answers if absent, reconciles rice-owned state
-   (settings leaves, `.claude/rice.md`, the `@.claude/rice.md` line in
-   `CLAUDE.md`, the rice pointer block in `AGENTS.md`), then runs the
-   canonical flow. One policy source: the rules are written only in
+```
+python3 <plugin root>/scripts/rice.py bootstrap <repo> \
+    [--archive 0|1] [--output-style <name>|none]
+```
+
+The lifecycle engine (`scripts/rice.py`) decides everything else:
+
+1. Is rice loaded here? If not, nothing is written and the OWNER gets the
+   install instructions above (per Environment in Cloud, per machine
+   locally).
+2. The delivery `ref` — upstream `main`'s exact commit SHA, read by the
+   engine itself (delivery mechanism only; no git tag or GitHub release is
+   used anywhere). The OWNER's answers — session archive
+   (`env.RICE_SESSION_ARCHIVE`) and output style, including "Claude default"
+   as an absent key and a custom project style the agent writes to
+   `.claude/output-styles/<name>.md` — are written once, only if absent.
+   `rice.py styles <repo>` lists what resolves.
+3. Rice-owned state is reconciled: settings leaves, `.claude/rice.md`, the
+   `@.claude/rice.md` line in `CLAUDE.md`, the rice pointer block in
+   `AGENTS.md`. One policy source: the rules are written only in
    `.claude/rice.md`; `CLAUDE.md` imports them (a real `@` import for
    Claude Code) and `AGENTS.md` carries a marker-delimited instruction to
    read them (AGENTS.md readers such as Codex concatenate the file verbatim
-   and have no import syntax). Project-owned content in both files is never
+   and have no import syntax). Project-owned content in both is never
    touched.
 4. The canonical flow, in one place only: **verify → PASS: done; FAIL →
    deterministic repair → verify again → still FAIL: the agent, last**.
    Repair (`scripts/repair.py`) restores every rice-owned failure the
    verifier named from this build's canonical state and declares nothing;
-   the verifier's second run is the word that counts. The agent fixes only
-   what survives that, and commits and pushes on `RICE-VERIFIED <build>`.
-5. Waiting for Matt: hand off tersely, ending with exactly
-   `/mattpocock-skills:setup-matt-pocock-skills`. Never run or simulate it.
-   A repo that already has Matt's setup skips the hand-off and finishes
-   inside the same invocation.
+   the verifier's second run is the word that counts, and only its
+   `RICE-VERIFIED <build>` / `FINAL-VERIFIED <build>` lines mean verified.
+5. What the OWNER must see comes back as a directive the skill presents
+   verbatim: a terse Matt hand-off ending in exactly
+   `/mattpocock-skills:setup-matt-pocock-skills`, a verdict to quote and
+   push, an install to do, or the remaining blockers. A repo that already
+   has Matt's setup is finalized inside the same invocation and never gets
+   a hand-off.
 6. The continuation is automatic: a `Stop` hook
-   (`scripts/bootstrap_continue.py`) asks the same lifecycle engine, at the
-   end of every turn, whether there is anything to continue. It stays
-   silent until Matt's setup has left something behind, then runs the same
-   flow through Gate B and hands the result back. Only the verifier's
-   `FINAL-VERIFIED <build>` line means done; that pass writes
-   `.claude/rice-version` and clears the pending marker. Matt's setup
-   artifacts and RTK are required: without both there is no
-   `FINAL-VERIFIED`. Matt artifacts are repaired only from the repo's own
-   history (tracked at HEAD, missing from the working tree); anything never
-   committed is reported as unresolved by name — never generated, never
-   copied from a template — so an incomplete Matt setup is never left
+   (`scripts/bootstrap_continue.py`) asks the same engine, at the end of
+   every turn, whether there is anything to continue. It stays silent until
+   Matt's setup has left something behind, then runs the same flow to the
+   end. That pass writes `.claude/rice-version` and clears the pending
+   marker. Matt's setup artifacts and RTK are required: without both there
+   is no `FINAL-VERIFIED`. Matt artifacts are repaired only from the repo's
+   own history (tracked at HEAD, missing from the working tree); anything
+   never committed is reported as unresolved by name — never generated,
+   never copied from a template — so an incomplete Matt setup is never left
    silently pending. A fresh bootstrap costs the OWNER exactly one
    `rice:bootstrap` invocation — rice never asks for a second one.
 
@@ -135,21 +136,27 @@ removes that old hook/script before enabling rice's archive; an existing
 Only on the OWNER's explicit request; entrypoint `/rice:rice-update`
 (OWNER-invoked only by design).
 
-- Latest stable comes from upstream `L26041040/rice-bootstrap`'s `main`
-  branch — its `.claude-plugin/plugin.json` version, CHANGELOG date, and
-  exact HEAD commit SHA (`git ls-remote .../rice-bootstrap main`). No git
-  tag or GitHub release is used anywhere; the target repo never declares
-  "latest".
-- Session 1: confirm the target commit exists → move the delivery `ref`
-  to that exact SHA →
-  `claude plugin marketplace update rice-bootstrap` →
-  `claude plugin update rice@rice-bootstrap` → new session.
-- Session 2: `python3 <plugin root>/scripts/rice.py update <repo>` — the
-  same canonical flow, converging rice-owned state onto the new build
-  first, then Gate A and Gate B.
+```
+python3 <plugin root>/scripts/rice.py update <repo>
+```
+
+One command, run once; the engine decides the stage from mechanical facts
+and returns a directive to present verbatim:
+
+- Latest stable is upstream `L26041040/rice-bootstrap`'s `main` branch — its
+  exact HEAD commit SHA, read by the engine (`git ls-remote`). No git tag or
+  GitHub release is used anywhere; the target repo never declares "latest".
+- If this repo is pinned elsewhere: the delivery `ref` moves to that SHA and
+  the official install commands run (`--scope project` when the install is
+  project-scoped). The OWNER is then told to commit and push, move the
+  Cloud container-start install line to the same SHA, and start a new
+  session — an update spans two sessions, because a session keeps its
+  cached build until it restarts.
+- In that new session: rice-owned state is converged onto the new build
+  (project-owned content and the OWNER's output-style choice untouched),
+  then the same canonical flow runs to the end.
 - `.claude/rice-version` changes only when the verifier prints
   `FINAL-VERIFIED <build>`; on any failure it is byte-for-byte unchanged.
-  The OWNER's output-style choice is preserved.
 
 ## Uninstall
 

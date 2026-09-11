@@ -37,8 +37,8 @@ REF = "0123456789abcdef0123456789abcdef01234567"
 
 
 class _R:
-    def __init__(self, rc, out):
-        self.returncode, self.stdout = rc, out
+    def __init__(self, rc, out, err=""):
+        self.returncode, self.stdout, self.stderr = rc, out, err
 
 
 def _ok_rtk(cmd):
@@ -55,6 +55,21 @@ def _installed(cmd):
 
 
 PROBES = {"rtk_probe": _ok_rtk, "plugin_probe": _installed}
+
+
+def fake_run(*, sha=REF, ls_remote_rc=0, install_rc=0):
+    """A stand-in for the two external things an update touches: reading
+    upstream main's commit, and the official install commands."""
+    calls = []
+
+    def run(cmd):
+        calls.append(list(cmd))
+        if cmd[:2] == ["git", "ls-remote"]:
+            return _R(ls_remote_rc, f"{sha}\trefs/heads/main\n" if (ls_remote_rc == 0 and sha) else "")
+        return _R(install_rc, "", "claude: the real reason it failed" if install_rc else "")
+
+    run.calls = calls
+    return run
 
 MATT_SECTION = "## Agent skills\n\n### Issue tracker\n\nGitHub Issues. See `docs/agents/issue-tracker.md`.\n"
 
@@ -108,10 +123,16 @@ class LifecycleBase(unittest.TestCase):
         kw.setdefault("output_style", None)
         return rice.bootstrap(self.root, **kw, **PROBES)
 
+    def update(self, **kw):
+        kw.setdefault("run", fake_run())
+        return rice.update(self.root, **kw, **PROBES)
+
 
 class TestCanonicalFlow(LifecycleBase):
     def _verify_spy(self):
-        """Every verifier verdict this flow produced, in order."""
+        """Every Gate verdict this flow produced, in order. `bootstrap` opens
+        with a read-only "is rice loaded here" run, which is not part of the
+        canonical flow -- callers drop it with [1:]."""
         seen, real_run = [], verify.run
 
         def counting(*a, **kw):
@@ -125,7 +146,7 @@ class TestCanonicalFlow(LifecycleBase):
         _matt_artifacts(self.root)
         self.bootstrap()  # leaves a fully correct, finalized repo behind
         with mock.patch.object(repair, "repair", side_effect=AssertionError("repair must not run")) as spy:
-            outcome = rice.update(self.root, **PROBES)
+            outcome = self.update()
         spy.assert_not_called()
         self.assertTrue(outcome.ok, outcome.lines)
         self.assertIsNone(outcome.repaired)
@@ -140,7 +161,7 @@ class TestCanonicalFlow(LifecycleBase):
         seen, spy = self._verify_spy()
         with spy:
             outcome = self.bootstrap()
-        self.assertEqual(seen[:2], [False, True], seen)  # verify -> repair -> verify
+        self.assertEqual(seen[1:3], [False, True], seen)  # verify -> repair -> verify
         self.assertTrue(outcome.ok)
         self.assertIsNotNone(outcome.repaired)
         self.assertTrue(any("rice.md" in a for a in outcome.repaired.applied), outcome.repaired.applied)
@@ -153,7 +174,7 @@ class TestCanonicalFlow(LifecycleBase):
         seen, spy = self._verify_spy()
         with spy:
             outcome = self.bootstrap()
-        self.assertEqual(seen, [False, False], seen)  # verified twice, still failing
+        self.assertEqual(seen[1:], [False, False], seen)  # verified twice, still failing
         self.assertFalse(outcome.ok)
         self.assertIsNotNone(outcome.repaired)
         self.assertTrue(any(r.startswith("git-deny:behaves") for r in outcome.report.reasons), outcome.report.reasons)
@@ -218,6 +239,196 @@ class TestSingleInvocation(LifecycleBase):
         self.assertFalse((self.root / "docs" / "agents" / "domain.md").exists())  # nothing invented
 
 
+class TestUpdateStages(LifecycleBase):
+    """RICE-BOOTSTRAP-044B: an update spans two sessions and several external
+    facts. Every stage of that is decided by the engine from mechanical
+    facts -- the skill only runs one command."""
+
+    def test_upstream_unreadable_writes_nothing_and_never_guesses_a_target(self):
+        before = _tree(self.root)
+        outcome = self.update(run=fake_run(ls_remote_rc=2))
+        self.assertFalse(outcome.ok)
+        self.assertTrue(outcome.blocked)
+        self.assertIsNone(outcome.report)
+        self.assertIn("never guessed", "\n".join(outcome.directive))
+        self.assertEqual(_tree(self.root), before)
+
+    def test_a_stale_ref_is_repinned_the_install_runs_and_the_owner_restarts(self):
+        self.bootstrap()
+        run = fake_run(sha="f" * 40)
+        outcome = self.update(run=run)
+        self.assertEqual(outcome.stage, "session-1")
+        self.assertTrue(outcome.ok)          # this stage did its whole job
+        self.assertIsNone(outcome.report)    # ... and deliberately verified nothing
+        self.assertEqual(reconcile.current_ref(self.root), "f" * 40)
+        self.assertEqual([c[:3] for c in run.calls][1:],
+                         [["claude", "plugin", "marketplace"], ["claude", "plugin", "update"]])
+        directive = "\n".join(outcome.directive)
+        self.assertIn("Commit and push", directive)
+        self.assertIn("Start a new session", directive)
+        self.assertIn("f" * 40, directive)   # the Cloud install line must move too
+
+    def test_a_project_scope_install_is_updated_in_project_scope(self):
+        self.bootstrap()
+
+        def project_scoped(cmd):
+            return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": reconcile.build_version(),
+                                      "scope": "project", "enabled": True}]))
+
+        run = fake_run(sha="f" * 40)
+        rice.update(self.root, run=run, rtk_probe=_ok_rtk, plugin_probe=project_scoped)
+        self.assertIn(["--scope", "project"], [c[-2:] for c in run.calls])
+
+    def test_a_failed_install_blocks_and_reports_with_the_ref_already_moved(self):
+        self.bootstrap()
+        outcome = self.update(run=fake_run(sha="f" * 40, install_rc=1))
+        self.assertTrue(outcome.blocked)
+        self.assertEqual(reconcile.current_ref(self.root), "f" * 40)
+        self.assertIn("did not complete", "\n".join(outcome.directive))
+
+    def test_the_right_ref_with_the_old_build_still_loaded_asks_for_a_restart(self):
+        self.bootstrap()
+
+        def old_build(cmd):
+            return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": "0.0.1",
+                                      "scope": "user", "enabled": True}]))
+
+        before = _tree(self.root)
+        outcome = rice.update(self.root, run=fake_run(), rtk_probe=_ok_rtk, plugin_probe=old_build)
+        self.assertEqual(outcome.stage, "restart-required")
+        self.assertIsNone(outcome.report)
+        self.assertIn("Start a new session", "\n".join(outcome.directive))
+        self.assertEqual(_tree(self.root), before)  # nothing written
+
+    def test_the_right_ref_and_build_converges_and_verifies_to_the_end(self):
+        _matt_artifacts(self.root)
+        self.bootstrap()
+        (self.root / ".claude" / "rice.md").write_text("drift\n", encoding="utf-8")
+        outcome = self.update()
+        self.assertEqual(outcome.stage, "finalized")
+        self.assertTrue(outcome.ok, outcome.lines)
+        self.assertEqual((self.root / ".claude" / "rice.md").read_text(encoding="utf-8"),
+                         reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
+        self.assertEqual(self.version_file.read_text().strip(), reconcile.build_version())
+
+
+class TestUnknownIsNeverAFact(LifecycleBase):
+    """A probe that could not answer is not an answer. Every one of these was
+    a real defect in the first draft of the stage machine."""
+
+    def _cli_unavailable(self, cmd):
+        raise FileNotFoundError("claude")
+
+    def test_an_unreadable_install_blocks_the_update_instead_of_looping_restarts(self):
+        self.bootstrap()
+        run = fake_run()
+        outcome = rice.update(self.root, run=run, rtk_probe=_ok_rtk, plugin_probe=self._cli_unavailable)
+        self.assertTrue(outcome.blocked)
+        self.assertFalse(outcome.ok)  # and the CLI exits non-zero
+        self.assertNotIn("Start a new session", "\n".join(outcome.directive))
+        self.assertIn("could not be read", "\n".join(outcome.directive))
+
+    def test_an_unreadable_install_never_runs_the_install_commands(self):
+        """Otherwise `--scope project` would silently go missing."""
+        self.bootstrap()
+        run = fake_run(sha="f" * 40)
+        rice.update(self.root, run=run, rtk_probe=_ok_rtk, plugin_probe=self._cli_unavailable)
+        self.assertEqual([c for c in run.calls if c[0] == "claude"], [])
+        self.assertEqual(reconcile.current_ref(self.root), REF)  # and the ref did not move
+
+    def test_an_unreadable_upstream_never_pins_the_branch_name(self):
+        before = _tree(self.root)
+        outcome = rice.bootstrap(self.root, archive=True, output_style=None,
+                                 run=fake_run(ls_remote_rc=128), **PROBES)
+        self.assertTrue(outcome.blocked)
+        self.assertIn("never guessed", "\n".join(outcome.directive))
+        self.assertEqual(_tree(self.root), before)
+
+    def test_an_upstream_with_no_commits_yet_uses_the_documented_stopgap(self):
+        outcome = rice.bootstrap(self.root, archive=True, output_style=None,
+                                 run=fake_run(sha=""), **PROBES)
+        self.assertFalse(outcome.blocked)
+        self.assertEqual(reconcile.current_ref(self.root), rice.REF_STOPGAP)
+
+    def test_an_undeterminable_install_is_not_reported_as_rice_missing(self):
+        before = _tree(self.root)
+        outcome = rice.bootstrap(self.root, ref=REF, archive=True, output_style=None,
+                                 rtk_probe=_ok_rtk, plugin_probe=self._cli_unavailable)
+        self.assertTrue(outcome.blocked)
+        directive = "\n".join(outcome.directive)
+        self.assertIn("could not be determined", directive)
+        self.assertNotIn("claude plugin marketplace add", directive)  # never tell them to install
+        self.assertEqual(_tree(self.root), before)
+
+    def test_a_leftover_old_install_is_not_treated_as_the_running_build(self):
+        self.bootstrap()
+
+        def two_installs(cmd):
+            return _R(0, json.dumps([
+                {"id": "rice@rice-bootstrap", "version": reconcile.build_version(), "scope": "user"},
+                {"id": "rice@rice-bootstrap", "version": "0.0.1", "scope": "project"}]))
+
+        outcome = rice.update(self.root, run=fake_run(), rtk_probe=_ok_rtk, plugin_probe=two_installs)
+        self.assertEqual(outcome.stage, "restart-required")
+        self.assertFalse(self.version_file.exists())  # nothing stamped under a mixed install
+
+    def test_a_failed_install_reports_the_real_reason(self):
+        self.bootstrap()
+        outcome = self.update(run=fake_run(sha="f" * 40, install_rc=1))
+        self.assertIn("the real reason it failed", "\n".join(outcome.directive))
+
+    def test_a_stage_that_never_verified_claims_no_repair(self):
+        def not_installed(cmd):
+            return _R(0, "[]")
+
+        outcome = rice.bootstrap(self.root, ref=REF, archive=True, output_style=None,
+                                 rtk_probe=_ok_rtk, plugin_probe=not_installed)
+        self.assertNotIn("repair: not needed", "\n".join(outcome.lines))
+
+
+class TestDirectives(LifecycleBase):
+    """Every OWNER-facing reply is decided here, so the adapter can present it
+    without branching."""
+
+    def test_rice_not_loaded_hands_the_install_back_and_writes_nothing(self):
+        before = _tree(self.root)
+
+        def not_installed(cmd):
+            return _R(0, "[]")
+
+        outcome = rice.bootstrap(self.root, ref=REF, archive=True, output_style=None,
+                                 rtk_probe=_ok_rtk, plugin_probe=not_installed)
+        self.assertEqual(outcome.stage, "install-required")
+        self.assertFalse(outcome.ok)
+        directive = "\n".join(outcome.directive)
+        self.assertIn("claude plugin marketplace add", directive)
+        self.assertIn("claude plugin install", directive)
+        self.assertEqual(_tree(self.root), before)
+
+    def test_waiting_for_matt_is_the_terse_handoff_with_nothing_after_it(self):
+        outcome = self.bootstrap()
+        self.assertEqual(outcome.stage, "waiting-for-matt")
+        self.assertEqual(outcome.directive[0], f"`{outcome.verdict}`")
+        self.assertEqual(outcome.directive[-1], "/mattpocock-skills:setup-matt-pocock-skills")
+        self.assertLessEqual(len(outcome.directive), 6)
+
+    def test_matt_already_present_never_produces_a_handoff(self):
+        _matt_artifacts(self.root)
+        outcome = self.bootstrap()
+        self.assertEqual(outcome.stage, "finalized")
+        directive = "\n".join(outcome.directive)
+        self.assertIn(outcome.verdict, directive)
+        self.assertNotIn("/mattpocock-skills:setup-matt-pocock-skills", directive)
+        self.assertIn("no Matt hand-off", directive)
+
+    def test_blockers_are_the_verifiers_reasons_and_nothing_invented(self):
+        shutil.rmtree(reconcile.transcript_dir(self.root))
+        outcome = self.bootstrap()
+        self.assertEqual(outcome.stage, "blocked")
+        for reason in outcome.report.reasons:
+            self.assertIn(reason, "\n".join(outcome.directive))
+
+
 class TestOwnerChoices(LifecycleBase):
     def test_owner_answers_are_written_once_and_never_overwritten(self):
         self.bootstrap(output_style="mine")
@@ -277,35 +488,55 @@ class TestVerifierSoleAuthority(LifecycleBase):
 
 
 class TestAdaptersCarryNoSteps(unittest.TestCase):
-    """Success criterion: the outer adapters no longer know bootstrap's
-    detailed steps."""
+    """The success criterion of RICE-BOOTSTRAP-044/-044B: the three adapters
+    -- the bootstrap skill, the update skill, the Stop hook -- collect input,
+    run one verb, and present what comes back. None of them may contain a
+    lifecycle implementation detail, because a decision written in two places
+    is a decision that will drift."""
 
-    ENGINE_ONLY = ("reconcile.apply", "reconcile.write_owner_choices", "verify.run",
-                   "repair.repair", "enter_waiting_for_matt", "verify.py <repo_root> --final")
+    ADAPTERS = ("skills/bootstrap/SKILL.md", "skills/rice-update/SKILL.md",
+                "scripts/bootstrap_continue.py")
 
-    def test_the_stop_hook_only_parses_guards_and_calls_the_engine(self):
-        src = (REPO / "scripts" / "bootstrap_continue.py").read_text(encoding="utf-8")
-        for step in self.ENGINE_ONLY:
-            self.assertNotIn(step, src, f"the hook still performs: {step}")
-        self.assertIn("rice.continue_after_matt(", src)
-        self.assertNotIn("subprocess", src)
-        self.assertNotIn('"git"', src)
+    # calling into the machinery the engine owns
+    FORBIDDEN_CALLS = ("reconcile.", "verify.run", "verify.py", "repair.repair", "repair.py",
+                       "bootstrap_state", "output_styles.", "is_rice_update")
+    # deciding what the engine decides
+    FORBIDDEN_DECISIONS = ("Gate A", "Gate B", "--final", "matt:artifacts", "plugin:installed",
+                           "plugin:build", "git-deny:behaves", "git ls-remote",
+                           "claude plugin update", "claude plugin marketplace update",
+                           "WAITING_FOR_MATT", "gate_passes", "FINAL-VERIFIED", "RICE-VERIFIED")
 
-    def test_the_bootstrap_skill_delegates_the_lifecycle(self):
+    def test_no_adapter_carries_a_lifecycle_implementation_detail(self):
+        for rel in self.ADAPTERS:
+            src = (REPO / rel).read_text(encoding="utf-8")
+            for forbidden in self.FORBIDDEN_CALLS + self.FORBIDDEN_DECISIONS:
+                self.assertNotIn(forbidden, src, f"{rel} still carries: {forbidden}")
+
+    def test_every_adapter_reaches_the_engine_and_only_the_engine(self):
+        hook = (REPO / "scripts" / "bootstrap_continue.py").read_text(encoding="utf-8")
+        self.assertIn("rice.continue_after_matt(", hook)
+        self.assertNotIn("subprocess", hook)
+        self.assertNotIn('"git"', hook)
+        for rel, verb in (("skills/bootstrap/SKILL.md", "rice.py\" bootstrap"),
+                          ("skills/rice-update/SKILL.md", "rice.py\" update")):
+            self.assertIn(verb, (REPO / rel).read_text(encoding="utf-8"), rel)
+
+    def test_both_skills_present_the_engine_directive_verbatim(self):
+        for rel in ("skills/bootstrap/SKILL.md", "skills/rice-update/SKILL.md"):
+            src = (REPO / rel).read_text(encoding="utf-8")
+            self.assertIn("present this to the OWNER verbatim", src, rel)
+
+    def test_the_update_skill_stays_owner_only(self):
+        src = (REPO / "skills" / "rice-update" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("disable-model-invocation: true", src)
+
+    def test_the_bootstrap_skill_keeps_its_two_owner_contracts(self):
         skill = (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("rice.py", skill)
-        self.assertIn("bootstrap", skill)
-        for step in ("reconcile.apply", "bootstrap_state.enter_waiting_for_matt", "repair.py"):
-            self.assertNotIn(step, skill, f"the skill still performs: {step}")
-        # the hand-off contract survives the rewrite
+        # the hand-off command, so nothing else may be appended after it
         self.assertIn("/mattpocock-skills:setup-matt-pocock-skills", skill)
+        # and the single-invocation promise
+        self.assertIn("exactly one invocation", skill)
         self.assertNotIn('saying "bootstrap this repo with rice" again', skill)
-
-    def test_the_update_skill_delegates_the_lifecycle(self):
-        skill = (REPO / "skills" / "rice-update" / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("rice.py", skill)
-        for step in ("reconcile.apply", "repair.py"):
-            self.assertNotIn(step, skill, f"the skill still performs: {step}")
 
 
 class TestRepairIsNeverUnderreported(LifecycleBase):
@@ -381,18 +612,16 @@ class TestCli(LifecycleBase):
                               capture_output=True, text=True, env={**os.environ,
                                                                    "CLAUDE_CONFIG_DIR": str(self.root / "cfg")})
 
-    def test_bootstrap_verb_runs_the_whole_flow_from_one_command(self):
-        """The real CLI, with real probes: rice is not installed in a test
-        container, so this ends at the environment items -- which is exactly
-        the flow having run end to end and stopped where only the OWNER can
-        continue."""
+    def test_bootstrap_verb_stops_before_writing_when_rice_is_not_loaded(self):
+        """The real CLI with real probes: rice is not installed in a test
+        container, so the engine hands the install back to the OWNER and
+        writes nothing -- the decision the skill used to make in Step 0."""
         r = self._run("bootstrap", str(self.root), "--ref", REF, "--archive", "1", "--output-style", "none")
-        self.assertIn("repair:", r.stdout, r.stdout + r.stderr)
-        self.assertIn("rice.md", r.stdout)
-        self.assertIn("AGENTS.md:rice-pointer", r.stdout)
-        s = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        self.assertEqual(reconcile._get_path(s, settings_template.REF_PATH), REF)
-        self.assertNotIn("outputStyle", s)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("present this to the OWNER verbatim", r.stdout)
+        self.assertIn("claude plugin marketplace add", r.stdout)
+        self.assertFalse((self.root / ".claude" / "settings.json").exists())
+        self.assertFalse((self.root / "AGENTS.md").exists())
 
     def test_continue_verb_is_quiet_when_there_is_nothing_to_do(self):
         r = self._run("continue", str(self.root))

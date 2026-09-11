@@ -329,6 +329,13 @@ def _default_rtk_probe(cmd):
 _default_plugin_probe = _default_rtk_probe
 
 
+def installed_entries(plugin_probe=None):
+    """(this plugin's entries from `claude plugin list --json`, error) --
+    the public read of what is actually installed, for callers that need the
+    install state itself rather than a rubric item."""
+    return _installed_entries(plugin_probe or _default_plugin_probe)
+
+
 def _installed_entries(plugin_probe):
     """Parsed `claude plugin list --json` (a top-level array), or an
     ItemResult explaining why it couldn't be read."""
@@ -607,6 +614,27 @@ def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> list[ItemResult]:
     items.append(_matt_item(repo_root, plugin_probe))
     items.append(_rtk_item(rtk_probe))
     return items
+
+
+def current_ref(repo_root) -> str | None:
+    """The delivery ref this repo is pinned to, or None if unset."""
+    return _current_ref(_current_settings(Path(repo_root)))
+
+
+def move_ref(repo_root, sha: str) -> ItemResult:
+    """Repin the delivery ref. The update lifecycle is the ONLY caller (#13's
+    "Reconcile, check, and rice-update"): ordinary reconcile never creates,
+    fixes or reasserts this key, and bootstrap writes it only when absent."""
+    repo_root = Path(repo_root)
+    current = _current_settings(repo_root)
+    was = _current_ref(current)
+    if was == sha:
+        return ItemResult(f"settings:{REF_PATH}", "noop", f"already pinned to {sha}", kind=EXISTS)
+    _set_path(current, REF_PATH, sha)
+    p = repo_root / ".claude" / "settings.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(current, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    return ItemResult(f"settings:{REF_PATH}", "updated", f"{was!r} -> {sha!r}", kind=EXISTS)
 
 
 UNSET = object()  # "the OWNER was not asked", as distinct from None
