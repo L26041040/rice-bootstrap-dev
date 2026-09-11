@@ -268,16 +268,15 @@ class TestUpdateStages(LifecycleBase):
         self.assertIn("Start a new session", directive)
         self.assertIn("f" * 40, directive)   # the Cloud install line must move too
 
-    def test_a_project_scope_install_is_updated_in_project_scope(self):
+    def test_the_install_is_never_scoped_away_from_the_canonical_one(self):
+        """RICE-BOOTSTRAP-044C: updates manage the canonical user-scope
+        install and no other, so there is no scope to choose."""
         self.bootstrap()
-
-        def project_scoped(cmd):
-            return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": reconcile.build_version(),
-                                      "scope": "project", "enabled": True}]))
-
         run = fake_run(sha="f" * 40)
-        rice.update(self.root, run=run, rtk_probe=_ok_rtk, plugin_probe=project_scoped)
-        self.assertIn(["--scope", "project"], [c[-2:] for c in run.calls])
+        self.update(run=run)
+        claude = [c for c in run.calls if c[0] == "claude"]
+        self.assertEqual(claude, [["claude", "plugin", "marketplace", "update", "rice-bootstrap"],
+                                  ["claude", "plugin", "update", "rice@rice-bootstrap"]])
 
     def test_a_failed_install_blocks_and_reports_with_the_ref_already_moved(self):
         self.bootstrap()
@@ -360,18 +359,6 @@ class TestUnknownIsNeverAFact(LifecycleBase):
         self.assertNotIn("claude plugin marketplace add", directive)  # never tell them to install
         self.assertEqual(_tree(self.root), before)
 
-    def test_a_leftover_old_install_is_not_treated_as_the_running_build(self):
-        self.bootstrap()
-
-        def two_installs(cmd):
-            return _R(0, json.dumps([
-                {"id": "rice@rice-bootstrap", "version": reconcile.build_version(), "scope": "user"},
-                {"id": "rice@rice-bootstrap", "version": "0.0.1", "scope": "project"}]))
-
-        outcome = rice.update(self.root, run=fake_run(), rtk_probe=_ok_rtk, plugin_probe=two_installs)
-        self.assertEqual(outcome.stage, "restart-required")
-        self.assertFalse(self.version_file.exists())  # nothing stamped under a mixed install
-
     def test_a_failed_install_reports_the_real_reason(self):
         self.bootstrap()
         outcome = self.update(run=fake_run(sha="f" * 40, install_rc=1))
@@ -384,6 +371,180 @@ class TestUnknownIsNeverAFact(LifecycleBase):
         outcome = rice.bootstrap(self.root, ref=REF, archive=True, output_style=None,
                                  rtk_probe=_ok_rtk, plugin_probe=not_installed)
         self.assertNotIn("repair: not needed", "\n".join(outcome.lines))
+
+
+def _entries(*pairs):
+    """A `claude plugin list --json` probe for the given (scope, version)s."""
+    def probe(cmd):
+        return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": v, "scope": sc,
+                                  "enabled": True} for sc, v in pairs]))
+    return probe
+
+
+class TestCanonicalInstallPolicy(LifecycleBase):
+    """RICE-BOOTSTRAP-044C: rice's canonical install is user scope, and only
+    user scope -- like Matt's plugin. Anything else is a definite stop with
+    an explicit cleanup, never a restart the OWNER is sent around forever."""
+
+    BUILD = None  # set in setUp, once reconcile is importable
+
+    def setUp(self):
+        super().setUp()
+        self.BUILD = reconcile.build_version()
+
+    def test_a_user_scope_install_is_the_normal_path(self):
+        _matt_artifacts(self.root)
+        self.bootstrap()
+        outcome = rice.update(self.root, run=fake_run(), rtk_probe=_ok_rtk,
+                              plugin_probe=_entries(("user", self.BUILD)))
+        self.assertEqual(outcome.stage, "finalized")
+        self.assertTrue(outcome.ok, outcome.lines)
+
+    def test_duplicate_scopes_block_deterministically_and_never_loop_restarts(self):
+        self.bootstrap()
+        before = _tree(self.root)
+        for pair in (("user", self.BUILD), ("project", "0.0.1")), (("user", self.BUILD), ("project", self.BUILD)):
+            outcome = rice.update(self.root, run=fake_run(), rtk_probe=_ok_rtk, plugin_probe=_entries(*pair))
+            directive = "\n".join(outcome.directive)
+            self.assertEqual(outcome.stage, "blocked", directive)
+            self.assertTrue(outcome.blocked)
+            self.assertFalse(outcome.ok)                       # the CLI exits non-zero
+            self.assertNotIn("Start a new session", directive)  # and never asks for a restart
+            self.assertIn("more than one scope", directive)
+            self.assertIn("user scope:", directive)             # every scope is named
+            self.assertIn("project scope:", directive)
+            self.assertIn("claude plugin uninstall rice@rice-bootstrap --scope project", directive)
+            self.assertNotIn("--scope user", directive)         # the canonical one is kept
+            self.assertIn("will not remove either install for you", directive)
+            self.assertEqual(_tree(self.root), before)          # nothing written, nothing removed
+
+    def test_a_project_only_install_is_named_as_non_canonical(self):
+        self.bootstrap()
+        before = _tree(self.root)
+        outcome = rice.update(self.root, run=fake_run(), rtk_probe=_ok_rtk,
+                              plugin_probe=_entries(("project", self.BUILD)))
+        directive = "\n".join(outcome.directive)
+        self.assertEqual(outcome.stage, "blocked")
+        self.assertIn("canonical install is user scope", directive)
+        self.assertIn("claude plugin install rice@rice-bootstrap", directive)
+        self.assertEqual(_tree(self.root), before)
+
+    def test_readiness_follows_the_canonical_install_only(self):
+        """A stale canonical install is the one legitimate restart; a stale
+        *other* install is not, because there is no other install."""
+        self.bootstrap()
+        stale = rice.update(self.root, run=fake_run(), rtk_probe=_ok_rtk,
+                            plugin_probe=_entries(("user", "0.0.1")))
+        self.assertEqual(stale.stage, "restart-required")
+        self.assertIn("canonical", "\n".join(stale.directive))
+        self.assertFalse(self.version_file.exists())
+
+    def test_the_verifier_not_rice_decides_a_duplicate_install_is_unhealthy(self):
+        """No second truth in rice.py: the rubric item is what fails a repo."""
+        item = reconcile._plugin_scope_item(_entries(("user", self.BUILD), ("project", self.BUILD)))
+        self.assertEqual(item.name, "plugin:scope")
+        self.assertEqual(item.state, "FAIL")
+        self.assertIn("plugin:scope", verify.GATE_A)
+        report = verify.run(self.root, rtk_probe=_ok_rtk,
+                            plugin_probe=_entries(("user", self.BUILD), ("project", self.BUILD)))
+        self.assertFalse(report.gate_a)
+        self.assertTrue(any(r.startswith("plugin:scope") for r in report.reasons), report.reasons)
+
+    def test_bootstrap_refuses_a_duplicate_install_before_writing_anything(self):
+        before = _tree(self.root)
+        outcome = rice.bootstrap(self.root, ref=REF, archive=True, output_style=None, rtk_probe=_ok_rtk,
+                                 plugin_probe=_entries(("user", self.BUILD), ("project", self.BUILD)))
+        self.assertFalse(outcome.ok)
+        self.assertTrue(any(r.startswith("plugin:scope") for r in outcome.report.reasons))
+        self.assertEqual(_tree(self.root), before, "bootstrap wrote to the repo before stopping")
+        self.assertIn("claude plugin uninstall rice@rice-bootstrap --scope project",
+                      "\n".join(outcome.directive))
+
+    def test_the_same_install_twice_at_the_canonical_scope_is_a_duplicate(self):
+        self.bootstrap()
+        outcome = rice.update(self.root, run=fake_run(), rtk_probe=_ok_rtk,
+                              plugin_probe=_entries(("user", self.BUILD), ("user", "0.0.1")))
+        self.assertEqual(outcome.stage, "blocked")
+        self.assertIn("more than once at user scope", "\n".join(outcome.directive))
+        self.assertFalse(self.version_file.exists())
+
+    def test_an_install_list_without_a_scope_is_unclassifiable_not_a_failure(self):
+        """The only remedy a scope FAIL can offer is a `--scope <name>`
+        command; without a scope there is no runnable one, so this is
+        NOT_VERIFIED -- the gate still fails, but honestly."""
+        def no_scope(cmd):
+            return _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": self.BUILD}]))
+
+        item = reconcile._plugin_scope_item(no_scope)
+        self.assertEqual(item.state, "NOT_VERIFIED")
+        self.assertNotIn("--scope ?", item.detail)
+        outcome = rice.update(self.root, run=fake_run(), rtk_probe=_ok_rtk, plugin_probe=no_scope)
+        self.assertTrue(outcome.blocked)
+        self.assertNotIn("--scope ?", "\n".join(outcome.directive))
+
+    def test_not_installed_and_could_not_ask_are_different_answers(self):
+        """Both stop, but only one of them is "install rice"."""
+        def nothing(cmd):
+            return _R(0, "[]")
+
+        def unreadable(cmd):
+            raise FileNotFoundError("claude")
+
+        missing = "\n".join(rice.update(self.root, run=fake_run(), rtk_probe=_ok_rtk,
+                                        plugin_probe=nothing).directive)
+        self.assertIn("claude plugin marketplace add", missing)
+        unknown = "\n".join(rice.update(self.root, run=fake_run(), rtk_probe=_ok_rtk,
+                                        plugin_probe=unreadable).directive)
+        self.assertIn("could not be read", unknown)
+        self.assertNotIn("claude plugin marketplace add", unknown)
+
+    def test_the_blocker_text_names_real_scopes_and_runnable_commands(self):
+        """On the bootstrap path the rubric item's detail is the whole text
+        the OWNER sees, so it may not contain a placeholder."""
+        item = reconcile._plugin_scope_item(_entries(("user", self.BUILD), ("project", "0.0.1")))
+        self.assertNotIn("<scope>", item.detail)
+        self.assertIn("--scope project", item.detail)
+
+
+class TestUpdateIsManualOnly(unittest.TestCase):
+    """RICE-BOOTSTRAP-044C: auto-update is OFF. An update happens only when
+    the OWNER types /rice:rice-update -- release, rollback, compatibility and
+    upgrade E2E are not mature enough for anything automatic."""
+
+    def test_no_hook_can_trigger_an_update(self):
+        hooks = json.loads((REPO / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+        commands = [h.get("command", "") for entries in hooks["hooks"].values()
+                    for entry in entries for h in entry.get("hooks", [])]
+        self.assertTrue(commands)
+        for cmd in commands:
+            for forbidden in ("rice.py\" update", "rice.py update", "plugin update", "plugin install"):
+                self.assertNotIn(forbidden, cmd, cmd)
+
+    def test_the_update_entrypoint_stays_owner_typed_only(self):
+        skill = (REPO / "skills" / "rice-update" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("disable-model-invocation: true", skill)
+        bootstrap_skill = (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertNotIn("rice.py\" update", bootstrap_skill)  # bootstrap never updates rice
+
+    def test_nothing_in_the_shipped_surface_schedules_an_update(self):
+        for py in (REPO / "scripts").glob("*.py"):
+            src = py.read_text(encoding="utf-8").lower()
+            for forbidden in ("auto-update", "auto_update", "autoupdate", "crontab", "schedule("):
+                self.assertNotIn(forbidden, src, f"{py.name}: {forbidden}")
+
+    def test_the_install_commands_exist_only_on_the_owner_invoked_path(self):
+        """`claude plugin update` may appear in exactly one place: the update
+        verb's own helper."""
+        callers = []
+        for py in (REPO / "scripts").glob("*.py"):
+            if '"plugin", "update"' in py.read_text(encoding="utf-8"):
+                callers.append(py.name)
+        self.assertEqual(callers, ["rice.py"])
+        body = (REPO / "scripts" / "rice.py").read_text(encoding="utf-8")
+        self.assertEqual(body.count('"plugin", "update"'), 1)
+        # ... and that one occurrence is inside the update verb's own helper
+        enclosing = body.split('"plugin", "update"')[0].rsplit("\ndef ", 1)[1].split("(")[0]
+        self.assertEqual(enclosing, "_update_install")
 
 
 class TestDirectives(LifecycleBase):

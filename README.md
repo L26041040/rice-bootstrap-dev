@@ -32,9 +32,19 @@ the user to remember or type any command.
    claude plugin marketplace add L26041040/rice-bootstrap
    claude plugin install rice@rice-bootstrap
    ```
-3. **Local machine**: a newly installed plugin is loaded by the **next**
+   **User scope only** (the default, and the same way Matt Pocock's plugin
+   is installed). Rice does not support being installed at more than one
+   scope: which install a session loads is not something rice may guess at,
+   so the verifier fails a duplicate (`plugin:scope`) and the OWNER removes
+   the extra one, keeping the user-scope install.
+3. **No auto-update.** Rice never updates itself, on any trigger — no hook,
+   no schedule, no background check. An update happens only when the OWNER
+   types `/rice:rice-update` (see Update below). Release, rollback,
+   compatibility and upgrade E2E are not mature enough for anything
+   automatic.
+4. **Local machine**: a newly installed plugin is loaded by the **next**
    session. Start one and run the bootstrap flow below.
-4. **Claude Code on the web**: do not run the two commands inside a session
+5. **Claude Code on the web**: do not run the two commands inside a session
    expecting them to persist — `~/.claude` is per-container. See "Claude
    Code Web setup" below; that is the primary path, not a same-session
    install.
@@ -146,9 +156,14 @@ and returns a directive to present verbatim:
 - Latest stable is upstream `L26041040/rice-bootstrap`'s `main` branch — its
   exact HEAD commit SHA, read by the engine (`git ls-remote`). No git tag or
   GitHub release is used anywhere; the target repo never declares "latest".
+- The install is validated first, before anything is written: rice must be
+  installed at exactly one scope, the canonical user scope. A duplicate or
+  non-canonical install stops the update with the scopes named and a minimal
+  cleanup (keep user scope, remove the others) — rice removes neither for
+  the OWNER, and never sends them around a restart loop.
 - If this repo is pinned elsewhere: the delivery `ref` moves to that SHA and
-  the official install commands run (`--scope project` when the install is
-  project-scoped). The OWNER is then told to commit and push, move the
+  the official install commands run against that canonical install. The
+  OWNER is then told to commit and push, move the
   Cloud container-start install line to the same SHA, and start a new
   session — an update spans two sessions, because a session keeps its
   cached build until it restarts.

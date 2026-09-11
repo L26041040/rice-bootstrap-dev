@@ -329,6 +329,22 @@ def _default_rtk_probe(cmd):
 _default_plugin_probe = _default_rtk_probe
 
 
+CANONICAL_SCOPE = "user"  # RICE-BOOTSTRAP-044C: rice is a user-scope plugin, like Matt's
+
+
+def install_scopes(plugin_probe=None) -> tuple[dict, str | None]:
+    """({scope: [versions]} for this plugin, error). The one read of *where*
+    rice is installed, shared by the verifier's rubric and the update
+    lifecycle so there is never a second truth about it."""
+    entries, err = installed_entries(plugin_probe)
+    if err:
+        return {}, err
+    scopes: dict[str, list[str]] = {}
+    for e in entries or []:
+        scopes.setdefault(str(e.get("scope") or "?"), []).append(str(e.get("version")))
+    return scopes, None
+
+
 def installed_entries(plugin_probe=None):
     """(this plugin's entries from `claude plugin list --json`, error) --
     the public read of what is actually installed, for callers that need the
@@ -377,7 +393,6 @@ def _plugin_items(plugin_probe) -> list[ItemResult]:
             f"{settings_template.PLUGIN_KEY}`, then start a new session",
             kind=EXISTS,
         ), ItemResult("plugin:build", "NOT_VERIFIED", "nothing installed to compare against", kind=MATCHES)]
-    e = mine[0]
     installed = ItemResult(
         "plugin:installed", "PASS",
         "; ".join(f"{settings_template.PLUGIN_KEY} {x.get('version', '?')} (scope {x.get('scope', '?')}, "
@@ -396,6 +411,59 @@ def _plugin_items(plugin_probe) -> list[ItemResult]:
             kind=MATCHES,
         )
     return [installed, build]
+
+
+def classify_install(plugin_probe=None) -> tuple:
+    """(canonical versions, state, detail, scopes) -- the single decision on
+    whether this environment's rice install is the supported one
+    (RICE-BOOTSTRAP-044C).
+
+    Rice's canonical install is user scope, exactly once, the same way Matt's
+    plugin is installed. Two installs -- at different scopes, or twice at the
+    canonical one -- is an unsupported duplicate, not a healthy install:
+    which one a session loads is not something rice may guess at. The
+    verifier's `plugin:scope` item and the update lifecycle both read this,
+    so there is never a second truth about it; only how the answer is
+    presented differs."""
+    scopes, err = install_scopes(plugin_probe)
+    if err:
+        # `scopes is None` means the question could not be asked at all, which
+        # is not the same answer as the empty `{}` of "nothing is installed"
+        return None, "NOT_VERIFIED", err, None
+    if not scopes:
+        return None, "NOT_VERIFIED", "nothing installed to classify", {}
+    where = "; ".join(f"{k} {sorted(set(v))}" for k, v in sorted(scopes.items()))
+    if "?" in scopes:
+        # the install list did not say where this came from: unclassifiable,
+        # never a FAIL whose only remedy would be an unrunnable command
+        return None, "NOT_VERIFIED", f"`claude plugin list --json` reports no scope for this plugin ({where})", scopes
+    others = sorted(k for k in scopes if k != CANONICAL_SCOPE)
+    if CANONICAL_SCOPE not in scopes:
+        return None, "FAIL", (
+            f"{settings_template.PLUGIN_KEY} is installed at {where}, but the canonical install is "
+            f"{CANONICAL_SCOPE} scope. Install it there (`claude plugin install "
+            f"{settings_template.PLUGIN_KEY}`) and remove the non-canonical one(s): "
+            + "; ".join(f"`claude plugin uninstall {settings_template.PLUGIN_KEY} --scope {k}`" for k in others)
+        ), scopes
+    if others:
+        return None, "FAIL", (
+            f"{settings_template.PLUGIN_KEY} is installed at more than one scope ({where}) -- an "
+            f"unsupported duplicate installation. Keep the {CANONICAL_SCOPE}-scope install and "
+            "remove the others: "
+            + "; ".join(f"`claude plugin uninstall {settings_template.PLUGIN_KEY} --scope {k}`" for k in others)
+        ), scopes
+    versions = scopes[CANONICAL_SCOPE]
+    if len(set(versions)) > 1:
+        return None, "FAIL", (
+            f"{settings_template.PLUGIN_KEY} is installed more than once at {CANONICAL_SCOPE} scope "
+            f"({sorted(set(versions))}) -- an unsupported duplicate installation. Leave exactly one"
+        ), scopes
+    return versions, "PASS", where, scopes
+
+
+def _plugin_scope_item(plugin_probe) -> ItemResult:
+    _, state, detail, _ = classify_install(plugin_probe)
+    return ItemResult("plugin:scope", state, detail, kind=EXISTS)
 
 
 def _output_style_bundled_item() -> ItemResult:
@@ -595,6 +663,7 @@ def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> list[ItemResult]:
     current = _current_settings(repo_root)
     ref = _current_ref(current)
     items = _plugin_items(plugin_probe)
+    items.append(_plugin_scope_item(plugin_probe))
     items.append(_output_style_bundled_item())
     items.append(_output_style_choice_item(repo_root, current, plugin_probe))
     settings_items, _ = _settings_items(current, ref, write=False, is_rice_update=False)

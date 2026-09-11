@@ -514,7 +514,8 @@ class TestRubricKinds(ReconcileTestBase):
             self.assertIn(i.kind, (reconcile.EXISTS, reconcile.MATCHES, reconcile.BEHAVES), i)
         names = {i.name for i in items}
         for required in [
-            "plugin:installed", "plugin:build", "output-style:bundled", "output-style:choice",
+            "plugin:installed", "plugin:build", "plugin:scope",
+            "output-style:bundled", "output-style:choice",
             "settings:permissions.deny",
             "settings:env.CLAUDE_CODE_SUBAGENT_MODEL", "rice.md", "CLAUDE.md:import-line",
             "AGENTS.md:rice-pointer",
@@ -597,6 +598,34 @@ class TestArchiveBehavesDiagnostic(ReconcileTestBase):
         _git_r(self.repo_root, "commit", "-q", "-m", f"session history: x\n\n{reconcile.archive_hook.RICE_ARCHIVE_TRAILER}")
         _git_r(self.repo_root, "push", "-q", "origin", "HEAD:main")
         self.assertEqual(reconcile._archive_behaves_item(self.repo_root, settings).state, "PASS")
+
+    def test_canonical_scope_is_user_and_duplicates_are_never_healthy(self):
+        """RICE-BOOTSTRAP-044C. The verifier -- not the update lifecycle --
+        decides that an install is unsupported, so there is one truth."""
+        def probe(*pairs):
+            return lambda cmd: _Result(0, json.dumps(
+                [{"id": "rice@rice-bootstrap", "version": v, "scope": sc, "enabled": True}
+                 for sc, v in pairs]))
+
+        bv = reconcile.build_version()
+        self.assertEqual(reconcile.CANONICAL_SCOPE, "user")
+        ok = reconcile._plugin_scope_item(probe(("user", bv)))
+        self.assertEqual(ok.state, "PASS")
+
+        dup = reconcile._plugin_scope_item(probe(("user", bv), ("project", "0.0.1")))
+        self.assertEqual(dup.state, "FAIL")
+        self.assertIn("more than one scope", dup.detail)
+        self.assertIn("uninstall", dup.detail)
+
+        non_canonical = reconcile._plugin_scope_item(probe(("project", bv)))
+        self.assertEqual(non_canonical.state, "FAIL")
+        self.assertIn("canonical install is user scope", non_canonical.detail)
+
+        def unreadable(cmd):
+            raise FileNotFoundError("claude")
+
+        self.assertEqual(reconcile._plugin_scope_item(unreadable).state, "NOT_VERIFIED")
+        self.assertEqual(reconcile._plugin_scope_item(lambda cmd: _Result(0, "[]")).state, "NOT_VERIFIED")
 
     def test_plugin_build_mismatch_is_fail(self):
         _make_correct_repo(self.repo_root)

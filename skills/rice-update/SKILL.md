@@ -54,6 +54,21 @@ verdict says it is.
 verifier writes it, and only when its own verdict says so; on any failure it
 is byte-for-byte unchanged, and nothing is "updated".
 
+## Two policies this skill never negotiates
+
+**Rice updates only on this explicit OWNER invocation.** There is no
+auto-update, on any trigger — no hook, no schedule, no background check, and
+no "while I'm here, let me update rice". If the OWNER did not type
+`/rice:rice-update`, rice is not being updated.
+
+**Rice's canonical install is user scope, and only user scope** — the same
+way Matt's plugin is installed. Rice does not maintain a second copy at
+another scope and does not update one. If the command reports an install at
+more than one scope, or only at a non-canonical one, present its cleanup
+verbatim and stop: the OWNER removes the extra install themselves, then
+invokes this skill again. Never remove or install anything to "fix" it
+yourself, and never pick which copy should win.
+
 ## What this deliberately does not do
 
 No rollback, no migration framework, no git-history inference, no

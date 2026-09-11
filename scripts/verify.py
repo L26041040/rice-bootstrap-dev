@@ -46,6 +46,7 @@ VERSION_FILE = ".claude/rice-version"
 GATE_A = (
     "plugin:installed",
     "plugin:build",
+    "plugin:scope",
     "output-style:bundled",
     "output-style:choice",
     *sorted(f"settings:{k}" for k in reconcile.settings_template.RICE_DEFINED_KEYS),

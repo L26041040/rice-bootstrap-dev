@@ -182,25 +182,31 @@ def _upstream_head(run) -> tuple[str | None, str]:
     return sha, "ok"
 
 
-def _install_state(**probes) -> tuple[list[str], bool, str | None]:
-    """(installed versions of this plugin, is any of them project-scope, error).
+def _canonical_install(**probes) -> tuple[list[str] | None, list[str]]:
+    """(versions installed at the canonical scope, directive).
 
-    An error is not "nothing is installed": acting on a probe that could not
-    answer would tell the OWNER to restart sessions forever, or quietly drop
-    `--scope project` from the install command."""
-    entries, err = reconcile.installed_entries(probes.get("plugin_probe"))
-    if err:
-        return [], False, err
-    entries = entries or []
-    return ([str(e.get("version")) for e in entries],
-            any(e.get("scope") == "project" for e in entries), None)
+    The decision is `reconcile.classify_install`'s -- the same one the
+    verifier's `plugin:scope` item reports, so rice never holds a second
+    truth about what a supported install is. What rice adds is the shape the
+    OWNER needs: a definite stop with every scope named and the exact
+    cleanup commands, never a restart they can be sent around forever."""
+    versions, state, detail, scopes = reconcile.classify_install(probes.get("plugin_probe"))
+    if state == "PASS":
+        return versions, []
+    if state != "FAIL":
+        # could not classify: never a cleanup instruction, because there is no
+        # runnable one to give. `scopes is None` = the probe could not answer;
+        # `{}` = it answered, and rice is simply not installed.
+        return None, (_install_directive() if scopes == {} else _install_unreadable_directive(detail))
+    return None, _unsupported_install_directive(detail, scopes)
 
 
-def _update_install(run, project_scope: bool) -> tuple[bool, list[str]]:
-    """The official two commands, exactly as the OWNER would run them."""
+def _update_install(run) -> tuple[bool, list[str]]:
+    """The official two commands, exactly as the OWNER would run them, and
+    always against the canonical user-scope install -- rice never maintains
+    a second copy, so there is no scope to choose (RICE-BOOTSTRAP-044C)."""
     cmds = [["claude", "plugin", "marketplace", "update", settings_template.MARKETPLACE_NAME],
-            ["claude", "plugin", "update", settings_template.PLUGIN_KEY]
-            + (["--scope", "project"] if project_scope else [])]
+            ["claude", "plugin", "update", settings_template.PLUGIN_KEY]]
     done = []
     for cmd in cmds:
         try:
@@ -249,6 +255,10 @@ def bootstrap(repo_root, *, ref=None, archive=None, output_style=UNSET, run=None
         # the probe could not answer -- not the same as "rice is not installed"
         return Outcome(report=loaded, stage="blocked", blocked=True,
                        directive=_unknown_install_directive(installed))
+    # ... and the install must be the supported one before anything is written
+    _, install_directive = _canonical_install(**probes)
+    if install_directive:
+        return Outcome(report=loaded, stage="blocked", blocked=True, directive=install_directive)
 
     if ref is None and reconcile.current_ref(repo_root) is None:
         ref, ref_state = _upstream_head(run or _default_run)
@@ -292,22 +302,25 @@ def update(repo_root, *, run=None, **probes) -> Outcome:
         return Outcome(stage="blocked", blocked=True,
                        directive=_upstream_unreadable_directive(empty=(ref_state == "empty")))
 
+    # the install is validated before anything is written: a duplicate or
+    # non-canonical install is a stop, not something to half-act on
+    versions, directive = _canonical_install(**probes)
+    if versions is None:
+        return Outcome(stage="blocked", blocked=True, directive=directive)
+
     pinned = reconcile.current_ref(repo_root)
-    versions, project_scope, err = _install_state(**probes)
-    if err:
-        return Outcome(stage="blocked", blocked=True, directive=_install_unreadable_directive(err))
     build = reconcile.build_version()
 
     if pinned != sha:
         moved = reconcile.move_ref(repo_root, sha)
-        ok, log = _update_install(run, project_scope)
+        ok, log = _update_install(run)
         if not ok:
             return Outcome(stage="blocked", blocked=True, directive=_install_failed_directive(moved, log))
         return Outcome(stage="session-1", directive=_restart_directive(moved, log, sha))
 
-    if set(versions) != {build}:
-        # every install of this plugin must be the build running right now:
-        # a leftover old install can still be what the next session loads
+    if build not in versions:
+        # the one legitimate restart: the canonical install has moved on, but
+        # this session still runs the build it started with
         return Outcome(stage="restart-required", directive=_restart_pending_directive(sha, versions, build))
 
     reconcile.apply(repo_root, is_rice_update=True, **probes)
@@ -419,6 +432,27 @@ def _unknown_install_directive(item) -> list[str]:
     ]
 
 
+def _unsupported_install_directive(detail: str, scopes: dict) -> list[str]:
+    """The verifier's own sentence about this install, plus the cleanup as
+    runnable lines. Rice removes nothing and picks no winner."""
+    return [
+        f"{detail}.",
+        "",
+        "Installed right now:",
+        *[f"  - {scope} scope: {sorted(set(v))}" for scope, v in sorted(scopes.items())],
+        "",
+        "Minimal cleanup -- keep the canonical"
+        f" {reconcile.CANONICAL_SCOPE}-scope install, remove every other rice install:",
+        *[f"    claude plugin uninstall {settings_template.PLUGIN_KEY} --scope {scope}"
+          for scope in sorted(scopes) if scope != reconcile.CANONICAL_SCOPE],
+        *([f"    claude plugin install {settings_template.PLUGIN_KEY}"]
+          if reconcile.CANONICAL_SCOPE not in scopes else []),
+        "",
+        "Nothing was written. Rice will not remove either install for you, and will not"
+        " guess which one should win. Do the cleanup, then run /rice:rice-update again.",
+    ]
+
+
 def _install_unreadable_directive(err: str) -> list[str]:
     return [
         f"The install state could not be read ({err}), so there is no way to tell"
@@ -457,9 +491,9 @@ def _restart_directive(moved, log, sha: str) -> list[str]:
 
 def _restart_pending_directive(sha: str, versions: list[str], build: str) -> list[str]:
     return [
-        f"This repo is already pinned to upstream main ({sha}), and the install reports"
-        f" {sorted(set(versions)) or 'nothing'}, which is not exactly the build running"
-        f" right now ({build}).",
+        f"This repo is already pinned to upstream main ({sha}), and the canonical"
+        f" {reconcile.CANONICAL_SCOPE}-scope install reports {sorted(set(versions)) or 'nothing'},"
+        f" but the build running right now is {build}.",
         "",
         "Start a new session and run /rice:rice-update again -- a session keeps its"
         " cached build until it restarts. Nothing was written.",
