@@ -69,28 +69,34 @@ against the new desired state; `plugin:build` fails it by construction.
 5. Stop: tell the OWNER to start a new session and run `/rice:rice-update`
    again.
 
-## Session 2 — reconcile, then let the verifier decide
+## Session 2 — one command, then let the verifier decide
 
 Detect this case by: delivery `ref` already at the target, and
 `claude plugin list` showing that version installed.
 
-6. `reconcile.apply(repo_root, is_rice_update=True)` — rice-defined leaves,
-   `.claude/rice.md` and the rice pointer block in `AGENTS.md` that drifted
-   from the new build's desired state are overwritten wholesale;
-   project-owned content in `CLAUDE.md` / `AGENTS.md` (including Matt's
-   `## Agent skills` section) untouched. The OWNER's `outputStyle` choice
-   (including an absent key = Claude default, and any custom
-   `.claude/output-styles/*.md`) is never touched by an update.
-7. **Gate A**: `verify.py <repo_root>`. On a FAIL, run
-   `repair.py <repo_root>` once (verify → deterministic repair → verify;
-   see bootstrap Step 3), and only fix by hand what it still lists.
-   `plugin:build` failing means you are still on the old build — that is
-   Session 1's step 4/5 not done; stop and say so.
-8. **Gate B**: `verify.py <repo_root> --final`, and on a FAIL
-   `repair.py <repo_root> --final` once. On `FINAL-VERIFIED <build>` the
-   verifier has written `.claude/rice-version`; commit and push and quote
-   the line verbatim. On `FINAL FAIL`, `rice-version` still holds the
-   previous version — report the listed items; nothing is "updated".
+```
+python3 "<plugin root>/scripts/rice.py" update <repo_root>
+```
+
+That is the whole session (RICE-BOOTSTRAP-044). It converges rice-owned
+state onto the new build — rice-defined settings leaves, `.claude/rice.md`
+and the rice pointer block in `AGENTS.md` are overwritten wholesale;
+project-owned content in `CLAUDE.md` / `AGENTS.md` (including Matt's
+`## Agent skills` section) is untouched, and the OWNER's `outputStyle`
+choice (including an absent key = Claude default, and any custom
+`.claude/output-styles/*.md`) is never touched by an update — then runs the
+canonical flow through Gate A and Gate B: verify, deterministic repair on a
+FAIL, verify again.
+
+Read its last lines:
+
+- `FINAL-VERIFIED <build>` — the verifier has written
+  `.claude/rice-version`; commit and push, and quote that line verbatim.
+- A FAIL line — repair has already had its turn. `plugin:build` failing
+  means you are still on the old build: that is Session 1's step 4/5 not
+  done; stop and say so. Otherwise fix exactly what the remaining lines
+  name and run the same command again. `.claude/rice-version` still holds
+  the previous version — nothing is "updated".
 
 ## What this deliberately does not do
 

@@ -69,12 +69,35 @@ GATE_B = GATE_A + GATE_B_EXTRA
 
 @dataclass
 class Report:
+    """The verifier's complete word on a repo (RICE-BOOTSTRAP-044). Callers
+    read `ok`, `verdict`, `reasons` and `failing` from here; nothing outside
+    this module re-evaluates a gate, rebuilds a verdict string, or scrapes
+    `lines` to find one."""
     build: str
     items: list
     gate_a: bool
     gate_b: bool | None            # None when --final was not requested
     version_written: str | None    # the SemVer stamped, only on a Gate B pass
     lines: list = field(default_factory=list)
+    required: tuple = ()           # the gate that was evaluated
+    reasons: list = field(default_factory=list)   # every required item not PASS
+    verdict: str = ""              # the single line that decides this run
+
+    @property
+    def ok(self) -> bool:
+        """Did the gate that was asked for pass? Gate B when --final was
+        requested, Gate A otherwise."""
+        return self.gate_a if self.gate_b is None else self.gate_b
+
+    @property
+    def failing(self) -> list:
+        """The produced items this gate required and did not get as PASS --
+        the failure identities repair acts on."""
+        return [i for i in self.items if i.name in self.required and i.state != "PASS"]
+
+    def item(self, name: str):
+        """One item by name, or None if the rubric produced no such item."""
+        return next((i for i in self.items if i.name == name), None)
 
 
 def gate_passes(items, required) -> tuple[bool, list[str]]:
@@ -119,22 +142,27 @@ def run(repo_root, *, final: bool = False, **probes) -> Report:
     lines = [f"[{'B' if i.name in GATE_B_EXTRA else 'A'}] {i.kind:<7} {i.state:<12} {i.name}"
              + (f" -- {i.detail}" if i.detail else "") for i in items]
     lines.append(f"rice-version on disk: {read_version(repo_root) or '(none)'}")
-    if a_ok:
-        lines.append(f"RICE-VERIFIED {build}")
-    else:
-        lines.append(f"RICE-GATE-A FAIL ({len(a_reasons)} required item(s) not PASS)")
+    verdict = (f"RICE-VERIFIED {build}" if a_ok
+               else f"RICE-GATE-A FAIL ({len(a_reasons)} required item(s) not PASS)")
+    lines.append(verdict)
+    if not a_ok:
         lines.extend(f"  - {r}" for r in a_reasons)
 
     b_ok, written = None, None
+    required, reasons = GATE_A, a_reasons
     if final:
         b_ok, b_reasons = gate_passes(items, GATE_B)
+        required, reasons = GATE_B, b_reasons
         if b_ok:
             written = _stamp(repo_root, build)
-            lines.append(f"FINAL-VERIFIED {build}")
+            verdict = f"FINAL-VERIFIED {build}"
+            lines.append(verdict)
         else:
-            lines.append(f"FINAL FAIL ({len(b_reasons)} required item(s) not PASS); rice-version untouched")
+            verdict = f"FINAL FAIL ({len(b_reasons)} required item(s) not PASS); rice-version untouched"
+            lines.append(verdict)
             lines.extend(f"  - {r}" for r in b_reasons)
-    return Report(build=build, items=items, gate_a=a_ok, gate_b=b_ok, version_written=written, lines=lines)
+    return Report(build=build, items=items, gate_a=a_ok, gate_b=b_ok, version_written=written,
+                  lines=lines, required=required, reasons=reasons, verdict=verdict)
 
 
 def _stamp(repo_root: Path, build: str) -> str:
@@ -157,8 +185,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     rep = run(args.repo_root, final=args.final)
     print("\n".join(rep.lines))
-    ok = rep.gate_b if args.final else rep.gate_a
-    return 0 if ok else 1
+    return 0 if rep.ok else 1
 
 
 if __name__ == "__main__":

@@ -5,37 +5,32 @@ description: "One-instruction bootstrap for a repo: installs rice's own configur
 
 # rice bootstrap
 
-This skill describes *how to operate* rice. It decides nothing. The only
-authority on whether this repo is verified is the deterministic verifier:
+You are an adapter between the OWNER and one command. This skill holds no
+steps of its own: the lifecycle lives in `scripts/rice.py`
+(RICE-BOOTSTRAP-044), and the only authority on whether this repo is
+verified is the deterministic verifier it runs.
 
 ```
-python3 "<plugin root>/scripts/verify.py" <repo_root>          # Gate A
-python3 "<plugin root>/scripts/verify.py" <repo_root> --final  # Gate B
+python3 "<plugin root>/scripts/rice.py" bootstrap <repo_root> \
+    --ref <SHA> --archive 0|1 --output-style <name>|none
 ```
 
-Only its output may say `RICE-VERIFIED <build>` or `FINAL-VERIFIED <build>`,
-and only its Gate B pass writes `.claude/rice-version`. If it prints a
-FAIL line, the repo is not verified — there is nothing for you to weigh,
-waive, or interpret; fix what the listed item says and run it again.
+That one command writes the OWNER's answers (only if absent), reconciles
+rice-owned state, and runs the canonical flow — verify, deterministic
+repair on a FAIL, verify again — reporting the verifier's own lines. Only
+those lines may say `RICE-VERIFIED <build>` or `FINAL-VERIFIED <build>`, and
+only a Gate B pass writes `.claude/rice-version`. There is nothing for you
+to weigh, waive, or interpret: quote the verdict, and act on exactly what
+the remaining lines say.
 
-Everything below is idempotent (`reconcile.apply` is create-if-missing /
-no-op-if-correct / conflict-if-drifted), so re-running on a partly or fully
-bootstrapped repo is always safe. Re-derive where you are from the verifier
-output each time; never assume a first run.
+Everything is idempotent, so re-running on a partly or fully bootstrapped
+repo is always safe. Re-derive where you are from the command's output each
+time; never assume a first run.
 
-The order is fixed (RICE-BOOTSTRAP-042) and you are the *last* step in it,
-never the first:
-
-```
-normal path -> verify -> FAIL -> deterministic repair -> verify again -> FAIL -> you
-```
-
-`scripts/repair.py <repo_root> [--final]` is that whole middle: it runs the
-verifier, and only on a FAIL applies the known lossless repair for every
-failure the verifier named, then runs the same verifier again. It has no
-verdict of its own. Do not analyse, hand-edit, or try commands before the
-verifier and `repair.py` have both had their turn; when `repair.py` still
-prints a FAIL, fix exactly what its remaining lines say and nothing else.
+**You are the last step in the flow, never the first.** Do not analyse the
+repo, hand-edit files, or try commands before that command has run. What it
+still lists afterwards is what no script can repair — those, and only
+those, are yours.
 
 Runtime facts (ticket #18, four real Cloud sessions plus local probes;
 RICE-BOOTSTRAP-035 reconfirmed with two fresh-Environment E2E rounds):
@@ -52,9 +47,9 @@ not a requirement.
 
 ## Step 0 — Is rice loaded here?
 
-Run the verifier once. If `plugin:installed` is PASS, rice is already
-loaded — the normal case on the recommended architecture. Go straight to
-Step 1.
+Run `python3 "<plugin root>/scripts/verify.py" <repo_root>` once. If
+`plugin:installed` is PASS, rice is already loaded — the normal case on the
+recommended architecture. Go to Step 1.
 
 If `plugin:installed` is FAIL, **stop and hand off** (this is the one step
 before Matt that needs the OWNER — on the recommended Cloud architecture it
@@ -66,7 +61,7 @@ is a once-per-Environment fix, not a once-per-repo or once-per-session one):
 >     claude plugin install rice@rice-bootstrap
 >
 > - **Local machine**: I can run those two commands now, then you start a
->   new session and say "bootstrap this repo with rice" again.
+>   new session and ask for the bootstrap there.
 > - **Claude Code on the web**: the fix belongs at the Environment level,
 >   not this session — add those two commands to a Cloud Environment's setup
 >   script (a dedicated rice Environment, or an existing one you already use
@@ -84,122 +79,83 @@ Before enabling the session archive: if this repo already had its own
 `/clear` archive hook or script before rice, the OWNER removes that old
 hook/script first; an existing `session-history/` can stay as it is.
 
-## Step 1 — The two owner-defined settings
+## Step 1 — The OWNER's three answers
 
-Read `.claude/settings.json` (create `{}` if absent). Set, only if missing:
+These become the three flags of the one command. Each is written only if
+the key is absent, so an answer the OWNER already gave is never overwritten.
 
-- `extraKnownMarketplaces.rice-bootstrap.source.ref` — the **delivery
-  mechanism only**: `L26041040/rice-bootstrap`'s `main` branch's exact
-  commit SHA (`git ls-remote https://github.com/L26041040/rice-bootstrap.git
-  main`), never a tag name and never the floating branch name `main`
-  itself. If upstream has no commits yet, say so and use the literal
-  string `main` as a stopgap. This value is never a verified version;
-  `.claude/rice-version` (verifier-written) is. No git tag or GitHub
-  release is used anywhere in rice's lifecycle (RICE-BOOTSTRAP-030). This
-  one is derived mechanically, not asked — it never goes through the card
-  UI below.
-- `env.RICE_SESSION_ARCHIVE` and `outputStyle` are **bounded OWNER
-  choices** — each a small fixed set of options — so ask them together via
-  Claude Code's native interactive choice UI (e.g. `AskUserQuestion`),
-  batched into as few native prompts as the UI allows, rather than
-  free-text questions (see `resources/rice.md`'s "Questions to the OWNER").
-  Ask only once per repo: skip a card entirely if its key already exists,
-  or (for `outputStyle`) if it is deliberately absent and
-  `.claude/rice-version` already exists.
-  - **Session archive** — Enabled (recommended, writes `"1"`) / Disabled
-    (writes the release default instead of asking, if genuinely unclear
-    which the OWNER wants).
+- `--ref` — the **delivery mechanism only**: `L26041040/rice-bootstrap`'s
+  `main` branch's exact commit SHA (`git ls-remote
+  https://github.com/L26041040/rice-bootstrap.git main`), never a tag name
+  and never the floating branch name `main` itself. If upstream has no
+  commits yet, say so and pass the literal string `main` as a stopgap. This
+  value is never a verified version; `.claude/rice-version`
+  (verifier-written) is. No git tag or GitHub release is used anywhere in
+  rice's lifecycle (RICE-BOOTSTRAP-030). Derive it mechanically — it never
+  goes through the card UI below.
+- `--archive` and `--output-style` are **bounded OWNER choices** — each a
+  small fixed set of options — so ask them together via Claude Code's
+  native interactive choice UI (e.g. `AskUserQuestion`), batched into as few
+  native prompts as the UI allows, rather than free-text questions (see
+  `resources/rice.md`'s "Questions to the OWNER"). Skip a card whose key
+  already exists (the command's output says so), and omit the flag.
+  - **Session archive** — Enabled (recommended, `--archive 1`) / Disabled
+    (`--archive 0`).
   - **Output style** — offer exactly:
-    1. `rice:老弟` — **recommended** → write `"outputStyle": "rice:老弟"`.
-    2. Claude default → write **nothing**; the key stays absent. Never
+    1. `rice:老弟` — **recommended** → `--output-style "rice:老弟"`.
+    2. Claude default → `--output-style none`; the key stays absent. Never
        write a placeholder value to mean "default".
-    3. An existing style → list what `output_styles.available(repo_root,
-       plugin_probe)` (`scripts/output_styles.py`) returns — built-ins,
-       project `.claude/output-styles/`, user styles, installed plugins'
-       styles as `<plugin>:<name>` — as the card's options. The verifier
-       confirms it resolves; don't offer a name the list doesn't contain.
+    3. An existing style → list what
+       `python3 "<plugin root>/scripts/rice.py" styles <repo_root>` prints
+       — built-ins, project `.claude/output-styles/`, user styles, installed
+       plugins' styles as `<plugin>:<name>` — as the card's options. The
+       verifier confirms the choice resolves; don't offer a name the list
+       doesn't contain.
     4. A custom style → the OWNER describes it in natural language (this
        one option leads to a follow-up, not a fixed card); write a valid
        Claude output style to `.claude/output-styles/<name>.md`
        (frontmatter `name: <name>`, `description:`, then the instructions
-       body) and write `"outputStyle": "<name>"`. That file is
+       body), then pass `--output-style <name>`. That file is
        project-owned: rice never rewrites it and `rice-update` preserves
        the choice.
 
-Never overwrite any of these if present (owner-defined). Never touch
-`.claude/rice-version` — it is not yours to write, in any step.
+Never touch `.claude/rice-version` — it is not yours to write, in any step.
 
-## Step 2 — Reconcile rice-owned state
-
-```
-import sys; sys.path.insert(0, "<plugin root>/scripts"); import reconcile
-reconcile.apply(repo_root)          # never is_rice_update=True here
-```
-
-Creates every rice-defined settings leaf, copies `.claude/rice.md`, ensures
-the `@.claude/rice.md` line in `CLAUDE.md`, and ensures the rice pointer
-block in `AGENTS.md` (created if absent). Project-owned content in either
-file is left alone.
-
-Three files, one policy (RICE-BOOTSTRAP-042): `.claude/rice.md` is the only
-place the working rules are written. `CLAUDE.md` is Claude's adapter — the
-`@.claude/rice.md` line is a real import for Claude Code, and Matt's
-`## Agent skills` section lives there too. `AGENTS.md` is the entry point for
-every other coding agent (Codex and any AGENTS.md reader): those tools
-concatenate the file verbatim and have no import syntax, so rice keeps only a
-marker-delimited instruction there to read `.claude/rice.md` — never a copy
-of it.
-
-## Step 3 — Gate A: verify, repair, verify, then you
-
-Run `verify.py <repo_root>`. `RICE-VERIFIED <build>` → go to Step 4. On
-`RICE-GATE-A FAIL`, run once:
+## Step 2 — Run the bootstrap
 
 ```
-python3 "<plugin root>/scripts/repair.py" <repo_root>
+python3 "<plugin root>/scripts/rice.py" bootstrap <repo_root> \
+    --ref <SHA> [--archive 0|1] [--output-style <name>|none]
 ```
 
-It repairs, from this build's canonical state, every rice-owned failure the
-verifier named — `settings:*` for rice-defined keys (missing *or* drifted),
-`rice.md`, `CLAUDE.md:import-line`, `AGENTS.md:rice-pointer` — and re-runs
-the verifier. Its last lines are the verifier's own. `RICE-VERIFIED` → Step
-4. Only if it still prints `RICE-GATE-A FAIL` do you act, on exactly the
-remaining lines — these are the ones no script can repair:
+Read its last lines and take exactly one of three branches:
 
-- `settings:*` for an owner-defined key → the Step 1 choice is missing;
-  ask it (or derive `ref`) and write it.
-- `plugin:*` / `output-style:bundled` / `*-hook:exists` → Step 0 (wrong or
-  missing build; hooks are part of the build, not the repo).
-- `output-style:choice` → the configured `outputStyle` points at nothing that
-  exists; redo the Step 1 choice (or create the custom file it names).
-- `git-deny:behaves` → run **exactly** `git branch --show-current` through
-  Bash in this repo. It should be denied; under normal Claude Code
-  execution the harness records that denial in the session transcript,
-  and the verifier reads that record — your own statement that it was
-  denied counts for nothing. If the command *runs*, the deny rules are not
-  in effect; the verifier will keep failing; report that.
+**`FINAL-VERIFIED <build>`** — this repo already had the official Matt
+setup, so the bootstrap finished inside this one invocation. The verifier
+has written `.claude/rice-version`. Commit and push, quote that line
+verbatim, and do **not** print the Matt hand-off: never ask the OWNER for a
+setup they have already done.
 
-When the verifier prints `RICE-VERIFIED <build>`: commit and push the
-rice-owned changes. Quote that line verbatim in your report. Nothing else
-counts as verified.
+**`RICE-VERIFIED <build>`** — Gate A passed and the repo is now waiting for
+the OWNER's Matt setup (the command's output ends with a `waiting:` line).
+Commit and push the rice-owned changes, then go to Step 3.
 
-## Step 4 — Hand off to Matt
+**A FAIL line** — repair has already had its turn; what is left is yours.
+Fix exactly what each remaining line says — its detail names the fix — then
+run the same command again. Two cases are the OWNER's, not yours:
+`plugin:*` means the wrong or missing build (Step 0), and `git-deny:behaves`
+means you must run **exactly** `git branch --show-current` through Bash in
+this repo. It should be denied; under normal Claude Code execution the
+harness records that denial in the session transcript and the verifier reads
+that record — your own statement that it was denied counts for nothing. If
+the command *runs*, the deny rules are not in effect; say so.
 
-First look at what the Gate A run already told you about `matt:artifacts`. If
-it is **already PASS** (a re-bootstrap, or a repo that already had the official
-Matt setup), there is nothing to hand off: call
-`bootstrap_state.enter_waiting_for_matt(repo_root)` and then run
-`python3 "<plugin root>/scripts/verify.py" <repo_root> --final` yourself in
-this same turn, and report per Step 5. Never ask the OWNER for a setup they
-have already done, and never print the hand-off below and a `FINAL-VERIFIED`
-line in the same reply.
+## Step 3 — Hand off to Matt
 
-Otherwise `matt:artifacts` is FAIL, and this is the hand-off. Call
-`bootstrap_state.enter_waiting_for_matt(repo_root)`, then reply **tersely**.
-This is the OWNER's hand-off, not a status report: quote the verifier's line,
-say what is left, give the command. No settings detail, no RTK line, no list
-of which Matt artifacts are missing, no commit counts, no summary of what
-bootstrap did. Roughly:
+Reply **tersely**. This is the OWNER's hand-off, not a status report: quote
+the verifier's line, say what is left, give the command. No settings detail,
+no RTK line, no list of which Matt artifacts are missing, no commit counts,
+no summary of what bootstrap did. Roughly:
 
 > `RICE-VERIFIED <build>`
 >
@@ -213,21 +169,23 @@ Rice never invokes or simulates Matt's setup. Do **not** ask the OWNER to
 run `/rice:bootstrap`, say "bootstrap this repo with rice", or type any
 other continuation prompt afterwards — a fresh bootstrap costs the OWNER
 exactly one invocation of this skill (RICE-BOOTSTRAP-028). The continuation
-is automatic; see Step 5.
+is automatic; see Step 4.
 
-**Never report bootstrap as complete while `WAITING_FOR_MATT` exists.**
+**Never report bootstrap as complete while the repo is waiting for Matt.**
 
-## Step 5 — Gate B: final verification (continues by itself)
+## Step 4 — The continuation happens by itself
 
-On a fresh bootstrap that is genuinely waiting for Matt, you do not run this
-step by hand, and neither does the OWNER. `scripts/bootstrap_continue.py` is
-wired as a `Stop` hook. It stays silent on every turn until Matt's setup has
-left anything behind; from then on, at the end of each turn while
-`WAITING_FOR_MATT` is pending, it runs the same pipeline as Step 3 with
-`--final` — verify, deterministic repair on a FAIL, verify again — and hands
-the result to you (RICE-BOOTSTRAP-028, -042). An incomplete Matt setup is
-therefore never left silently pending: what repair could not restore is
-reported to you, turn after turn, until it is resolved.
+`scripts/bootstrap_continue.py` is wired as a `Stop` hook: at the end of
+every turn it asks the same lifecycle engine whether there is anything to
+continue. It stays silent until the OWNER's Matt setup has left something
+behind, and from then on runs the same flow through Gate B and hands the
+result to you (RICE-BOOTSTRAP-028, -042, -044). Neither you nor the OWNER
+runs this by hand, and an incomplete Matt setup is never left silently
+pending.
+
+Gate B needs two things only the OWNER and the environment provide:
+`matt:artifacts` (the OWNER ran Matt setup) and `rtk`. Both are
+**required** — without them there is no `FINAL-VERIFIED`.
 
 Matt's artifacts are the one thing repair restores only from this repo's own
 history (a doc tracked at HEAD but missing from the working tree; a
@@ -239,36 +197,24 @@ copy a template, never simulate the setup — tell the OWNER exactly which
 artifact is missing and that only `/mattpocock-skills:setup-matt-pocock-skills`
 can produce it.
 
-The `[B]` items need things only the OWNER/environment provide:
-
-- `matt:artifacts` → the OWNER ran Matt setup. **Required**, not optional.
-- `rtk` → the environment must provide it. **Required**; Gate B fails until
-  it does. Without both there is no `FINAL-VERIFIED`.
+When the continuation reports `FINAL-VERIFIED <build>`, the verifier has
+already written `.claude/rice-version` and cleared the pending marker; commit
+and push the bootstrap, Matt and finalization changes, and quote that line
+verbatim. When it reports blockers, the verified-version file is untouched:
+fix what the remaining lines name and finish in that same turn as the hook's
+message says. Either way, never ask the OWNER to re-invoke this skill.
 
 A real `/clear` is **not** required to reach `FINAL-VERIFIED`
-(RICE-BOOTSTRAP-032). Archive registration is checked mechanically in
-Gate A instead (`archive-hook:exists`, `archive-sync-hook:exists`,
-`continuation-hook:exists` — are the archive, sync and continuation hooks
-wired in this build, not has any of them actually run). Whether a produced
-archive commit has actually reached this branch's upstream is a separate,
-explicit diagnostic (`reconcile._archive_behaves_item`, read from git
-state) — deliberately not part of the standard verifier rubric, since it
-gates nothing; call it directly if you need that answer.
-
-When the continuation reports blockers, repair has already had its turn:
-fix exactly what the remaining lines name (an environment item like `rtk`
-is the OWNER's; a Matt line is the OWNER's, see above) and run
-`verify.py <repo_root> --final` in that same turn, because the hook
-deliberately stays quiet for the rest of a turn it has already spoken in.
-
-When the continuation reports `FINAL-VERIFIED <build>`, the verifier has
-already written `.claude/rice-version` and removed `WAITING_FOR_MATT`; commit
-and push the bootstrap, Matt and finalization changes, and quote that line
-verbatim to the OWNER. When it reports blockers, the verified-version file is
-untouched. Either way, never ask the OWNER to re-invoke this skill.
+(RICE-BOOTSTRAP-032): archive registration is a Gate A fact
+(`archive-hook:exists`, `archive-sync-hook:exists`,
+`continuation-hook:exists` — wired in this build, not exercised). Whether a
+produced archive commit has actually reached this branch's upstream is a
+separate, explicit diagnostic in `scripts/reconcile.py`, read from git
+state — deliberately not part of the verifier's rubric, since it gates
+nothing.
 
 ## Re-running this skill
 
 Re-running is safe but should never be *necessary* on a fresh bootstrap. If
-the OWNER does invoke it again, run the verifier first: its output tells you
-which step you are at.
+the OWNER does invoke it again, run the Step 2 command first: its output
+tells you which branch you are in.

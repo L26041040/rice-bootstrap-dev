@@ -216,7 +216,8 @@ class TestContinuation(ContinuationBase):
         if the hook did any of it itself, these would still change."""
         self._ready_repo()
         passing_but_inert = verify.Report(build="9.9.9", items=[], gate_a=True, gate_b=True,
-                                          version_written=None, lines=["FINAL-VERIFIED 9.9.9"])
+                                          version_written=None, lines=["FINAL-VERIFIED 9.9.9"],
+                                          required=verify.GATE_B, verdict="FINAL-VERIFIED 9.9.9")
         with mock.patch.object(verify, "run", return_value=passing_but_inert):
             rc, _, err = _run_hook(_payload(self.root))
         self.assertEqual(rc, 2)
@@ -340,15 +341,16 @@ class TestSingleInvocationContract(unittest.TestCase):
         self.assertNotIn("again and I'll run the final verifier", skill)
 
     def test_skill_skips_the_matt_handoff_when_artifacts_already_exist(self):
-        """In a repo that already has Matt's setup, Gate B passes the moment
-        the marker is written -- so an unconditional hand-off would tell the
-        OWNER to run Matt setup and then announce FINAL-VERIFIED in the same
-        breath."""
+        """In a repo that already has Matt's setup, the lifecycle engine
+        finishes inside the one invocation -- so the skill must branch on the
+        verdict it gets back, never print the hand-off and a FINAL-VERIFIED
+        line in the same breath."""
         skill = (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8")
-        step4 = skill.split("## Step 4")[1].split("## Step 5")[0]
-        self.assertIn("matt:artifacts", step4)
-        self.assertIn("already PASS", step4)
-        self.assertIn("--final", step4)
+        branch = " ".join(skill.split("**`FINAL-VERIFIED <build>`**")[1]
+                          .split("**`RICE-VERIFIED")[0].split())
+        self.assertIn("already had the official Matt setup", branch)
+        self.assertIn("one invocation", branch)
+        self.assertIn("do **not** print the Matt hand-off", branch)
 
     def test_readme_describes_no_second_rice_invocation(self):
         readme = (REPO / "README.md").read_text(encoding="utf-8")

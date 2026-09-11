@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
-"""RICE-BOOTSTRAP-042: the single deterministic repair boundary, and the
-one pipeline every rice lifecycle runs through:
+"""RICE-BOOTSTRAP-042/-044: the single deterministic repair boundary.
 
-    normal path -> verify -> (FAIL) -> deterministic repair -> verify again
-                                    -> (still FAIL) -> the model, last
-
-`verify.py` alone decides what is broken: it collects real state and names
-every failing invariant by its item name. This module never re-derives that
-judgement. It maps each failure *identity* the verifier reported to a known,
-lossless restore, applies it, and hands the repo straight back to the same
-verifier. It declares nothing: the verdict after a repair is whatever the
-second verify run says, and only that run may stamp the verified version.
+One question only: *given the failures the verifier just named, what can be
+restored losslessly, and what cannot?* This module never decides whether a
+repo is correct, never evaluates a gate, and never declares a pass -- it is
+handed a `verify.Report`, acts on `report.failing`, and the caller
+(`rice.py`) runs the same verifier again for the word that counts.
 
 What is mechanically repairable here, and from where:
 
@@ -33,7 +28,6 @@ hook registrations of the build, `git-deny:behaves`, owner-defined settings
 keys, `rtk`) needs the environment, the OWNER, or a real execution; it is
 passed through as unresolved with the verifier's own detail.
 """
-import argparse
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -42,7 +36,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import reconcile  # noqa: E402
-import verify  # noqa: E402
 
 # Failure identities reconcile.apply repairs from canonical state.
 RECONCILE_OWNED = frozenset(
@@ -57,20 +50,10 @@ class RepairResult:
     applied: list[str] = field(default_factory=list)     # what was restored, and from where
     unresolved: list[str] = field(default_factory=list)  # what this module refuses to guess at
 
-
-@dataclass
-class Outcome:
-    before: verify.Report
-    repair: RepairResult | None   # None: the normal path passed, repair never ran
-    after: verify.Report | None   # the verifier's word after repair
-
     @property
-    def report(self) -> verify.Report:
-        return self.after or self.before
-
-
-def gate_ok(report: verify.Report, *, final: bool) -> bool:
-    return bool(report.gate_b) if final else bool(report.gate_a)
+    def lines(self) -> list[str]:
+        return ([f"repair: {a}" for a in self.applied] or ["repair: nothing mechanically repairable"]) \
+            + [f"unresolved: {u}" for u in self.unresolved]
 
 
 # --------------------------------------------------------------------------
@@ -131,15 +114,14 @@ def _restore_matt(repo_root: Path, plugin_probe) -> tuple[list[str], list[str]]:
 # the repair boundary
 # --------------------------------------------------------------------------
 
-def repair(repo_root, items, *, final: bool = False, rtk_probe=None, plugin_probe=None) -> RepairResult:
-    """Apply the known repair for every failing item in `items` (a verifier
-    report's items) that the gate in question requires -- Gate A, or Gate B
-    with `final`. Returns what was done and what could not be; says nothing
-    about whether the repo now passes -- run the verifier."""
+def repair(repo_root, report, *, rtk_probe=None, plugin_probe=None) -> RepairResult:
+    """Apply the known repair for every failure in `report.failing` -- the
+    items the verifier required for the gate it just evaluated and did not
+    get as PASS. Returns what was done and what could not be; says nothing
+    about whether the repo now passes. Run the verifier for that."""
     repo_root = Path(repo_root)
     plugin_probe = plugin_probe or reconcile._default_plugin_probe
-    required = verify.GATE_B if final else verify.GATE_A
-    failing = [i for i in items if i.state != "PASS" and i.name in required]
+    failing = report.failing
     result = RepairResult()
     if any(i.name in RECONCILE_OWNED for i in failing):
         for a in reconcile.apply(repo_root, is_rice_update=True, rtk_probe=rtk_probe, plugin_probe=plugin_probe):
@@ -155,39 +137,3 @@ def repair(repo_root, items, *, final: bool = False, rtk_probe=None, plugin_prob
         else:
             result.unresolved.append(f"{i.name}: {i.state}" + (f" -- {i.detail}" if i.detail else ""))
     return result
-
-
-def pipeline(repo_root, *, final: bool = False, **probes) -> Outcome:
-    """Normal path first: verify. Repair runs only on a FAIL, and the repo
-    then goes back to the same verifier for the word that counts."""
-    before = verify.run(repo_root, final=final, **probes)
-    if gate_ok(before, final=final):
-        return Outcome(before=before, repair=None, after=None)
-    done = repair(repo_root, before.items, final=final, **probes)
-    after = verify.run(repo_root, final=final, **probes)
-    return Outcome(before=before, repair=done, after=after)
-
-
-def render(outcome: Outcome) -> str:
-    lines = []
-    if outcome.repair is None:
-        lines.append("repair: not needed (normal path passed)")
-    else:
-        lines += [f"repair: {a}" for a in outcome.repair.applied] or ["repair: nothing mechanically repairable"]
-        lines += [f"unresolved: {u}" for u in outcome.repair.unresolved]
-    lines += outcome.report.lines
-    return "\n".join(lines)
-
-
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="rice: verify, repair what the verifier failed, verify again")
-    ap.add_argument("repo_root", nargs="?", default=".")
-    ap.add_argument("--final", action="store_true", help="Gate B (the verifier stamps on a pass, as always)")
-    args = ap.parse_args(argv)
-    outcome = pipeline(args.repo_root, final=args.final)
-    print(render(outcome))
-    return 0 if gate_ok(outcome.report, final=args.final) else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

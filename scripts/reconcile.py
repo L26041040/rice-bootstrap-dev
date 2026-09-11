@@ -609,6 +609,48 @@ def check(repo_root, *, rtk_probe=None, plugin_probe=None) -> list[ItemResult]:
     return items
 
 
+UNSET = object()  # "the OWNER was not asked", as distinct from None
+
+
+def write_owner_choices(repo_root, *, ref=None, archive=None, output_style=UNSET) -> list[ItemResult]:
+    """Bootstrap's first -- and only -- write of the OWNER-defined keys.
+
+    Deliberately NOT part of `apply`: `ref`, `env.RICE_SESSION_ARCHIVE` and
+    `outputStyle` are the OWNER's, written once when they are absent and
+    never created, fixed or reasserted by an ordinary reconcile pass (#13's
+    Ownership model). Each value here is written only if its key is missing,
+    so re-running bootstrap can never overwrite an OWNER's answer.
+
+    `output_style` distinguishes three cases: UNSET (not asked -- leave the
+    key exactly as it is), None (the OWNER chose Claude's native default --
+    the key stays absent, never a placeholder value), or a style name."""
+    repo_root = Path(repo_root)
+    current = _current_settings(repo_root)
+    items, wrote = [], False
+    # (key, value, what an absent key means when there is no value to write)
+    wanted = [(REF_PATH, ref, "not supplied; the key stays missing and the verifier will fail it"),
+              ("env.RICE_SESSION_ARCHIVE", None if archive is None else ("1" if archive else "0"),
+               "not supplied; the key stays missing and the verifier will fail it")]
+    if output_style is not UNSET:
+        # the one key whose absence is itself a valid answer: Claude's native default
+        wanted.append(("outputStyle", output_style, "left absent by the OWNER's choice (Claude default)"))
+    for key, value, absent_detail in wanted:
+        cur = _get_path(current, key)
+        if cur is not _MISSING:
+            items.append(ItemResult(f"settings:{key}", "noop", "owner-defined; already answered", kind=EXISTS))
+        elif value is None:
+            items.append(ItemResult(f"settings:{key}", "noop", absent_detail, kind=EXISTS))
+        else:
+            _set_path(current, key, value)
+            wrote = True
+            items.append(ItemResult(f"settings:{key}", "created", f"set to {value!r}", kind=EXISTS))
+    if wrote:
+        p = repo_root / ".claude" / "settings.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(current, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    return items
+
+
 def apply(repo_root, *, is_rice_update: bool = False, rtk_probe=None,
           plugin_probe=None) -> list[ItemResult]:
     rtk_probe = rtk_probe or _default_rtk_probe

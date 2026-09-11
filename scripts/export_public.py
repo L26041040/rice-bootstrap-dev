@@ -28,6 +28,7 @@ ALLOWLIST = (
     "scripts/reconcile.py",
     "scripts/verify.py",
     "scripts/bootstrap_state.py",
+    "scripts/rice.py",
     "scripts/bootstrap_continue.py",
     "scripts/repair.py",
     "scripts/archive_hook.py",

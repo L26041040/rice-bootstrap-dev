@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import reconcile  # noqa: E402
 import repair  # noqa: E402
+import rice  # noqa: E402
 import settings_template  # noqa: E402
 import verify  # noqa: E402
 
@@ -117,21 +118,18 @@ class RepairBase(unittest.TestCase):
     def version_file(self) -> Path:
         return self.root / verify.VERSION_FILE
 
+    def verify(self, *, final=False):
+        return verify.run(self.root, final=final, **PROBES)
 
-class TestNormalPathFirst(RepairBase):
-    def test_pass_on_the_normal_path_never_runs_repair(self):
-        _correct_rice_state(self.root)
-        _git_denied_transcript(self.root)
-        before = _tree(self.root)
-        with mock.patch.object(repair, "repair", side_effect=AssertionError("repair must not run")) as spy:
-            outcome = repair.pipeline(self.root, **PROBES)
-        spy.assert_not_called()
-        self.assertTrue(outcome.before.gate_a)
-        self.assertIsNone(outcome.repair)
-        self.assertIsNone(outcome.after)
-        self.assertEqual(_tree(self.root), before)
+    def repair_once(self, *, final=False):
+        """What rice's flow does, spelled out: verify, repair what it named,
+        verify again. Returns (repair result, the verifier's second word)."""
+        done = repair.repair(self.root, self.verify(final=final), **PROBES)
+        return done, self.verify(final=final)
 
-    def test_fail_then_mechanical_repair_then_pass(self):
+
+class TestRepairActsOnlyOnNamedFailures(RepairBase):
+    def test_rice_owned_failures_are_restored_from_canonical_state(self):
         _correct_rice_state(self.root)
         _git_denied_transcript(self.root)
         # three rice-owned failures of three kinds: drift, missing file, missing leaf
@@ -141,26 +139,40 @@ class TestNormalPathFirst(RepairBase):
         del s["env"]["CLAUDE_CODE_SUBAGENT_MODEL"]
         (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
 
-        outcome = repair.pipeline(self.root, **PROBES)
-        self.assertFalse(outcome.before.gate_a)
-        self.assertTrue(outcome.after.gate_a, outcome.after.lines)
-        names = {a.split(":")[0] + ":" + a.split(":")[1].split(" ")[0] if a.startswith("settings") else a.split(":")[0] for a in outcome.repair.applied}
-        self.assertIn("rice.md", names)
-        self.assertIn("AGENTS.md", names)
-        self.assertTrue(any(a.startswith("settings:env.CLAUDE_CODE_SUBAGENT_MODEL") for a in outcome.repair.applied))
-        self.assertEqual(outcome.repair.unresolved, [])
+        done, after = self.repair_once()
+        self.assertTrue(after.ok, after.lines)
+        self.assertTrue(any(a.startswith("rice.md") for a in done.applied), done.applied)
+        self.assertTrue(any(a.startswith("AGENTS.md") for a in done.applied), done.applied)
+        self.assertTrue(any(a.startswith("settings:env.CLAUDE_CODE_SUBAGENT_MODEL") for a in done.applied))
+        self.assertEqual(done.unresolved, [])
         self.assertEqual((self.root / ".claude" / "rice.md").read_text(encoding="utf-8"),
                          reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
 
-    def test_repair_acts_only_on_what_the_verifier_named(self):
-        """Repair re-derives nothing: with every verifier item PASS it touches
-        no file, even if the tree could be 'improved'."""
+    def test_nothing_named_nothing_touched(self):
+        """Repair re-derives nothing: handed a report with no failures it
+        touches no file, however 'improvable' the tree looks."""
         _correct_rice_state(self.root)
         before = _tree(self.root)
-        items = [reconcile.ItemResult(n, "PASS") for n in verify.GATE_B]
-        result = repair.repair(self.root, items, **PROBES)
+        clean = verify.Report(build="x", items=[], gate_a=True, gate_b=None,
+                              version_written=None, required=verify.GATE_A)
+        result = repair.repair(self.root, clean, **PROBES)
         self.assertEqual((result.applied, result.unresolved), ([], []))
         self.assertEqual(_tree(self.root), before)
+
+    def test_only_the_gate_that_was_evaluated_is_repaired(self):
+        """A Gate A report never drags Matt's Gate B artifacts into repair."""
+        _correct_rice_state(self.root)
+        _git_denied_transcript(self.root)
+        done = repair.repair(self.root, self.verify(final=False), **PROBES)
+        self.assertEqual(done.applied, [])
+        self.assertFalse(any(u.startswith("matt:artifacts") for u in done.unresolved), done.unresolved)
+
+    def test_unrepairable_failures_pass_through_in_the_verifiers_words(self):
+        _correct_rice_state(self.root)  # no git-deny evidence: nothing repairs a BEHAVES item
+        done, after = self.repair_once()
+        self.assertFalse(after.ok)
+        self.assertEqual(done.applied, [])
+        self.assertTrue(any(u.startswith("git-deny:behaves") for u in done.unresolved))
 
 
 class TestRepairHasNoVerdict(RepairBase):
@@ -171,25 +183,14 @@ class TestRepairHasNoVerdict(RepairBase):
         self.assertNotIn("VERSION_FILE", src)
         self.assertNotIn("MARKER_NAME", src)
 
-    def test_the_verdict_after_repair_is_the_verifiers_not_repairs(self):
-        """Even when repair reports it fixed everything, a verifier that still
-        says FAIL is the word that counts."""
-        _correct_rice_state(self.root)
-        failing = verify.Report(build="x", items=[reconcile.ItemResult("rice.md", "FAIL", "x")],
-                                gate_a=False, gate_b=None, version_written=None, lines=["RICE-GATE-A FAIL (1)"])
-        with mock.patch.object(verify, "run", return_value=failing), \
-             mock.patch.object(repair, "repair", return_value=repair.RepairResult(applied=["rice.md: updated"])):
-            outcome = repair.pipeline(self.root)
-        self.assertFalse(repair.gate_ok(outcome.report, final=False))
-        self.assertEqual(outcome.repair.applied, ["rice.md: updated"])
-
-    def test_still_failing_after_repair_is_left_for_the_model(self):
-        _correct_rice_state(self.root)  # no git-deny evidence: nothing can repair BEHAVES
-        outcome = repair.pipeline(self.root, **PROBES)
-        self.assertIsNotNone(outcome.repair)
-        self.assertFalse(outcome.after.gate_a)
-        self.assertTrue(any(u.startswith("git-deny:behaves") for u in outcome.repair.unresolved))
-        self.assertEqual(outcome.repair.applied, [])
+    def test_repair_never_evaluates_a_gate(self):
+        """RICE-BOOTSTRAP-044: the gate lives in the report it is handed;
+        repair neither imports verify nor names a gate."""
+        src = (REPO / "scripts" / "repair.py").read_text(encoding="utf-8")
+        self.assertNotIn("import verify", src)
+        self.assertNotIn("GATE_A", src)
+        self.assertNotIn("GATE_B", src)
+        self.assertNotIn("gate_passes", src)
 
 
 class TestMattRepair(RepairBase):
@@ -212,14 +213,13 @@ class TestMattRepair(RepairBase):
         from bootstrap_state import enter_waiting_for_matt, is_waiting_for_matt
         enter_waiting_for_matt(self.root)
 
-        outcome = repair.pipeline(self.root, final=True, **PROBES)
-        self.assertFalse(outcome.before.gate_b)
-        self.assertTrue(outcome.after.gate_b, outcome.after.lines)
-        self.assertEqual(len(outcome.repair.applied), 2, outcome.repair.applied)
-        self.assertTrue(all("from HEAD" in a for a in outcome.repair.applied))
-        after = _tree(self.root)
-        self.assertEqual(after["docs/agents/domain.md"], committed["docs/agents/domain.md"])
-        self.assertEqual(after["CLAUDE.md"], committed["CLAUDE.md"])
+        done, after = self.repair_once(final=True)
+        self.assertTrue(after.ok, after.lines)
+        self.assertEqual(len(done.applied), 2, done.applied)
+        self.assertTrue(all("from HEAD" in a for a in done.applied))
+        now = _tree(self.root)
+        self.assertEqual(now["docs/agents/domain.md"], committed["docs/agents/domain.md"])
+        self.assertEqual(now["CLAUDE.md"], committed["CLAUDE.md"])
         # and the verifier -- not repair -- finished the job
         self.assertEqual(self.version_file.read_text().strip(), reconcile.build_version())
         self.assertFalse(is_waiting_for_matt(self.root))
@@ -230,14 +230,14 @@ class TestMattRepair(RepairBase):
         _git_denied_transcript(self.root)
         _matt_state(self.root, section=False, domain=False)  # Matt ran, left only issue-tracker.md
         before = _tree(self.root)
-        outcome = repair.pipeline(self.root, final=True, **PROBES)
-        self.assertFalse(outcome.after.gate_b)
-        self.assertEqual(outcome.repair.applied, [])
+        done, after = self.repair_once(final=True)
+        self.assertFalse(after.ok)
+        self.assertEqual(done.applied, [])
         # one explicit line per artifact, by name, and no other unresolved item
-        self.assertEqual(len(outcome.repair.unresolved), 2, outcome.repair.unresolved)
-        joined = "\n".join(outcome.repair.unresolved)
+        self.assertEqual(len(done.unresolved), 2, done.unresolved)
+        joined = "\n".join(done.unresolved)
         self.assertTrue(all(u.startswith("matt:artifacts") and "only the official Matt setup" in u
-                            for u in outcome.repair.unresolved))
+                            for u in done.unresolved))
         self.assertIn(reconcile.MATT_HEADING_LABEL, joined)
         self.assertIn("docs/agents/domain.md", joined)
         self.assertNotIn("issue-tracker.md", joined)  # the one Matt did write is not "missing"
@@ -248,9 +248,9 @@ class TestMattRepair(RepairBase):
         _correct_rice_state(self.root)
         _git_denied_transcript(self.root)
         _matt_state(self.root, section=False)
-        outcome = repair.pipeline(self.root, final=True, **PROBES)
-        self.assertFalse(outcome.after.gate_b)
-        self.assertTrue(any(reconcile.MATT_HEADING_LABEL in u for u in outcome.repair.unresolved))
+        done, after = self.repair_once(final=True)
+        self.assertFalse(after.ok)
+        self.assertTrue(any(reconcile.MATT_HEADING_LABEL in u for u in done.unresolved))
 
     def test_restored_section_stops_at_the_next_top_level_heading(self):
         text = "# proj\n\n@.claude/rice.md\n\n## Agent skills\n\n### Issue tracker\n\nx\n\n## Something else\n\ny\n"
