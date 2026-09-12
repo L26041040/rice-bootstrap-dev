@@ -173,9 +173,8 @@ def _plugin_items(plugin_probe) -> list[ItemResult]:
         return [ItemResult(
             "plugin:installed", "FAIL",
             f"{settings_template.PLUGIN_KEY} is not installed on this machine; install it with "
-            f"`claude plugin marketplace add {settings_template.MARKETPLACE_REPO}@"
-            f"{settings_template.release_ref(build_version())} && claude plugin install "
-            f"{settings_template.PLUGIN_KEY}`, then start a new session",
+            f"`claude plugin marketplace add {settings_template.MARKETPLACE_REPO} && claude plugin "
+            f"install {settings_template.PLUGIN_KEY}`, then start a new session",
             kind=EXISTS,
         ), ItemResult("plugin:build", "NOT_VERIFIED", "nothing installed to compare against", kind=MATCHES)]
     installed = ItemResult(
@@ -193,8 +192,8 @@ def _plugin_items(plugin_probe) -> list[ItemResult]:
             "plugin:build", "FAIL",
             f"installed {sorted(versions)} but this session is running build {bv} -- they must be "
             "the same build. If the install is already the release you want, start a fresh "
-            "session so it is the one that loads; otherwise point the install at that release "
-            f"(`claude plugin marketplace add {settings_template.MARKETPLACE_REPO}@release/<x.y.z>"
+            "session so it is the one that loads; otherwise reinstall it "
+            f"(`claude plugin marketplace add {settings_template.MARKETPLACE_REPO}[@release/<x.y.z>]"
             f" && claude plugin install {settings_template.PLUGIN_KEY}`) and start a fresh session",
             kind=MATCHES,
         )

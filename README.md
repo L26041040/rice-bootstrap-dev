@@ -26,34 +26,44 @@ the user to remember or type any command.
 1. Canonical public repository: `L26041040/rice-bootstrap` on GitHub
    (marketplace name `rice-bootstrap`, plugin `rice`, plugin id
    `rice@rice-bootstrap`).
-2. **A release is a branch.** Every version is published once, to the
-   immutable public branch `release/<semver>`, and that branch is the only
-   installation source. This copy of rice is `release/0.1.2`; install it
-   with the official Claude Code plugin mechanism, non-interactive, touching
-   only `~/.claude`:
+2. **Default install — always the latest release.** Public `main` carries
+   exactly the newest published release, so the install line never names a
+   version and never has to be edited:
+   ```
+   claude plugin marketplace add L26041040/rice-bootstrap
+   claude plugin install rice@rice-bootstrap
+   ```
+   These are the official Claude Code plugin commands, non-interactive,
+   touching only `~/.claude`. This is what a Cloud Environment's setup
+   script should contain.
+3. **Pinning a specific version.** Every release is also published once, to
+   the immutable branch `release/<semver>`, which is never moved or
+   overwritten. Name it when you need a specific version — reproducing a
+   build, or rolling back:
    ```
    claude plugin marketplace add L26041040/rice-bootstrap@release/0.1.2
    claude plugin install rice@rice-bootstrap
    ```
-   The `@release/0.1.2` suffix is not optional: without it the marketplace
-   follows the repository's default branch, which is a landing page, not a
-   release. Public `main` is never an installation source.
-3. **User scope only** (the default, and the same way Matt Pocock's plugin
+   `main` is the latest pointer; `release/<semver>` is the version
+   authority. Pin only when you mean to: an Environment pinned to an old
+   branch stays there forever.
+4. **User scope only** (the default, and the same way Matt Pocock's plugin
    is installed). Rice does not support being installed at more than one
    scope: which install a session loads is not something rice may guess at,
    so the verifier fails a duplicate (`plugin:scope`) and the OWNER removes
    the extra one, keeping the user-scope install.
-4. **No update system, and no auto-update.** Rice has exactly two repo
+5. **No update system, and no auto-update.** Rice has exactly two repo
    lifecycles — `rice:bootstrap` and `rice:rice-uninstall`. It never
    updates itself, on any trigger, and there is no update workflow to
-   invoke. A newer rice is a newer release branch: the OWNER points an
-   Environment (or a machine) at it when they choose to, and repos keep
-   whatever release they were bootstrapped with until then. Nothing asks
-   them to restart a session, migrate a ref, or reason about which build is
-   "latest".
-5. **Local machine**: a newly installed plugin is loaded by the **next**
+   invoke. A newer rice reaches an OWNER only when a **new container or
+   session** is provisioned from an Environment — the install line is read
+   then, and `main` is whatever the newest release is at that moment.
+   Already-bootstrapped repos never change because a release happened, and
+   nothing asks anyone to restart a session, migrate a ref, or reason about
+   which build is "latest".
+6. **Local machine**: a newly installed plugin is loaded by the **next**
    session. Start one and run the bootstrap flow below.
-6. **Claude Code on the web**: do not run the two commands inside a session
+7. **Claude Code on the web**: do not run the two commands inside a session
    expecting them to persist — `~/.claude` is per-container. See "Claude
    Code Web setup" below; that is the primary path, not a same-session
    install.
@@ -69,12 +79,13 @@ one:
    one-time OWNER action in the Claude Code Web UI; rice cannot create or
    edit one itself.
 2. **rice plugin** — installed once into the Environment's setup script
-   (the same two commands from "Installation" above, release branch and
-   all). Every fresh session started from that Environment already has rice
-   loaded automatically — no per-session install, no `/reload-plugins`.
-   Moving to a newer rice means editing that one line to the new
-   `release/<semver>` and starting a fresh session; nothing in a
-   bootstrapped repo has to change, and rice never does it on its own.
+   (the two version-less commands from "Installation" above). Every fresh
+   session started from that Environment already has rice loaded
+   automatically — no per-session install, no `/reload-plugins`. Because
+   the line names no version, a container provisioned after a release
+   simply gets it; nothing in a bootstrapped repo changes, and rice never
+   updates itself. Pin `@release/<semver>` in that line only if this
+   Environment must stay on one exact version.
 3. **Repo bootstrap** (`/rice:bootstrap`, see "Bootstrap" below) — configures
    the *current repo only*. It never (re)installs rice itself; that is the
    Environment's job, done once.
@@ -206,18 +217,27 @@ skill and `scripts/release.py`, on the OWNER's explicit release intent only.
 
 The public repository is a verified export of an allowlisted surface; it is
 never a mirror, never receives private history, and is never a source of
-truth. Each release is published **once**, as a fresh single-commit history
-on the branch `release/<semver>`:
+truth. Publishing runs on two tracks:
 
-- that branch is immutable — rice's tooling never moves, rewrites or
-  force-pushes one, and publishing a version whose branch already exists
-  FAILS CLOSED, so one semver can never name two different builds;
-- the next version is a new branch, never a new commit on an old one;
+- **`release/<semver>`** — the version authority. Published **once**, as a
+  fresh single-commit history. Immutable: rice's tooling never moves,
+  rewrites or force-pushes one, and publishing a version whose branch
+  already exists FAILS CLOSED, so one semver can never name two different
+  builds. The next version is a new branch, never a new commit on an old
+  one.
+- **`main`** — the latest pointer, and the default install source. After a
+  release branch lands, main moves forward to exactly that branch's tree, as
+  an ordinary commit on its own history: never a force, never a rewrite. The
+  publish verifies both from the remote — main's tree identical to the
+  release branch's, and the version it declares equal to the release —
+  before reporting success. `release.py promote --version <x.y.z>` moves
+  main onto an already-published release branch, reading the tree from that
+  branch rather than from any local export.
 - `.claude-plugin/plugin.json`'s version, the CHANGELOG's top entry and the
-  branch name are the same string, checked mechanically;
-- no git tag and no GitHub release is ever created, private or public.
+  branch name are the same string, checked mechanically; no git tag and no
+  GitHub release is ever created, private or public.
 
 Release checks (tests, manifests, version consistency, this README's
-required sections and its release branch, allowlist completeness,
+required sections, allowlist completeness,
 forbidden-path absence, secret scan, standalone-package validation) are
 mechanical: any FAIL → `RELEASE BLOCKED`, no publish.

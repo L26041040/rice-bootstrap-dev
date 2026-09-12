@@ -36,6 +36,7 @@ README_REQUIRED = (
     "## Bootstrap",
     "## Uninstall",
     "## Release",
+    f"claude plugin marketplace add {export_public.MARKETPLACE_REPO}\n",
     "claude plugin install rice@rice-bootstrap",
     "RICE-" + "VERIFIED",
     "FINAL-" + "VERIFIED",
@@ -141,22 +142,23 @@ def gate_version(root: Path, requested: str | None) -> Gate:
 
 
 def gate_readme(root: Path) -> Gate:
-    """The README is part of the release surface, so it must name the exact
-    release branch it ships as -- a reader who copies its install command
-    gets this build, not whatever a moving ref points at."""
+    """The README is part of the release surface (RICE-FINAL-002): its
+    default install command carries no version, because public `main` is the
+    latest pointer an Environment installs from; the only release branch it
+    may name, for pinning, is its own."""
     p = root / "README.md"
     if not p.exists():
         return Gate("readme:agent-contract", "FAIL", "README.md missing")
     text = p.read_text(encoding="utf-8")
     version = plugin_version(root)
     branch = release_branch(version)
-    required = list(README_REQUIRED) + [f"add {export_public.MARKETPLACE_REPO}@{branch}"]
+    required = list(README_REQUIRED)
     missing = [s for s in required if s not in text]
     stale = sorted(set(re.findall(r"release/\d+\.\d+\.\d+", text)) - {branch})
     if stale:
         return Gate("readme:agent-contract", "FAIL",
-                    f"names other release branch(es) {stale} -- a reader copying an install "
-                    f"command must get {branch}")
+                    f"names other release branch(es) {stale} -- the only version this README may "
+                    f"name for pinning is its own, {branch}")
     if missing:
         return Gate("readme:agent-contract", "FAIL", "missing required content: " + ", ".join(repr(m) for m in missing))
     human_intro = text.split("# FOR AGENTS", 1)[0]
@@ -252,21 +254,29 @@ def release_branch(version: str) -> str:
     return settings_template.release_ref(version)
 
 
+DEFAULT_BRANCH = "main"
+
+
 def publish(dest: Path, version: str, public_repo: str | None, source_sha: str = "") -> tuple[bool, str]:
-    """Publish this export as the public branch `release/<version>`.
+    """Publish this export, on two tracks (RICE-FINAL-002).
 
-    A release is a branch, and a branch is immutable once pushed
-    (RICE-FINAL-001). That makes publishing the simplest operation rice has:
-    a fresh single-commit history, pushed to a branch name that must not
-    exist yet. If it does exist, this FAILS CLOSED -- the same version never
-    names two different builds, and rice's tooling never moves or overwrites
-    a branch someone may already be installing from. The next release is a
-    new branch, not a new commit on an old one.
+    `release/<version>` is the immutable version authority: a fresh
+    single-commit history, pushed to a branch name that must not exist yet.
+    If it does exist this FAILS CLOSED -- the same version never names two
+    different builds, and rice's tooling never moves or overwrites a branch
+    someone may already be installing from. The next release is a new
+    branch, never a new commit on an old one.
 
-    No git tag or GitHub release is created (RICE-BOOTSTRAP-030), and public
-    `main` is not touched: it is a landing page at most, never an
-    installation source. Every commit records provenance: rice <version>
-    (source <private HEAD SHA>)."""
+    `main` is the latest pointer, and it is NOT immutable: after the release
+    branch lands, main moves forward to exactly that branch's tree, as an
+    ordinary commit on top of its own history -- never a force, never a
+    rewrite, never an unrelated history. That is what lets an Environment
+    install `L26041040/rice-bootstrap` with no version in the line and still
+    get the newest release, without any update lifecycle existing
+    (RICE-FINAL-001 stands: nothing updates a bootstrapped repo).
+
+    No git tag or GitHub release is created (RICE-BOOTSTRAP-030). Every
+    commit records provenance: rice <version> (source <private HEAD SHA>)."""
     if not public_repo:
         return False, "WAITING_FOR_PUBLIC_REPO -- no public repository configured; nothing was pushed"
     branch = release_branch(version)
@@ -280,7 +290,146 @@ def publish(dest: Path, version: str, public_repo: str | None, source_sha: str =
                        "Bump the version and publish the next one.")
 
     with tempfile.TemporaryDirectory(prefix="rice-publish-") as tmp:
-        return _publish_branch(Path(tmp), dest, branch, version, public_repo, source_sha)
+        ok, msg = _publish_branch(Path(tmp), dest, branch, version, public_repo, source_sha)
+    if not ok:
+        return ok, msg
+    released_sha = msg.rsplit("@ ", 1)[-1].strip()
+
+    ok, main_msg = advance_default_branch(version, public_repo, source_sha=source_sha)
+    if not ok:
+        return False, (f"{branch} is published at {released_sha}, but {DEFAULT_BRANCH} was not "
+                       f"advanced: {main_msg}. The release branch is immutable and correct; re-run "
+                       f"`release.py promote --version {version}` to move {DEFAULT_BRANCH}.")
+    return True, f"{msg}; {main_msg}"
+
+
+def advance_default_branch(version: str, public_repo: str | None, source_sha: str = "") -> tuple[bool, str]:
+    """Move public `main` to exactly `release/<version>`'s tree.
+
+    The content always comes from the immutable branch itself, never from a
+    local export, so main cannot drift from the release it claims to be.
+    Ordinary forward publication: main's own history keeps growing, a commit
+    at a time. No force, no rewrite, and nothing here ever touches the
+    release branch."""
+    if not public_repo:
+        return False, "WAITING_FOR_PUBLIC_REPO -- no public repository configured; nothing was pushed"
+    branch = release_branch(version)
+    if branch is None:
+        return False, f"{version!r} is not SemVer; there is no release branch by that name"
+    rc, out = _run(["git", "ls-remote", "--heads", public_repo, branch])
+    if rc != 0:
+        return False, f"could not reach public repository: {out.strip()[-300:]}"
+    if not out.strip():
+        return False, f"{branch} does not exist on {public_repo}; publish the release first"
+
+    with tempfile.TemporaryDirectory(prefix="rice-promote-") as tmp:
+        current = _default_branch_version(Path(tmp), public_repo)
+        if current and _semver(current) > _semver(version):
+            return False, (f"RELEASE BLOCKED -- {DEFAULT_BRANCH} already carries {current}, which is "
+                           f"newer than {version}. {DEFAULT_BRANCH} is the latest pointer and only "
+                           "ever moves forward; moving it back would silently downgrade every "
+                           "version-less install. Publish a newer version instead.")
+        return _advance_default_branch(Path(tmp), branch, version, public_repo, source_sha)
+
+
+def _semver(version: str) -> tuple:
+    return tuple(int(part) for part in version.split("."))
+
+
+def _default_branch_version(ws: Path, public_repo: str) -> str | None:
+    """The version public `main` currently declares, or None when it has none
+    yet (no branch, or no manifest on it)."""
+    for cmd in (["git", "init", "-q", "-b", DEFAULT_BRANCH],
+                ["git", "remote", "add", "public", public_repo],
+                ["git", "fetch", "-q", "--depth", "1", "public", DEFAULT_BRANCH]):
+        rc, _ = _run(cmd, cwd=ws)
+        if rc != 0:
+            return None
+    rc, manifest = _run(["git", "show", "FETCH_HEAD:.claude-plugin/plugin.json"], cwd=ws)
+    if rc != 0:
+        return None
+    try:
+        current = json.loads(manifest).get("version", "")
+    except json.JSONDecodeError:
+        return None
+    return current if SEMVER.match(current or "") else None
+
+
+def _advance_default_branch(ws: Path, branch: str, version: str, public_repo: str,
+                            source_sha: str) -> tuple[bool, str]:
+    message = f"rice {version}" + (f" (source {source_sha})" if source_sha else "")
+    for cmd in (["git", "init", "-q", "-b", DEFAULT_BRANCH],
+                ["git", "remote", "remove", "public"],
+                ["git", "remote", "add", "public", public_repo],
+                ["git", "fetch", "-q", "public", branch]):
+        rc, out = _run(cmd, cwd=ws)
+        if rc != 0 and cmd[1] != "remote":  # a missing remote to remove is fine
+            return False, f"promote step failed: {' '.join(cmd)} -> rc={rc} {out.strip()[-300:]}"
+
+    rc, release_sha = _run(["git", "rev-parse", "FETCH_HEAD"], cwd=ws)
+    if rc != 0:
+        return False, "could not read the release branch locally"
+    release_sha = release_sha.strip()
+
+    rc, out = _run(["git", "ls-remote", "--heads", public_repo, DEFAULT_BRANCH])
+    if rc != 0:
+        return False, f"could not read {DEFAULT_BRANCH}: {out.strip()[-300:]}"
+    exists = bool(out.strip())
+    if exists:
+        for cmd in (["git", "fetch", "-q", "public", DEFAULT_BRANCH],
+                    ["git", "checkout", "-q", "-B", DEFAULT_BRANCH, "FETCH_HEAD"]):
+            rc, msg = _run(cmd, cwd=ws)
+            if rc != 0:
+                return False, f"promote step failed: {' '.join(cmd)} -> rc={rc} {msg.strip()[-300:]}"
+
+    # the working tree becomes exactly the release branch's tree: nothing the
+    # release dropped may linger on main
+    rc, out = _run(["git", "read-tree", "-u", "--reset", release_sha], cwd=ws)
+    if rc != 0:
+        return False, f"promote step failed: git read-tree -> rc={rc} {out.strip()[-300:]}"
+
+    rc, staged = _run(["git", "diff", "--cached", "--name-only", "HEAD"] if exists
+                      else ["git", "diff", "--cached", "--name-only"], cwd=ws)
+    if exists and rc == 0 and not staged.strip():
+        return True, f"{DEFAULT_BRANCH} already carries {branch}'s tree"
+
+    rc, out = _run(["git", "-c", "user.email=rice@local", "-c", "user.name=rice release",
+                    "commit", "-q", "-m", message], cwd=ws)
+    if rc != 0:
+        return False, f"promote step failed: git commit -> rc={rc} {out.strip()[-300:]}"
+
+    # plain forward publication; a non-fast-forward is rejected, never forced
+    rc, out = _run(["git", "push", "public", f"{DEFAULT_BRANCH}:{DEFAULT_BRANCH}"], cwd=ws)
+    if rc != 0:
+        return False, f"{DEFAULT_BRANCH} push failed (never forced): rc={rc} {out.strip()[-300:]}"
+
+    rc, local = _run(["git", "rev-parse", "HEAD"], cwd=ws)
+    ok, detail = _confirm_default_matches_release(ws, branch, version, public_repo, local.strip())
+    if not ok:
+        return False, detail
+    return True, f"{DEFAULT_BRANCH} advanced to {branch}'s tree @ {local.strip()[:12]}"
+
+
+def _confirm_default_matches_release(ws: Path, branch: str, version: str, public_repo: str,
+                                     pushed: str) -> tuple[bool, str]:
+    """Read both branches back from the remote and prove main carries the
+    release: same tree, and the version it declares is this one."""
+    rc, remote = _run(["git", "ls-remote", "--heads", public_repo, DEFAULT_BRANCH])
+    if rc != 0 or not remote.strip() or remote.split()[0].strip() != pushed:
+        return False, f"{DEFAULT_BRANCH} on the remote is not what was pushed"
+    rc, out = _run(["git", "fetch", "-q", "public", branch], cwd=ws)
+    if rc != 0:
+        return False, f"could not re-read {branch} to compare: {out.strip()[-200:]}"
+    rc1, release_tree = _run(["git", "rev-parse", "FETCH_HEAD^{tree}"], cwd=ws)
+    rc2, main_tree = _run(["git", "rev-parse", f"{pushed}^{{tree}}"], cwd=ws)
+    if rc1 != 0 or rc2 != 0:
+        return False, f"could not compare {DEFAULT_BRANCH} with {branch}"
+    if release_tree.strip() != main_tree.strip():
+        return False, f"{DEFAULT_BRANCH}'s tree is not {branch}'s tree"
+    rc, manifest = _run(["git", "show", f"{pushed}:.claude-plugin/plugin.json"], cwd=ws)
+    if rc != 0 or json.loads(manifest).get("version") != version:
+        return False, f"{DEFAULT_BRANCH} does not declare version {version}"
+    return True, ""
 
 
 def _publish_branch(ws: Path, dest: Path, branch: str, version: str, public_repo: str,
@@ -316,7 +465,7 @@ def _publish_branch(ws: Path, dest: Path, branch: str, version: str, public_repo
         return False, f"published, but could not confirm {branch} on the remote"
     if remote.split()[0].strip() != local.strip():
         return False, f"{branch} on the remote is not what was pushed"
-    return True, f"RELEASE-PUBLISHED {version} -> {public_repo} {branch} @ {local.strip()[:12]}"
+    return True, f"RELEASE-PUBLISHED {version} -> {public_repo} {branch} @ {local.strip()}"
 
 
 def main(argv=None) -> int:
@@ -325,9 +474,19 @@ def main(argv=None) -> int:
     c = sub.add_parser("check"); c.add_argument("--version"); c.add_argument("--dest")
     d = sub.add_parser("dry-run"); d.add_argument("--version"); d.add_argument("--dest")
     p = sub.add_parser("publish"); p.add_argument("--version"); p.add_argument("--dest"); p.add_argument("--public-repo")
+    m = sub.add_parser("promote"); m.add_argument("--version"); m.add_argument("--public-repo")
     args = ap.parse_args(argv)
     source = source_identity(ROOT)
     print(f"SOURCE rice={source['version']} changelog={source['changelog_date']} head={source['head_sha']}")
+    if args.cmd == "promote":
+        # move `main` onto an already-published, immutable release branch --
+        # the recovery path, and the only way main ever moves without a new
+        # release. It reads the tree from that branch, never from a local
+        # export, so it cannot publish anything that was not released.
+        ok, msg = advance_default_branch(args.version or plugin_version(), args.public_repo,
+                                         source_sha=source["head_sha"])
+        print(msg)
+        return 0 if ok else 2
     gates, verdict, dest = check(requested_version=args.version, dest=args.dest)
     print(render(gates, verdict))
     print(f"export staged at: {dest}")

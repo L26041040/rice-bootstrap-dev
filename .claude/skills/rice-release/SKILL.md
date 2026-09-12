@@ -16,13 +16,19 @@ only its `RELEASE-PUBLISHED <version> -> ... release/<version> @ <sha>` line
 means a release happened. Any gate FAIL is `RELEASE BLOCKED`: no publish, no
 "looks fine".
 
-**A release is an immutable branch** (RICE-FINAL-001). Publishing creates
-the public branch `release/<x.y.z>`, once: it is never moved, rewritten or
-force-pushed, and publishing a version whose branch already exists FAILS
-CLOSED, so one semver can never name two different builds. The next version
-is a new branch, never a new commit on an old one. Public `main` is a
-landing page at most — never an installation source, and this flow does not
-touch it.
+**Two tracks** (RICE-FINAL-001, -002). `release/<x.y.z>` is the immutable
+version authority: created once, never moved, rewritten or force-pushed, and
+publishing a version whose branch already exists FAILS CLOSED, so one semver
+can never name two different builds. The next version is a new branch, never
+a new commit on an old one.
+
+`main` is the latest pointer and the default install source: after the
+release branch lands, publishing moves main forward to exactly that branch's
+tree, as an ordinary commit on main's own history — never a force, never a
+rewrite. That is why an Environment's setup line carries no version. If main
+is left behind (a push that failed after the release branch landed),
+`release.py promote --version <x.y.z>` moves it onto the already-published
+branch; it reads the tree from that branch, never from a local export.
 
 No git tag or GitHub release exists anywhere in this lifecycle, private or
 public (RICE-BOOTSTRAP-030). Release identity is
@@ -59,21 +65,22 @@ Environment (or a machine) at the new branch themselves.
    clean) rather than by shipping tests to prove it.
 3. **Publish.** `python3 scripts/release.py publish --version <x.y.z>
    --public-repo <url>`. The script re-runs every gate, exports the
-   allowlisted surface, and creates `release/<x.y.z>` as a fresh
-   single-commit history — no tag, no release, no private history, and no
-   second commit on any existing branch. If that branch already exists on
-   the remote it stops with `RELEASE BLOCKED`: report that verbatim; the
-   answer is a version bump, never a force push. Success is confirmed by
-   re-reading the branch's SHA from the remote, not by trusting the local
-   push. If no public repository is configured it prints
+   allowlisted surface, creates `release/<x.y.z>` as a fresh single-commit
+   history — no tag, no release, no private history — and then advances
+   `main` to that branch's tree. If the release branch already exists on the
+   remote it stops with `RELEASE BLOCKED`: report that verbatim; the answer
+   is a version bump, never a force push. Success is confirmed from the
+   remote, not from the local push: the release branch's SHA is what was
+   pushed, main's tree is identical to it, and main declares this version. If no public repository is configured it prints
    `WAITING_FOR_PUBLIC_REPO` and stops — report that verbatim and tell the
    OWNER the one next action: create the public distribution repository and
    provide its URL / push credential.
 4. **Report.** Quote the script's last line verbatim. If it is not
    `RELEASE-PUBLISHED <x.y.z> ...`, the release did not happen — say so.
-   Remind the OWNER that installing this release means pointing an
-   Environment's setup line at `...@release/<x.y.z>`; nothing updates on
-   its own, and no bootstrapped repo changes because of this release.
+   Remind the OWNER that an Environment's setup line needs no change: it
+   installs from `main`, which is now this release. A new container or
+   session picks it up; nothing updates on its own, and no bootstrapped repo
+   changes because of this release.
 
 ## Never
 
@@ -83,4 +90,5 @@ substituting README/spec text for a mechanical check, no shipping `tests/`
 to the public repo to prove it works, no GitHub allow-secret bypass, no git
 tag, no GitHub release, anywhere in this lifecycle. Never move, rewrite,
 force-push or re-publish an existing `release/<x.y.z>` branch, and never
-publish two different builds under one semver.
+publish two different builds under one semver. `main` moves forward only, by
+ordinary publication, and only onto a tree that came from a release branch.
