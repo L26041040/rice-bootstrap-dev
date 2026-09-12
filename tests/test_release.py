@@ -184,6 +184,18 @@ class TestReleaseGates(unittest.TestCase):
             root = Path(d); (root / "README.md").write_text("# x\n\n# FOR AGENTS\n## Installation\n")
             g = release.gate_readme(root)
             self.assertEqual(g.state, "FAIL"); self.assertIn("## Bootstrap", g.detail)
+            # ... and a README that names a release branch other than this
+            # build's: a reader copying its install command would get the
+            # wrong version (RICE-FINAL-001)
+            (root / ".claude-plugin").mkdir()
+            (root / ".claude-plugin" / "plugin.json").write_text(json.dumps({"version": "1.2.3"}))
+            (root / "README.md").write_text(
+                "".join(f"{x}\n" for x in release.README_REQUIRED) + "@release/9.9.9\n")
+            self.assertIn("release/9.9.9", release.gate_readme(root).detail)
+            (root / "README.md").write_text(
+                "".join(f"{x}\n" for x in release.README_REQUIRED)
+                + f"claude plugin marketplace add {export_public.MARKETPLACE_REPO}@release/1.2.3\n")
+            self.assertEqual(release.gate_readme(root).state, "PASS")
         self.assertEqual(release.gate_readme(ROOT).state, "PASS")
 
     def test_version_consistency(self):
@@ -201,96 +213,91 @@ class TestReleaseGates(unittest.TestCase):
         ok, msg = release.publish(self.dest, "0.1.1", None)
         self.assertFalse(ok); self.assertTrue(msg.startswith("WAITING_FOR_PUBLIC_REPO"))
 
-    def test_publish_to_a_local_bare_repo_end_to_end(self):
+    def _bare(self, d: Path) -> Path:
+        bare = Path(d) / "public.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
+        return bare
+
+    def test_publish_creates_the_release_branch_for_this_version(self):
         gates, verdict, dest = self._check()
         self.assertTrue(verdict.startswith("RELEASE-CHECKS PASS"))
+        version = release.plugin_version()
+        branch = f"release/{version}"
         with tempfile.TemporaryDirectory() as d:
-            bare = Path(d) / "public.git"
-            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
-            ok, msg = release.publish(dest, release.plugin_version(), str(bare))
+            bare = self._bare(Path(d))
+            ok, msg = release.publish(dest, version, str(bare))
             self.assertTrue(ok, msg)
-            self.assertEqual(msg, "RELEASED rice " + release.plugin_version())
+            self.assertTrue(msg.startswith(f"RELEASE-PUBLISHED {version}"), msg)
+            self.assertIn(branch, msg)
+            self.assertEqual(sorted(_ls_tree(bare, branch)), sorted(export_public.ALLOWLIST))
+            self.assertEqual(_rev_count(bare, branch), "1")  # fresh history, never private history
             self.assertEqual(subprocess.run(["git", "--git-dir", str(bare), "tag"],
-                                             capture_output=True, text=True).stdout.split(), [],
-                              "no git tag is ever created (RICE-BOOTSTRAP-030)")
-            files = _ls_tree(bare, "main")
-            self.assertEqual(sorted(files), sorted(export_public.ALLOWLIST))
-            self.assertEqual(_rev_count(bare, "main"), "1")  # fresh single-commit history, no private history
+                                            capture_output=True, text=True).stdout.split(), [],
+                             "no git tag is ever created (RICE-BOOTSTRAP-030)")
+            # main is a landing page at most, never an installation source
+            heads = subprocess.run(["git", "--git-dir", str(bare), "branch", "--list"],
+                                   capture_output=True, text=True).stdout
+            self.assertIn(branch, heads)
 
     def test_publish_embeds_source_provenance_in_commit_message_only(self):
         gates, verdict, dest = self._check()
-        self.assertTrue(verdict.startswith("RELEASE-CHECKS PASS"))
         sha = "deadbeef" * 5
+        version = release.plugin_version()
         with tempfile.TemporaryDirectory() as d:
-            bare = Path(d) / "public.git"
-            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
-            ok, msg = release.publish(dest, release.plugin_version(), str(bare), source_sha=sha)
+            bare = self._bare(Path(d))
+            ok, msg = release.publish(dest, version, str(bare), source_sha=sha)
             self.assertTrue(ok, msg)
-            commit_msg = subprocess.run(["git", "--git-dir", str(bare), "log", "-1", "--format=%s", "main"],
-                                         capture_output=True, text=True).stdout.strip()
+            commit_msg = subprocess.run(
+                ["git", "--git-dir", str(bare), "log", "-1", "--format=%s", f"release/{version}"],
+                capture_output=True, text=True).stdout.strip()
             self.assertIn(f"source {sha}", commit_msg)
 
-    def test_second_release_fast_forwards_and_reconciles_removed_files(self):
+    def test_an_existing_release_branch_is_never_moved_or_overwritten(self):
+        """RICE-FINAL-001: a release is immutable. The same semver can never
+        name two different builds, and rice's tooling never force-pushes or
+        fast-forwards a branch someone may already be installing from."""
         gates, verdict, dest = self._check()
-        self.assertTrue(verdict.startswith("RELEASE-CHECKS PASS"))
+        version = release.plugin_version()
+        branch = f"release/{version}"
         with tempfile.TemporaryDirectory() as d:
-            bare = Path(d) / "public.git"
-            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
-
-            ok1, msg1 = release.publish(dest, "0.1.1", str(bare), source_sha="a" * 40)
+            bare = self._bare(Path(d))
+            ok1, msg1 = release.publish(dest, version, str(bare), source_sha="a" * 40)
             self.assertTrue(ok1, msg1)
-            first_sha = _rev_parse(bare, "main")
-            self.assertIn("LICENSE", _ls_tree(bare, "main"))
+            published = _rev_parse(bare, branch)
 
-            # simulate a second release whose export dropped a file from the
-            # allowlist (a distribution file that no longer exists upstream)
+            # same version, different content: refused, and the branch is untouched
             dest2 = Path(d) / "export2"
             shutil.copytree(dest, dest2)
-            (dest2 / "LICENSE").unlink()
+            (dest2 / "LICENSE").write_text("tampered\n", encoding="utf-8")
+            ok2, msg2 = release.publish(dest2, version, str(bare), source_sha="b" * 40)
+            self.assertFalse(ok2)
+            self.assertIn("RELEASE BLOCKED", msg2)
+            self.assertIn(branch, msg2)
+            self.assertEqual(_rev_parse(bare, branch), published)
 
-            ok2, msg2 = release.publish(dest2, "0.1.2", str(bare), source_sha="b" * 40)
-            self.assertTrue(ok2, msg2)
-            second_sha = _rev_parse(bare, "main")
-            second_files = _ls_tree(bare, "main")
+            # identical content is refused too: a release happens once
+            ok3, msg3 = release.publish(dest, version, str(bare), source_sha="a" * 40)
+            self.assertFalse(ok3)
+            self.assertIn("RELEASE BLOCKED", msg3)
+            self.assertEqual(_rev_parse(bare, branch), published)
 
-            self.assertNotEqual(first_sha, second_sha)
-            parent = subprocess.run(["git", "--git-dir", str(bare), "log", "--pretty=%P", "-1", second_sha],
-                                     capture_output=True, text=True).stdout.strip()
-            self.assertEqual(parent, first_sha,
-                              "second release must be a fast-forward child of the first, not unrelated history")
-            self.assertEqual(_rev_count(bare, "main"), "2")
-            self.assertNotIn("LICENSE", second_files,
-                              "a file dropped from the export must not linger in the next release")
-            self.assertEqual(sorted(second_files), sorted(f for f in export_public.ALLOWLIST if f != "LICENSE"))
-            self.assertEqual(subprocess.run(["git", "--git-dir", str(bare), "tag"],
-                                             capture_output=True, text=True).stdout.split(), [],
-                              "no git tag is ever created, first or subsequent release (RICE-BOOTSTRAP-030)")
-
-    def test_republish_of_the_same_already_published_content_is_not_a_fail(self):
-        """RICE-BOOTSTRAP-029: a re-run whose public main already equals this
-        export (e.g. an earlier run's push already landed but the run did
-        not finish cleanly) must be a safe already-published RELEASED, never
-        a 'nothing to commit' FAIL."""
+    def test_the_next_version_is_a_new_branch_beside_the_old_one(self):
         gates, verdict, dest = self._check()
-        self.assertTrue(verdict.startswith("RELEASE-CHECKS PASS"))
         with tempfile.TemporaryDirectory() as d:
-            bare = Path(d) / "public.git"
-            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
+            bare = self._bare(Path(d))
+            self.assertTrue(release.publish(dest, "0.9.0", str(bare), source_sha="a" * 40)[0])
+            first = _rev_parse(bare, "release/0.9.0")
 
-            ok1, msg1 = release.publish(dest, "0.1.1", str(bare), source_sha="a" * 40)
-            self.assertTrue(ok1, msg1)
-            first_sha = _rev_parse(bare, "main")
-
-            # re-run with an export identical in content to what is already
-            # published -- must succeed without creating a new commit
-            dest2 = Path(d) / "export-again"
+            dest2 = Path(d) / "export2"
             shutil.copytree(dest, dest2)
-            ok2, msg2 = release.publish(dest2, "0.1.1", str(bare), source_sha="a" * 40)
-            self.assertTrue(ok2, msg2)
-            self.assertEqual(msg2, "RELEASED rice 0.1.1")
-            second_sha = _rev_parse(bare, "main")
-            self.assertEqual(second_sha, first_sha, "no new commit should be created for identical content")
-            self.assertEqual(_rev_count(bare, "main"), "1")
+            (dest2 / "LICENSE").unlink()  # this release dropped a file
+            ok, msg = release.publish(dest2, "0.9.1", str(bare), source_sha="b" * 40)
+            self.assertTrue(ok, msg)
+
+            self.assertEqual(_rev_parse(bare, "release/0.9.0"), first, "an old release moved")
+            self.assertIn("LICENSE", _ls_tree(bare, "release/0.9.0"))
+            self.assertNotIn("LICENSE", _ls_tree(bare, "release/0.9.1"))
+            self.assertEqual(_rev_count(bare, "release/0.9.1"), "1")  # never a child of another release
 
     def test_verdict_strings_only_from_release_script(self):
         for py in (ROOT / "scripts").glob("*.py"):

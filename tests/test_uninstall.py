@@ -34,7 +34,7 @@ def _bootstrapped_repo(root: Path, *, extra_project_settings=True) -> None:
     """A fully rice-bootstrapped repo that also carries project-owned
     content of every kind rice must leave alone."""
     (root / ".claude").mkdir(parents=True, exist_ok=True)
-    s = settings_template.desired_settings("v1.2.3", True)
+    s = settings_template.desired_settings(settings_template.release_ref(), True)
     if extra_project_settings:
         s["permissions"]["allow"] = ["Bash(npm test *)"]
         s["permissions"]["ask"] = ["Bash(rm *)"]

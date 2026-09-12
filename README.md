@@ -26,25 +26,34 @@ the user to remember or type any command.
 1. Canonical public repository: `L26041040/rice-bootstrap` on GitHub
    (marketplace name `rice-bootstrap`, plugin `rice`, plugin id
    `rice@rice-bootstrap`).
-2. Use the official Claude Code plugin mechanism, non-interactive, touching
+2. **A release is a branch.** Every version is published once, to the
+   immutable public branch `release/<semver>`, and that branch is the only
+   installation source. This copy of rice is `release/0.1.2`; install it
+   with the official Claude Code plugin mechanism, non-interactive, touching
    only `~/.claude`:
    ```
-   claude plugin marketplace add L26041040/rice-bootstrap
+   claude plugin marketplace add L26041040/rice-bootstrap@release/0.1.2
    claude plugin install rice@rice-bootstrap
    ```
-   **User scope only** (the default, and the same way Matt Pocock's plugin
+   The `@release/0.1.2` suffix is not optional: without it the marketplace
+   follows the repository's default branch, which is a landing page, not a
+   release. Public `main` is never an installation source.
+3. **User scope only** (the default, and the same way Matt Pocock's plugin
    is installed). Rice does not support being installed at more than one
    scope: which install a session loads is not something rice may guess at,
    so the verifier fails a duplicate (`plugin:scope`) and the OWNER removes
    the extra one, keeping the user-scope install.
-3. **No auto-update.** Rice never updates itself, on any trigger — no hook,
-   no schedule, no background check. An update happens only when the OWNER
-   types `/rice:rice-update` (see Update below). Release, rollback,
-   compatibility and upgrade E2E are not mature enough for anything
-   automatic.
-4. **Local machine**: a newly installed plugin is loaded by the **next**
+4. **No update system, and no auto-update.** Rice has exactly two repo
+   lifecycles — `rice:bootstrap` and `rice:rice-uninstall`. It never
+   updates itself, on any trigger, and there is no update workflow to
+   invoke. A newer rice is a newer release branch: the OWNER points an
+   Environment (or a machine) at it when they choose to, and repos keep
+   whatever release they were bootstrapped with until then. Nothing asks
+   them to restart a session, migrate a ref, or reason about which build is
+   "latest".
+5. **Local machine**: a newly installed plugin is loaded by the **next**
    session. Start one and run the bootstrap flow below.
-5. **Claude Code on the web**: do not run the two commands inside a session
+6. **Claude Code on the web**: do not run the two commands inside a session
    expecting them to persist — `~/.claude` is per-container. See "Claude
    Code Web setup" below; that is the primary path, not a same-session
    install.
@@ -60,9 +69,12 @@ one:
    one-time OWNER action in the Claude Code Web UI; rice cannot create or
    edit one itself.
 2. **rice plugin** — installed once into the Environment's setup script
-   (the same two commands from "Installation" above). Every fresh session
-   started from that Environment already has rice loaded automatically —
-   no per-session install, no `/reload-plugins`.
+   (the same two commands from "Installation" above, release branch and
+   all). Every fresh session started from that Environment already has rice
+   loaded automatically — no per-session install, no `/reload-plugins`.
+   Moving to a newer rice means editing that one line to the new
+   `release/<semver>` and starting a fresh session; nothing in a
+   bootstrapped repo has to change, and rice never does it on its own.
 3. **Repo bootstrap** (`/rice:bootstrap`, see "Bootstrap" below) — configures
    the *current repo only*. It never (re)installs rice itself; that is the
    Environment's job, done once.
@@ -97,9 +109,12 @@ The lifecycle engine (`scripts/rice.py`) decides everything else:
 1. Is rice loaded here? If not, nothing is written and the OWNER gets the
    install instructions above (per Environment in Cloud, per machine
    locally).
-2. The delivery `ref` — upstream `main`'s exact commit SHA, read by the
-   engine itself (delivery mechanism only; no git tag or GitHub release is
-   used anywhere). The OWNER's answers — session archive
+2. The delivery `ref` — `release/<semver>`, this build's own release
+   branch, derived from the build itself. The OWNER never types a ref, a SHA
+   or a version; whichever build configures a repo records its own release
+   there, and it is rice-defined, so a repo bootstrapped again by a newer
+   build has its record converged (no git tag or GitHub release is used
+   anywhere). The OWNER's answers — session archive
    (`env.RICE_SESSION_ARCHIVE`) and output style, including "Claude default"
    as an absent key and a custom project style the agent writes to
    `.claude/output-styles/<name>.md` — are written once, only if absent.
@@ -107,7 +122,7 @@ The lifecycle engine (`scripts/rice.py`) decides everything else:
 3. Rice-owned state is reconciled: settings leaves, one occurrence of each
    of rice's own `permissions.deny` rules, `.claude/rice.md`, the `@.claude/rice.md`
    line in `CLAUDE.md`, the rice pointer block in `AGENTS.md`. Ownership is
-   declared once, in `scripts/reconcile.py`, and install, update, repair and
+   declared once, in `scripts/reconcile.py`, and install, repair and
    uninstall are verbs over that one declaration. Three shapes, and the
    shape is what makes an existing repo safe: `.claude/rice.md` is
    whole-file (rice wrote it, rice may replace it); the CLAUDE.md line, the
@@ -151,38 +166,6 @@ If the repo already had its own `/clear` archive hook before rice, the OWNER
 removes that old hook/script before enabling rice's archive; an existing
 `session-history/` can stay.
 
-## Update
-
-Only on the OWNER's explicit request; entrypoint `/rice:rice-update`
-(OWNER-invoked only by design).
-
-```
-python3 <plugin root>/scripts/rice.py update <repo>
-```
-
-One command, run once; the engine decides the stage from mechanical facts
-and returns a directive to present verbatim:
-
-- Latest stable is upstream `L26041040/rice-bootstrap`'s `main` branch — its
-  exact HEAD commit SHA, read by the engine (`git ls-remote`). No git tag or
-  GitHub release is used anywhere; the target repo never declares "latest".
-- The install is validated first, before anything is written: rice must be
-  installed at exactly one scope, the canonical user scope. A duplicate or
-  non-canonical install stops the update with the scopes named and a minimal
-  cleanup (keep user scope, remove the others) — rice removes neither for
-  the OWNER, and never sends them around a restart loop.
-- If this repo is pinned elsewhere: the delivery `ref` moves to that SHA and
-  the official install commands run against that canonical install. The
-  OWNER is then told to commit and push, move the
-  Cloud container-start install line to the same SHA, and start a new
-  session — an update spans two sessions, because a session keeps its
-  cached build until it restarts.
-- In that new session: rice-owned state is converged onto the new build
-  (project-owned content and the OWNER's output-style choice untouched),
-  then the same canonical flow runs to the end.
-- `.claude/rice-version` changes only when the verifier prints
-  `FINAL-VERIFIED <build>`; on any failure it is byte-for-byte unchanged.
-
 ## Uninstall
 
 Only on the OWNER's explicit, present request ("uninstall rice", "移除
@@ -217,13 +200,24 @@ trigger. Entrypoint: the `rice:rice-uninstall` skill, which runs
 
 ## Release / Development
 
-Releases are cut from the private development repository by its
-`rice-release` skill and `scripts/release.py`, on the OWNER's explicit
-release intent only. The public repository is a verified export of an
-allowlisted surface; it is never a mirror, never receives private history,
-and is never a source of truth. Release checks (tests, manifests, version
-consistency, this README's required sections, allowlist completeness,
+Releases are cut from the private development repository
+(`L26041040/rice-bootstrap-dev`, the source of truth) by its `rice-release`
+skill and `scripts/release.py`, on the OWNER's explicit release intent only.
+
+The public repository is a verified export of an allowlisted surface; it is
+never a mirror, never receives private history, and is never a source of
+truth. Each release is published **once**, as a fresh single-commit history
+on the branch `release/<semver>`:
+
+- that branch is immutable — rice's tooling never moves, rewrites or
+  force-pushes one, and publishing a version whose branch already exists
+  FAILS CLOSED, so one semver can never name two different builds;
+- the next version is a new branch, never a new commit on an old one;
+- `.claude-plugin/plugin.json`'s version, the CHANGELOG's top entry and the
+  branch name are the same string, checked mechanically;
+- no git tag and no GitHub release is ever created, private or public.
+
+Release checks (tests, manifests, version consistency, this README's
+required sections and its release branch, allowlist completeness,
 forbidden-path absence, secret scan, standalone-package validation) are
-mechanical: any FAIL → `RELEASE BLOCKED`, no publish. No git tag or GitHub
-release is ever created, private or public; release identity is
-`plugin.json` version + CHANGELOG + the exact commit SHA.
+mechanical: any FAIL → `RELEASE BLOCKED`, no publish.

@@ -14,13 +14,13 @@ import sys
 from pathlib import Path
 
 SOURCE_ROOT = Path(__file__).resolve().parent.parent
+MARKETPLACE_REPO = "L26041040/rice-bootstrap"
 
 # The complete public surface. Order is irrelevant; every entry must exist.
 ALLOWLIST = (
     ".claude-plugin/marketplace.json",
     ".claude-plugin/plugin.json",
     "skills/bootstrap/SKILL.md",
-    "skills/rice-update/SKILL.md",
     "skills/rice-uninstall/SKILL.md",
     "hooks/hooks.json",
     "scripts/settings_template.py",

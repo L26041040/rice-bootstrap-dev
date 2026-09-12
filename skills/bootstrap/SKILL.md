@@ -36,7 +36,7 @@ is never overwritten, and a re-run needs no questions at all.
      output style to `.claude/output-styles/<name>.md` (frontmatter
      `name: <name>`, `description:`, then the instructions body), then pass
      `--output-style <name>`. That file is project-owned: rice never
-     rewrites it and an update preserves the choice.
+     rewrites it.
 
 If the OWNER expressed no preference and you cannot ask, omit the flag
 rather than guessing: an unanswered choice is written later, not wrongly now.
@@ -49,7 +49,7 @@ python3 "<plugin root>/scripts/rice.py" bootstrap <repo_root> \
 ```
 
 That is the entire bootstrap. It checks that rice is loaded, derives the
-delivery ref from upstream itself, writes the OWNER's answers if absent,
+delivery ref from its own release branch, writes the OWNER's answers if absent,
 reconciles rice-owned state, and runs the canonical flow — verify,
 deterministic repair on a FAIL, verify again — printing the verifier's own
 lines.

@@ -31,7 +31,7 @@ import uninstall  # noqa: E402
 import verify  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
-REF = "0123456789abcdef0123456789abcdef01234567"
+REF = settings_template.release_ref()
 
 PROJECT_DENY = ["Bash(curl *)", "Bash(rm -rf /*)", "WebFetch"]
 PROJECT_CLAUDE_MD = (
@@ -113,7 +113,7 @@ class OwnershipBase(unittest.TestCase):
         return json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
 
     def install(self, **kw):
-        reconcile.write_owner_choices(self.root, ref=REF, archive=True, **kw)
+        reconcile.write_owner_choices(self.root, archive=True, **kw)
         return reconcile.apply(self.root)
 
 
@@ -150,7 +150,7 @@ class TestExistingRepoSafety(OwnershipBase):
         self.assertEqual(len(deny), len(PROJECT_DENY) + len(settings_template.RICE_DENY_ENTRIES))
 
         # an update refreshes rice's own entries and touches no other
-        reconcile.apply(self.root, is_rice_update=True)
+        reconcile.apply(self.root, converge_drift=True)
         self.assertEqual(self.settings()["permissions"]["deny"], deny)
 
         # a rice rule the OWNER deleted comes back; a project rule never goes
@@ -236,7 +236,7 @@ class TestDenyIsAMultiset(OwnershipBase):
         self.install()
         before = list(self.deny())
         for _ in range(3):
-            reconcile.apply(self.root, is_rice_update=True)
+            reconcile.apply(self.root, converge_drift=True)
         self.assertEqual(self.deny(), before)
 
     def test_a_rule_the_owner_deleted_comes_back_exactly_once(self):
@@ -498,6 +498,31 @@ class TestSubtractionTouchesOnlyRice(OwnershipBase):
             self.assertFalse(any(reconcile.remnants(root)[l] for l in reconcile.OWNED_FILES.values()))
 
 
+class TestTwoLifecyclesOnly(OwnershipBase):
+    """RICE-FINAL-001's UX invariant: install is one `/rice:bootstrap`,
+    removal is one `/rice:rice-uninstall`, both inside one session. Nothing
+    in either asks the OWNER to restart, update, or reason about a ref."""
+
+    def test_install_and_removal_each_complete_in_one_pass(self):
+        self.existing_repo()
+        self.install()                         # what /rice:bootstrap does
+        self.assertTrue(reconcile.rice_installed_here(self.settings()))
+        expected = uninstall.expected_after(self.root)
+        uninstall.uninstall(self.root)         # what /rice:rice-uninstall does
+        items, verdict = uninstall.check(self.root, expected=expected)
+        self.assertEqual(verdict, "RICE-UNINSTALLED",
+                         "\n".join(f"{i.name} {i.state} {i.detail}" for i in items))
+
+    def test_neither_lifecycle_depends_on_a_second_session(self):
+        surfaces = [REPO / "skills" / "bootstrap" / "SKILL.md",
+                    REPO / "skills" / "rice-uninstall" / "SKILL.md"]
+        for path in surfaces:
+            text = path.read_text(encoding="utf-8").lower()
+            for forbidden in ("rice:rice-update", "two-session", "restart", "update rice",
+                              "release sha", "latest version"):
+                self.assertNotIn(forbidden, text, f"{path.name}: {forbidden}")
+
+
 class TestOwnershipIsDeclaredOnce(unittest.TestCase):
     def test_repair_keeps_no_second_list_of_what_rice_owns(self):
         src = (REPO / "scripts" / "repair.py").read_text(encoding="utf-8")
@@ -522,7 +547,7 @@ class TestOwnershipIsDeclaredOnce(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(root / "cfg")}):
-                reconcile.write_owner_choices(root, ref=REF, archive=True)
+                reconcile.write_owner_choices(root, archive=True)
                 applied = {i.name for i in reconcile.apply(root)
                            if i.state in ("created", "updated", "noop", "conflict")}
                 owned = {i.name for i in _rubric(root, **PROBES) if i.owned}

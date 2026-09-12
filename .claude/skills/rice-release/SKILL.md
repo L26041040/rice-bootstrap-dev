@@ -12,20 +12,31 @@ a trigger; ask nothing, do nothing, just answer the question.
 
 This skill orchestrates. It decides nothing. `scripts/release.py` decides:
 only its `RELEASE-CHECKS PASS <version>` line allows export/publish, and
-only its `RELEASED rice <version>` line means a release happened. Any gate
-FAIL is `RELEASE BLOCKED`: no publish, no "looks fine".
+only its `RELEASE-PUBLISHED <version> -> ... release/<version> @ <sha>` line
+means a release happened. Any gate FAIL is `RELEASE BLOCKED`: no publish, no
+"looks fine".
+
+**A release is an immutable branch** (RICE-FINAL-001). Publishing creates
+the public branch `release/<x.y.z>`, once: it is never moved, rewritten or
+force-pushed, and publishing a version whose branch already exists FAILS
+CLOSED, so one semver can never name two different builds. The next version
+is a new branch, never a new commit on an old one. Public `main` is a
+landing page at most — never an installation source, and this flow does not
+touch it.
 
 No git tag or GitHub release exists anywhere in this lifecycle, private or
-public (RICE-BOOTSTRAP-030). Release identity is entirely
-`.claude-plugin/plugin.json` version + CHANGELOG top entry (version and
-date) + the exact commit SHA — private HEAD for a release cut, public
-main's HEAD for what is actually live. `release.py` mechanically records
-the private side of that at the start of every run (`SOURCE rice=<version>
-changelog=<date> head=<sha>`), and stamps the private HEAD SHA into every
-public commit as provenance (`rice <version> (source <sha>)`). A legacy
-private `v0.1.1` tag and a legacy public `v0.1.1` tag may still exist from
-before this changed; neither is read, required, or maintained by anything
-below.
+public (RICE-BOOTSTRAP-030). Release identity is
+`.claude-plugin/plugin.json` version = CHANGELOG top entry = the
+`release/<version>` branch name, plus the exact private commit the export
+came from. `release.py` records the private side at the start of every run
+(`SOURCE rice=<version> changelog=<date> head=<sha>`) and stamps that SHA
+into the public commit as provenance (`rice <version> (source <sha>)`).
+Legacy `v0.1.1` tags may still exist from before this changed; none is read,
+required, or maintained by anything below.
+
+There is no update lifecycle to release *into*: rice never updates itself in
+a repo, so a new release reaches an OWNER only when they point an
+Environment (or a machine) at the new branch themselves.
 
 ## Flow
 
@@ -48,27 +59,21 @@ below.
    clean) rather than by shipping tests to prove it.
 3. **Publish.** `python3 scripts/release.py publish --version <x.y.z>
    --public-repo <url>`. The script re-runs every gate, exports the
-   allowlisted surface, and pushes it deterministically — no tag or
-   release involved anywhere in this step:
-   - public repo has no `main` yet → fresh single-commit history, push
-     `main`.
-   - public `main` exists and differs from this export → fetch it,
-     reconcile its working tree to exactly the new export (anything
-     dropped from the allowlist does not linger), commit a normal next
-     release commit on top, fast-forward push `main`.
-   - public `main` already equals this export byte-for-byte (a re-run of
-     the same version, e.g. after a prior run's push landed but the run
-     didn't finish cleanly) → nothing to commit is treated as an
-     already-published success, not a FAIL.
-   Success is confirmed by re-reading the public remote's `main` SHA, not
-   by trusting the local push. Never a force push, an orphan/unrelated
-   history, or a rewrite of public history — the public repo stays one
-   linear distribution history. If no public repository is configured it
-   prints `WAITING_FOR_PUBLIC_REPO` and stops — report that verbatim and
-   tell the OWNER the one next action: create the empty public
-   distribution repository and provide its URL / push credential.
+   allowlisted surface, and creates `release/<x.y.z>` as a fresh
+   single-commit history — no tag, no release, no private history, and no
+   second commit on any existing branch. If that branch already exists on
+   the remote it stops with `RELEASE BLOCKED`: report that verbatim; the
+   answer is a version bump, never a force push. Success is confirmed by
+   re-reading the branch's SHA from the remote, not by trusting the local
+   push. If no public repository is configured it prints
+   `WAITING_FOR_PUBLIC_REPO` and stops — report that verbatim and tell the
+   OWNER the one next action: create the public distribution repository and
+   provide its URL / push credential.
 4. **Report.** Quote the script's last line verbatim. If it is not
-   `RELEASED rice <x.y.z>`, the release did not happen — say so.
+   `RELEASE-PUBLISHED <x.y.z> ...`, the release did not happen — say so.
+   Remind the OWNER that installing this release means pointing an
+   Environment's setup line at `...@release/<x.y.z>`; nothing updates on
+   its own, and no bootstrapped repo changes because of this release.
 
 ## Never
 
@@ -76,4 +81,6 @@ No git mirror, no private history to public, no copy-then-blacklist, no
 auto-publish on commit, no rollback framework, no waiver of a FAIL gate, no
 substituting README/spec text for a mechanical check, no shipping `tests/`
 to the public repo to prove it works, no GitHub allow-secret bypass, no git
-tag, no GitHub release, anywhere in this lifecycle.
+tag, no GitHub release, anywhere in this lifecycle. Never move, rewrite,
+force-push or re-publish an existing `release/<x.y.z>` branch, and never
+publish two different builds under one semver.

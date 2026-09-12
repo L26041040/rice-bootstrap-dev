@@ -1,7 +1,7 @@
 {
   "name": "rice",
-  "version": "0.1.1",
-  "description": "One-instruction bootstrap and update for common Claude Code project configuration.",
+  "version": "0.1.2",
+  "description": "One-instruction bootstrap for common Claude Code project configuration.",
   "author": {
     "name": "L26041040"
   },
@@ -15,7 +15,6 @@
   ],
   "skills": [
     "./skills/bootstrap",
-    "./skills/rice-update",
     "./skills/rice-uninstall"
   ]
 }

@@ -18,7 +18,7 @@ import evidence  # noqa: E402
 import reconcile  # noqa: E402
 import settings_template  # noqa: E402
 
-REF = "v1.0.0"
+REF = settings_template.release_ref()
 # a rice-defined leaf, wherever a test needs "one value rice owns"
 LEAF_PATH = f"extraKnownMarketplaces.{settings_template.MARKETPLACE_NAME}.source.repo"
 LEAF_ITEM = f"settings:{LEAF_PATH}"
@@ -49,7 +49,7 @@ def _read_settings(repo_root: Path) -> dict:
 
 
 def _fully_correct_settings() -> dict:
-    return settings_template.desired_settings(REF, True)
+    return settings_template.desired_settings(settings_template.release_ref(), True)
 
 
 def _make_correct_repo(repo_root: Path) -> None:
@@ -130,7 +130,7 @@ class TestSettingsKeyStates(ReconcileTestBase):
         check_items = _rubric(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)[LEAF_ITEM], "FAIL")
 
-        apply_items = reconcile.apply(self.repo_root, is_rice_update=False)
+        apply_items = reconcile.apply(self.repo_root, converge_drift=False)
         self.assertEqual(_states(apply_items)[LEAF_ITEM], "conflict")
         self.assertEqual(_leaf(_read_settings(self.repo_root)), "elsewhere/repo")
 
@@ -139,27 +139,27 @@ class TestSettingsKeyStates(ReconcileTestBase):
         _set_leaf(settings, "elsewhere/repo")
         _write_settings(self.repo_root, settings)
 
-        apply_items = reconcile.apply(self.repo_root, is_rice_update=True)
+        apply_items = reconcile.apply(self.repo_root, converge_drift=True)
         self.assertEqual(_states(apply_items)[LEAF_ITEM], "updated")
         self.assertEqual(_leaf(_read_settings(self.repo_root)), settings_template.MARKETPLACE_REPO)
 
     def test_output_style_is_owner_choice_never_written_or_reasserted(self):
-        # OWNER chose a custom project style -> apply (even rice-update) leaves it alone
+        # OWNER chose a custom project style -> apply (even converging drift) leaves it alone
         settings = _fully_correct_settings(); settings["outputStyle"] = "my-style"
         _write_settings(self.repo_root, settings)
         (self.repo_root / ".claude" / "output-styles").mkdir(parents=True)
         (self.repo_root / ".claude" / "output-styles" / "my.md").write_text("---\nname: my-style\n---\nbody\n")
         for is_update in (False, True):
-            reconcile.apply(self.repo_root, is_rice_update=is_update)
+            reconcile.apply(self.repo_root, converge_drift=is_update)
             self.assertEqual(_read_settings(self.repo_root)["outputStyle"], "my-style")
         # OWNER chose Claude default -> key absent stays absent
         settings = _fully_correct_settings(); del settings["outputStyle"]
         _write_settings(self.repo_root, settings)
-        reconcile.apply(self.repo_root, is_rice_update=True)
+        reconcile.apply(self.repo_root, converge_drift=True)
         self.assertNotIn("outputStyle", _read_settings(self.repo_root))
 
 
-class TestOwnerDefinedKeys(ReconcileTestBase):
+class TestOwnerAndRiceDefinedKeys(ReconcileTestBase):
     def test_owner_defined_key_present_is_pass_and_never_written(self):
         settings = _fully_correct_settings()
         _write_settings(self.repo_root, settings)
@@ -167,7 +167,7 @@ class TestOwnerDefinedKeys(ReconcileTestBase):
         self.assertEqual(_states(check_items)["settings:env.RICE_SESSION_ARCHIVE"], "PASS")
 
         before = _read_settings(self.repo_root)["env"]["RICE_SESSION_ARCHIVE"]
-        reconcile.apply(self.repo_root, is_rice_update=True)
+        reconcile.apply(self.repo_root, converge_drift=True)
         after = _read_settings(self.repo_root)["env"]["RICE_SESSION_ARCHIVE"]
         self.assertEqual(before, after)
 
@@ -186,29 +186,38 @@ class TestOwnerDefinedKeys(ReconcileTestBase):
     def test_ref_never_written_even_under_rice_update_with_newer_release_available(self):
         settings = _fully_correct_settings()
         _write_settings(self.repo_root, settings)
-        # Even though the caller is in "rice-update" mode (as if a newer
+        # Even though the caller is converging drift (as if a newer
         # release exists), apply() has no code path that writes `ref` --
         # it only ever reads it to know which version's desired state to
         # converge everything else against.
-        reconcile.apply(self.repo_root, is_rice_update=True)
+        reconcile.apply(self.repo_root, converge_drift=True)
         current = _read_settings(self.repo_root)
         self.assertEqual(
             current["extraKnownMarketplaces"][settings_template.MARKETPLACE_NAME]["source"]["ref"], REF
         )
 
-    def test_ref_missing_entirely_reports_fail_and_apply_writes_nothing(self):
+    def test_the_delivery_ref_is_rice_defined_and_follows_this_build(self):
+        """RICE-FINAL-001: the ref records which release configured this repo,
+        so rice writes it, converges it, and the OWNER never types it."""
         settings = _fully_correct_settings()
         del settings["extraKnownMarketplaces"][settings_template.MARKETPLACE_NAME]["source"]["ref"]
         _write_settings(self.repo_root, settings)
-        before = (self.repo_root / ".claude" / "settings.json").read_text()
 
-        check_items = _rubric(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(check_items)[f"settings:{REF_PATH}"], "FAIL")
+        self.assertEqual(_states(_rubric(self.repo_root, rtk_probe=_ok_rtk_probe))[f"settings:{REF_PATH}"], "FAIL")
+        self.assertEqual(_states(reconcile.apply(self.repo_root))[f"settings:{REF_PATH}"], "created")
+        self.assertEqual(reconcile._get_path(_read_settings(self.repo_root), REF_PATH),
+                         settings_template.release_ref())
+        self.assertEqual(_states(_rubric(self.repo_root, rtk_probe=_ok_rtk_probe))[f"settings:{REF_PATH}"], "PASS")
 
-        apply_items = reconcile.apply(self.repo_root)
-        self.assertEqual(_states(apply_items)[f"settings:{REF_PATH}"], "FAIL")
-        after = (self.repo_root / ".claude" / "settings.json").read_text()
-        self.assertEqual(before, after)
+    def test_a_ref_from_another_release_is_drift_only_repair_converges(self):
+        settings = _fully_correct_settings()
+        reconcile._set_path(settings, REF_PATH, "release/0.0.1")
+        _write_settings(self.repo_root, settings)
+        self.assertEqual(_states(reconcile.apply(self.repo_root))[f"settings:{REF_PATH}"], "conflict")
+        self.assertEqual(reconcile._get_path(_read_settings(self.repo_root), REF_PATH), "release/0.0.1")
+        self.assertEqual(_states(reconcile.apply(self.repo_root, converge_drift=True))[f"settings:{REF_PATH}"], "updated")
+        self.assertEqual(reconcile._get_path(_read_settings(self.repo_root), REF_PATH),
+                         settings_template.release_ref())
 
 
 class TestRiceMdWholeFile(ReconcileTestBase):
@@ -237,7 +246,7 @@ class TestRiceMdWholeFile(ReconcileTestBase):
         check_items = _rubric(self.repo_root, rtk_probe=_ok_rtk_probe)
         self.assertEqual(_states(check_items)["rice.md"], "FAIL")
 
-        apply_items = reconcile.apply(self.repo_root, is_rice_update=False)
+        apply_items = reconcile.apply(self.repo_root, converge_drift=False)
         self.assertEqual(_states(apply_items)["rice.md"], "conflict")
         self.assertEqual(dest.read_text(), "# hand-edited\n")
 
@@ -246,7 +255,7 @@ class TestRiceMdWholeFile(ReconcileTestBase):
         dest = self.repo_root / ".claude" / "rice.md"
         dest.write_text("# stale content from an older version\n", encoding="utf-8")
 
-        apply_items = reconcile.apply(self.repo_root, is_rice_update=True)
+        apply_items = reconcile.apply(self.repo_root, converge_drift=True)
         self.assertEqual(_states(apply_items)["rice.md"], "updated")
         self.assertEqual(dest.read_text(), reconcile.RICE_MD_RESOURCE.read_text())
 
@@ -326,7 +335,7 @@ class TestAgentsMdPointer(ReconcileTestBase):
         project = "# Agents\n\nProject-owned guidance.\n\n## Build\n\nmake\n"
         (self.repo_root / "AGENTS.md").write_text(project, encoding="utf-8")
         for mode in (False, True, True):
-            reconcile.apply(self.repo_root, is_rice_update=mode)
+            reconcile.apply(self.repo_root, converge_drift=mode)
             text = (self.repo_root / "AGENTS.md").read_text(encoding="utf-8")
             self.assertTrue(text.startswith(project), text)
             self.assertEqual(text.count(reconcile.AGENTS_BEGIN), 1)
@@ -340,7 +349,7 @@ class TestAgentsMdPointer(ReconcileTestBase):
         self.assertEqual(_states(_rubric(self.repo_root, rtk_probe=_ok_rtk_probe))["AGENTS.md:rice-pointer"], "FAIL")
         self.assertEqual(_states(reconcile.apply(self.repo_root))["AGENTS.md:rice-pointer"], "conflict")
         self.assertIn("edited by hand", (self.repo_root / "AGENTS.md").read_text(encoding="utf-8"))
-        self.assertEqual(_states(reconcile.apply(self.repo_root, is_rice_update=True))["AGENTS.md:rice-pointer"], "updated")
+        self.assertEqual(_states(reconcile.apply(self.repo_root, converge_drift=True))["AGENTS.md:rice-pointer"], "updated")
         text = (self.repo_root / "AGENTS.md").read_text(encoding="utf-8")
         self.assertEqual(text, project + "\n" + reconcile.AGENTS_POINTER)
 
@@ -392,7 +401,7 @@ class TestProjectOwnedSettingsPreserved(ReconcileTestBase):
         settings["permissions"]["ask"] = ["Bash(rm *)"]  # project-owned now (-024)
         _write_settings(self.repo_root, settings)
 
-        reconcile.apply(self.repo_root, is_rice_update=True)
+        reconcile.apply(self.repo_root, converge_drift=True)
         after = _read_settings(self.repo_root)
         self.assertEqual(after["outputStyle"], "drifted")  # OWNER choice: untouched by apply
         self.assertEqual(after["permissions"]["allow"], ["Bash(npm test *)"])

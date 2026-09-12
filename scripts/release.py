@@ -7,7 +7,7 @@ lives entirely in .claude-plugin/plugin.json, CHANGELOG.md, and the exact
 commit SHA -- private HEAD for a release cut, public main HEAD for what is
 actually live). The agent never decides a release is OK; only this
 script's `RELEASE-CHECKS PASS <version>` allows an export/publish to
-proceed, and only its `RELEASED rice <version>` line means a release
+proceed, and only its `RELEASE-PUBLISHED <version>` line means a release
 happened.
 
 Verdict strings are assembled at runtime so that tests/test_verify.py's
@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import export_public  # noqa: E402
+import settings_template  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
@@ -33,10 +34,8 @@ README_REQUIRED = (
     "# FOR AGENTS",
     "## Installation",
     "## Bootstrap",
-    "## Update",
     "## Uninstall",
     "## Release",
-    "claude plugin marketplace add L26041040/rice-bootstrap",
     "claude plugin install rice@rice-bootstrap",
     "RICE-" + "VERIFIED",
     "FINAL-" + "VERIFIED",
@@ -62,7 +61,12 @@ def _run(cmd, cwd=None, timeout=900):
 
 
 def plugin_version(root: Path = ROOT) -> str:
-    return json.loads((root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")).get("version", "")
+    """The build's version, or "" when it cannot be read -- unreadable is
+    never a version, and `gate_version` fails closed on it."""
+    try:
+        return json.loads((root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")).get("version", "")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return ""
 
 
 def changelog_top_version(root: Path = ROOT) -> str | None:
@@ -137,11 +141,22 @@ def gate_version(root: Path, requested: str | None) -> Gate:
 
 
 def gate_readme(root: Path) -> Gate:
+    """The README is part of the release surface, so it must name the exact
+    release branch it ships as -- a reader who copies its install command
+    gets this build, not whatever a moving ref points at."""
     p = root / "README.md"
     if not p.exists():
         return Gate("readme:agent-contract", "FAIL", "README.md missing")
     text = p.read_text(encoding="utf-8")
-    missing = [s for s in README_REQUIRED if s not in text]
+    version = plugin_version(root)
+    branch = release_branch(version)
+    required = list(README_REQUIRED) + [f"add {export_public.MARKETPLACE_REPO}@{branch}"]
+    missing = [s for s in required if s not in text]
+    stale = sorted(set(re.findall(r"release/\d+\.\d+\.\d+", text)) - {branch})
+    if stale:
+        return Gate("readme:agent-contract", "FAIL",
+                    f"names other release branch(es) {stale} -- a reader copying an install "
+                    f"command must get {branch}")
     if missing:
         return Gate("readme:agent-contract", "FAIL", "missing required content: " + ", ".join(repr(m) for m in missing))
     human_intro = text.split("# FOR AGENTS", 1)[0]
@@ -233,97 +248,75 @@ def render(gates, verdict) -> str:
     return "\n".join(lines)
 
 
-def _replace_worktree_with_export(git_root: Path, export_dir: Path) -> None:
-    """Make git_root's working tree an exact copy of export_dir, keeping
-    .git. Anything tracked that export_dir no longer has (a file dropped
-    from the allowlist) does not survive; git add -A then stages both the
-    removals and the additions."""
-    for item in git_root.iterdir():
-        if item.name == ".git":
-            continue
-        if item.is_dir():
-            shutil.rmtree(item)
-        else:
-            item.unlink()
-    for src in export_dir.rglob("*"):
-        if src.is_file():
-            target = git_root / src.relative_to(export_dir)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src, target)
+def release_branch(version: str) -> str:
+    return settings_template.release_ref(version)
 
 
 def publish(dest: Path, version: str, public_repo: str | None, source_sha: str = "") -> tuple[bool, str]:
-    """Publish, in a scratch clone that is always cleaned up -- success,
-    failure or exception alike (the workspace used to leak on every run)."""
-    with tempfile.TemporaryDirectory(prefix="rice-publish-") as tmp:
-        return _publish(Path(tmp), dest, version, public_repo, source_sha)
+    """Publish this export as the public branch `release/<version>`.
 
+    A release is a branch, and a branch is immutable once pushed
+    (RICE-FINAL-001). That makes publishing the simplest operation rice has:
+    a fresh single-commit history, pushed to a branch name that must not
+    exist yet. If it does exist, this FAILS CLOSED -- the same version never
+    names two different builds, and rice's tooling never moves or overwrites
+    a branch someone may already be installing from. The next release is a
+    new branch, not a new commit on an old one.
 
-def _publish(ws: Path, dest: Path, version: str, public_repo: str | None, source_sha: str = "") -> tuple[bool, str]:
-    """Publish the exported surface to the public repository. Only called
-    after a PASS verdict. No git tag or GitHub release is ever created,
-    pushed, or checked (RICE-BOOTSTRAP-030) -- success is public `main`
-    correctly holding this export, confirmed by re-reading the remote.
-    Deterministic flow:
-
-    - public repo has no `main` yet: fresh single-commit history.
-    - public `main` exists and differs from this export: fetch it,
-      reconcile the working tree to exactly the new export (dropping
-      anything no longer allowlisted), commit a normal next release
-      commit, fast-forward push -- never a rewrite, never an unrelated
-      history.
-    - public `main` already equals this export byte-for-byte (e.g. a
-      re-run of the same version after an earlier run's push already
-      landed): there is nothing new to commit. That is a safe
-      already-published outcome, not a FAIL -- "nothing to commit" must
-      never block a release whose content is already live.
-
-    Every commit records provenance: rice <version> (source <private HEAD
-    SHA>)."""
+    No git tag or GitHub release is created (RICE-BOOTSTRAP-030), and public
+    `main` is not touched: it is a landing page at most, never an
+    installation source. Every commit records provenance: rice <version>
+    (source <private HEAD SHA>)."""
     if not public_repo:
         return False, "WAITING_FOR_PUBLIC_REPO -- no public repository configured; nothing was pushed"
-    message = f"rice {version}" + (f" (source {source_sha})" if source_sha else "")
+    branch = release_branch(version)
 
-    rc, out = _run(["git", "ls-remote", "--heads", public_repo, "main"])
+    rc, out = _run(["git", "ls-remote", "--heads", public_repo, branch])
     if rc != 0:
         return False, f"could not reach public repository: {out.strip()[-300:]}"
-    is_first_release = not out.strip()
+    if out.strip():
+        return False, (f"RELEASE BLOCKED -- {branch} already exists on {public_repo}. A released "
+                       "version is immutable: rice never moves or overwrites a release branch. "
+                       "Bump the version and publish the next one.")
 
-    steps = [["git", "init", "-q", "-b", "main"], ["git", "remote", "add", "public", public_repo]]
-    if not is_first_release:
-        steps += [["git", "fetch", "-q", "public", "main"], ["git", "checkout", "-q", "-B", "main", "public/main"]]
+    with tempfile.TemporaryDirectory(prefix="rice-publish-") as tmp:
+        return _publish_branch(Path(tmp), dest, branch, version, public_repo, source_sha)
+
+
+def _publish_branch(ws: Path, dest: Path, branch: str, version: str, public_repo: str,
+                    source_sha: str) -> tuple[bool, str]:
+    message = f"rice {version}" + (f" (source {source_sha})" if source_sha else "")
+    steps = [["git", "init", "-q", "-b", branch],
+             ["git", "remote", "add", "public", public_repo]]
     for cmd in steps:
         rc, out = _run(cmd, cwd=ws)
         if rc != 0:
             return False, f"publish step failed: {' '.join(cmd)} -> rc={rc} {out.strip()[-300:]}"
 
-    _replace_worktree_with_export(ws, dest)
+    for rel in sorted(str(p.relative_to(dest)) for p in Path(dest).rglob("*") if p.is_file()):
+        target = ws / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(Path(dest) / rel, target)
 
-    rc, out = _run(["git", "add", "-A"], cwd=ws)
+    for cmd in (["git", "add", "-A"],
+                ["git", "-c", "user.email=rice@local", "-c", "user.name=rice release",
+                 "commit", "-q", "-m", message]):
+        rc, out = _run(cmd, cwd=ws)
+        if rc != 0:
+            return False, f"publish step failed: {' '.join(cmd)} -> rc={rc} {out.strip()[-300:]}"
+
+    # never a force, never a rewrite: the branch does not exist yet
+    rc, out = _run(["git", "push", "public", f"{branch}:{branch}"], cwd=ws)
     if rc != 0:
-        return False, f"publish step failed: git add -A -> rc={rc} {out.strip()[-300:]}"
-    rc, out = _run(["git", "diff", "--cached", "--name-only"], cwd=ws)
-    if rc != 0:
-        return False, f"publish step failed: git diff --cached --name-only -> rc={rc} {out.strip()[-300:]}"
+        return False, f"push failed: rc={rc} {out.strip()[-300:]}"
 
-    if out.strip():
-        commit_steps = [
-            ["git", "-c", "user.name=rice-release", "-c", "user.email=noreply@anthropic.com", "commit", "-q", "-m", message],
-            ["git", "push", "public", "main"],
-        ]
-        for cmd in commit_steps:
-            rc, out = _run(cmd, cwd=ws)
-            if rc != 0:
-                return False, f"publish step failed: {' '.join(cmd)} -> rc={rc} {out.strip()[-300:]}"
-    # else: public main already equals this export -- already published,
-    # nothing new to commit or push.
-
-    rc_local, local_sha = _run(["git", "rev-parse", "HEAD"], cwd=ws)
-    rc_remote, remote_out = _run(["git", "ls-remote", "--heads", public_repo, "main"])
-    remote_sha = remote_out.split()[0] if remote_out.strip() else ""
-    if rc_local != 0 or rc_remote != 0 or local_sha.strip() != remote_sha:
-        return False, "could not verify published main matches the export"
-    return True, "RELEASED rice " + version
+    rc, local = _run(["git", "rev-parse", "HEAD"], cwd=ws)
+    rc2, remote = _run(["git", "ls-remote", "--heads", public_repo, branch])
+    if rc != 0 or rc2 != 0 or not remote.strip():
+        return False, f"published, but could not confirm {branch} on the remote"
+    if remote.split()[0].strip() != local.strip():
+        return False, f"{branch} on the remote is not what was pushed"
+    return True, f"RELEASE-PUBLISHED {version} -> {public_repo} {branch} @ {local.strip()[:12]}"
 
 
 def main(argv=None) -> int:

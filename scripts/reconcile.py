@@ -15,10 +15,11 @@ responsibility: it writes files, it does not commit them.
 
 Both `apply` and `check_owned` work against the *currently pinned* ref's
 desired state -- the ref is read from the target's own
-.claude/settings.json, never supplied as a parameter. Per #13's "Reconcile,
-check, and rice-update", the update lifecycle alone may move it, through
-`move_ref`, and then converge everything else with
-`apply(is_rice_update=True)`.
+.claude/settings.json, never supplied as a parameter and never moved
+afterwards: rice has no update lifecycle (RICE-FINAL-001), so a repo keeps
+the release it was bootstrapped with. `apply(converge_drift=True)` is
+repair's mode: it overwrites rice-owned state that drifted, which ordinary
+reconcile reports as a conflict and leaves alone.
 """
 import json
 from dataclasses import dataclass
@@ -188,19 +189,17 @@ def _current_ref(settings: dict) -> str | None:
     return None if v is _MISSING else v
 
 
-def _settings_items(repo_root: Path, current: dict, ref: str | None, *, write: bool, is_rice_update: bool):
+def _settings_items(repo_root: Path, current: dict, *, write: bool, converge_drift: bool):
     """Returns (items, current) -- `current` is mutated in place when
     write=True and an item needs creating/updating."""
+    ref = settings_template.release_ref()
     if ref is None:
-        # Same item name the ref-present path below would use for this key
-        # (settings:{REF_PATH}), so check()/apply() output is consistent
-        # regardless of which branch produced it.
+        # this build cannot say which release it is, so it must not pin one
         return [ItemResult(
-            f"settings:{REF_PATH}", "FAIL",
-            f"{REF_PATH} is missing -- cannot determine the pinned version; run bootstrap",
-            kind=EXISTS,
+            f"settings:{REF_PATH}", "conflict" if write else "FAIL",
+            "this build's version is not readable SemVer, so there is no release branch to "
+            "record; nothing was written", kind=EXISTS, owned=True,
         )], current
-
     desired = settings_template.desired_settings(ref, True)  # archive_default is inert here:
     # env.RICE_SESSION_ARCHIVE is owner-defined and never taken from `desired`.
 
@@ -218,7 +217,7 @@ def _settings_items(repo_root: Path, current: dict, ref: str | None, *, write: b
                 items.append(ItemResult(f"settings:{key}", "FAIL", f"missing; desired={des!r}", owned=True))
         elif cur == des:
             items.append(ItemResult(f"settings:{key}", "noop" if write else "PASS", owned=True))
-        elif write and is_rice_update:
+        elif write and converge_drift:
             _set_path(current, key, des)
             items.append(ItemResult(f"settings:{key}", "updated", f"{cur!r} -> {des!r}", owned=True))
         else:
@@ -314,7 +313,7 @@ def _deny_item(current: dict, *, write: bool, fresh: bool = False) -> ItemResult
                       kind=EXISTS, owned=True)
 
 
-def _rice_md_item(repo_root: Path, *, write: bool, is_rice_update: bool) -> ItemResult:
+def _rice_md_item(repo_root: Path, *, write: bool, converge_drift: bool) -> ItemResult:
     desired = RICE_MD_RESOURCE.read_text(encoding="utf-8")
     dest = repo_root / ".claude" / "rice.md"
     if not dest.exists():
@@ -326,7 +325,7 @@ def _rice_md_item(repo_root: Path, *, write: bool, is_rice_update: bool) -> Item
     current = dest.read_text(encoding="utf-8")
     if current == desired:
         return ItemResult("rice.md", "noop" if write else "PASS", owned=True)
-    if write and is_rice_update:
+    if write and converge_drift:
         dest.write_text(desired, encoding="utf-8")
         return ItemResult("rice.md", "updated", owned=True)
     return ItemResult(
@@ -367,11 +366,10 @@ def _agents_block_span(content: str) -> tuple[int, int] | None:
     return b, e
 
 
-def _agents_md_item(repo_root: Path, *, write: bool, is_rice_update: bool) -> ItemResult:
+def _agents_md_item(repo_root: Path, *, write: bool, converge_drift: bool) -> ItemResult:
     """The rice pointer block in AGENTS.md: created if the file or block is
     missing, left alone when exact, and -- like rice.md -- treated as a
-    conflict when hand-edited unless a rice-update (or repair) is converging
-    the repo. Project-owned content outside the markers is never touched."""
+    conflict when hand-edited unless repair is converging the repo. Project-owned content outside the markers is never touched."""
     name = "AGENTS.md:rice-pointer"
     dest = repo_root / "AGENTS.md"
     if not dest.exists():
@@ -389,7 +387,7 @@ def _agents_md_item(repo_root: Path, *, write: bool, is_rice_update: bool) -> It
         return ItemResult(name, "FAIL", "rice pointer block missing", kind=EXISTS, owned=True)
     if content[span[0]:span[1]] == AGENTS_POINTER:
         return ItemResult(name, "noop" if write else "PASS", kind=EXISTS, owned=True)
-    if write and is_rice_update:
+    if write and converge_drift:
         dest.write_text(content[:span[0]] + AGENTS_POINTER + content[span[1]:], encoding="utf-8")
         return ItemResult(name, "updated", "rice pointer block replaced; rest of file untouched", kind=EXISTS, owned=True)
     return ItemResult(name, "conflict" if write else "FAIL",
@@ -404,46 +402,26 @@ def check_owned(repo_root) -> list[ItemResult]:
     it returns items and nothing else."""
     repo_root = Path(repo_root)
     current = _current_settings(repo_root)
-    ref = _current_ref(current)
-    items, _ = _settings_items(repo_root, current, ref, write=False, is_rice_update=False)
-    items.append(_rice_md_item(repo_root, write=False, is_rice_update=False))
+    items, _ = _settings_items(repo_root, current, write=False, converge_drift=False)
+    items.append(_rice_md_item(repo_root, write=False, converge_drift=False))
     items.append(_claude_md_item(repo_root, write=False))
-    items.append(_agents_md_item(repo_root, write=False, is_rice_update=False))
+    items.append(_agents_md_item(repo_root, write=False, converge_drift=False))
     return items
-
-
-def current_ref(repo_root) -> str | None:
-    """The delivery ref this repo is pinned to, or None if unset."""
-    return _current_ref(_current_settings(Path(repo_root)))
-
-
-def move_ref(repo_root, sha: str) -> ItemResult:
-    """Repin the delivery ref. The update lifecycle is the ONLY caller (#13's
-    "Reconcile, check, and rice-update"): ordinary reconcile never creates,
-    fixes or reasserts this key, and bootstrap writes it only when absent."""
-    repo_root = Path(repo_root)
-    current = _current_settings(repo_root)
-    was = _current_ref(current)
-    if was == sha:
-        return ItemResult(f"settings:{REF_PATH}", "noop", f"already pinned to {sha}", kind=EXISTS)
-    _set_path(current, REF_PATH, sha)
-    p = repo_root / ".claude" / "settings.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(current, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
-    return ItemResult(f"settings:{REF_PATH}", "updated", f"{was!r} -> {sha!r}", kind=EXISTS)
 
 
 UNSET = object()  # "the OWNER was not asked", as distinct from None
 
 
-def write_owner_choices(repo_root, *, ref=None, archive=None, output_style=UNSET) -> list[ItemResult]:
+def write_owner_choices(repo_root, *, archive=None, output_style=UNSET) -> list[ItemResult]:
     """Bootstrap's first -- and only -- write of the OWNER-defined keys.
 
-    Deliberately NOT part of `apply`: `ref`, `env.RICE_SESSION_ARCHIVE` and
+    Deliberately NOT part of `apply`: `env.RICE_SESSION_ARCHIVE` and
     `outputStyle` are the OWNER's, written once when they are absent and
     never created, fixed or reasserted by an ordinary reconcile pass (#13's
     Ownership model). Each value here is written only if its key is missing,
-    so re-running bootstrap can never overwrite an OWNER's answer.
+    so re-running bootstrap can never overwrite an OWNER's answer. The
+    delivery ref is not here: it is rice-defined and follows the build
+    (RICE-FINAL-001), so `apply` writes it.
 
     `output_style` distinguishes three cases: UNSET (not asked -- leave the
     key exactly as it is), None (the OWNER chose Claude's native default --
@@ -451,9 +429,7 @@ def write_owner_choices(repo_root, *, ref=None, archive=None, output_style=UNSET
     repo_root = Path(repo_root)
     current = _current_settings(repo_root)
     items, wrote = [], False
-    # (key, value, what an absent key means when there is no value to write)
-    wanted = [(REF_PATH, ref, "not supplied; the key stays missing and the verifier will fail it"),
-              ("env.RICE_SESSION_ARCHIVE", None if archive is None else ("1" if archive else "0"),
+    wanted = [("env.RICE_SESSION_ARCHIVE", None if archive is None else ("1" if archive else "0"),
                "not supplied; the key stays missing and the verifier will fail it")]
     if output_style is not UNSET:
         # the one key whose absence is itself a valid answer: Claude's native default
@@ -475,7 +451,7 @@ def write_owner_choices(repo_root, *, ref=None, archive=None, output_style=UNSET
     return items
 
 
-def apply(repo_root, *, is_rice_update: bool = False) -> list[ItemResult]:
+def apply(repo_root, *, converge_drift: bool = False) -> list[ItemResult]:
     """Converge every rice-owned artifact onto what this build declares.
     Create-if-missing / no-op-if-correct / conflict-if-drifted, plus
     overwrite-on-update for the artifacts rice owns outright. Never installs
@@ -483,15 +459,14 @@ def apply(repo_root, *, is_rice_update: bool = False) -> list[ItemResult]:
     repo_root = Path(repo_root)
     settings_path = repo_root / ".claude" / "settings.json"
     current = _current_settings(repo_root)
-    ref = _current_ref(current)
-    items, mutated = _settings_items(repo_root, current, ref, write=True, is_rice_update=is_rice_update)
+    items, mutated = _settings_items(repo_root, current, write=True, converge_drift=converge_drift)
     if any(i.state in ("created", "updated") for i in items):
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         settings_path.write_text(json.dumps(mutated, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
                                  encoding="utf-8")
-    items.append(_rice_md_item(repo_root, write=True, is_rice_update=is_rice_update))
+    items.append(_rice_md_item(repo_root, write=True, converge_drift=converge_drift))
     items.append(_claude_md_item(repo_root, write=True))
-    items.append(_agents_md_item(repo_root, write=True, is_rice_update=is_rice_update))
+    items.append(_agents_md_item(repo_root, write=True, converge_drift=converge_drift))
     return items
 
 
@@ -502,10 +477,13 @@ def project_settings(current: dict) -> dict:
     original order; containers rice emptied are dropped, containers with
     project content stay."""
     out = json.loads(json.dumps(current))  # deep copy, JSON-shaped
-    desired = settings_template.desired_settings("x", True)
+    desired = settings_template.desired_settings(settings_template.release_ref() or "", True)
     was_installed = rice_installed_here(current)
     for key in _RICE_LEAF_KEYS:
-        if _get_path(out, key) == _get_path(desired, key):
+        # the delivery ref is the one leaf whose whole key is rice's: nothing
+        # but rice ever writes under its marketplace entry, so it goes
+        # whatever release it records -- including one an older build wrote.
+        if key == REF_PATH or _get_path(out, key) == _get_path(desired, key):
             _del_path(out, key)
     for key in _OWNER_LEAF_KEYS:
         _del_path(out, key)

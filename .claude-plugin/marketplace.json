@@ -8,7 +8,7 @@
     {
       "name": "rice",
       "source": "./",
-      "description": "One-instruction bootstrap and update for common Claude Code project configuration: git safety, session archiving, model delegation, output style, and Matt Pocock setup handoff.",
+      "description": "One-instruction bootstrap for common Claude Code project configuration: git safety, session archiving, output style, the OWNER's working rules, and a hand-off to Matt Pocock's official setup.",
       "category": "engineering",
       "keywords": [
         "bootstrap",

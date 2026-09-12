@@ -11,7 +11,7 @@ What is mechanically repairable here, and from where:
 
 - anything `reconcile` owns -- the item says so itself (`ItemResult.owned`),
   so this module keeps no second list of what rice owns
-  (RICE-BOOTSTRAP-045). One `reconcile.apply(is_rice_update=True)` converges
+  (RICE-BOOTSTRAP-045). One `reconcile.apply(converge_drift=True)` converges
   every one of them from this build's canonical state; the verifier has
   already declared the drift a FAIL, so converging is the one repair that
   exists.
@@ -122,7 +122,7 @@ def repair(repo_root, report, *, plugin_probe=None, **_unused) -> RepairResult:
     result = RepairResult()
     converged = {}
     if any(i.owned for i in failing):
-        for a in reconcile.apply(repo_root, is_rice_update=True):
+        for a in reconcile.apply(repo_root, converge_drift=True):
             converged[a.name] = a
             if a.state in ("created", "updated"):
                 result.applied.append(f"{a.name}: {a.state} from canonical state" + (f" ({a.detail})" if a.detail else ""))

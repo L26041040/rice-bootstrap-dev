@@ -28,15 +28,8 @@ import output_styles
 import settings_template
 from reconcile import BEHAVES, EXISTS, MATCHES, ItemResult
 
-PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-
-def build_version() -> str:
-    """Version of the plugin build this rubric ships in -- the only version
-    a PASS can ever be claimed for."""
-    try:
-        return json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")).get("version", "?")
-    except (OSError, json.JSONDecodeError):
-        return "?"
+PLUGIN_ROOT = settings_template.PLUGIN_ROOT
+build_version = settings_template.build_version  # what build is running (one reader)
 
 
 def _repo_settings(repo_root: Path) -> dict:
@@ -180,7 +173,8 @@ def _plugin_items(plugin_probe) -> list[ItemResult]:
         return [ItemResult(
             "plugin:installed", "FAIL",
             f"{settings_template.PLUGIN_KEY} is not installed on this machine; install it with "
-            "`claude plugin marketplace add L26041040/rice-bootstrap && claude plugin install "
+            f"`claude plugin marketplace add {settings_template.MARKETPLACE_REPO}@"
+            f"{settings_template.release_ref(build_version())} && claude plugin install "
             f"{settings_template.PLUGIN_KEY}`, then start a new session",
             kind=EXISTS,
         ), ItemResult("plugin:build", "NOT_VERIFIED", "nothing installed to compare against", kind=MATCHES)]
@@ -197,8 +191,11 @@ def _plugin_items(plugin_probe) -> list[ItemResult]:
     else:
         build = ItemResult(
             "plugin:build", "FAIL",
-            f"installed {sorted(versions)} but this rubric is build {bv} -- update the install "
-            "(`claude plugin update`) and/or start a new session so the loaded build matches",
+            f"installed {sorted(versions)} but this session is running build {bv} -- they must be "
+            "the same build. If the install is already the release you want, start a fresh "
+            "session so it is the one that loads; otherwise point the install at that release "
+            f"(`claude plugin marketplace add {settings_template.MARKETPLACE_REPO}@release/<x.y.z>"
+            f" && claude plugin install {settings_template.PLUGIN_KEY}`) and start a fresh session",
             kind=MATCHES,
         )
     return [installed, build]

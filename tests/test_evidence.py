@@ -28,7 +28,7 @@ import reconcile  # noqa: E402
 import settings_template  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
-REF = "v1.0.0"
+REF = settings_template.release_ref()
 
 
 class _Result:
@@ -54,7 +54,7 @@ def _installed_plugin_probe(cmd):
 
 
 def _fully_correct_settings() -> dict:
-    return settings_template.desired_settings(REF, True)
+    return settings_template.desired_settings(settings_template.release_ref(), True)
 
 
 def _write_settings(repo_root: Path, settings: dict) -> Path:

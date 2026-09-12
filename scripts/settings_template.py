@@ -27,6 +27,9 @@ so Claude never creates a branch through it and also can't use it to list
 branches. Use `git status` or `git rev-parse --abbrev-ref HEAD` to see the
 current branch instead.
 """
+import json
+import re
+from pathlib import Path
 
 MARKETPLACE_NAME = "rice-bootstrap"
 MARKETPLACE_REPO = "L26041040/rice-bootstrap"
@@ -36,6 +39,36 @@ PLUGIN_KEY = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
 _MP = f"extraKnownMarketplaces.{MARKETPLACE_NAME}.source"
 REF_PATH = f"{_MP}.ref"
 
+# RICE-FINAL-001: a release is a branch on the public repository, named for
+# its exact version and immutable once pushed. That branch name IS the
+# delivery ref a repo records -- derived from the build itself, so nothing
+# ever asks upstream what "latest" is and the OWNER never types a SHA. It is
+# rice-defined, not an OWNER choice: whichever build verifies a repo writes
+# its own release branch there, so the record can never drift from the build
+# that actually configured the repo. There is no update lifecycle; a newer
+# rice is a newer Environment install, and a repo only changes when a newer
+# build bootstraps it.
+RELEASE_BRANCH_PREFIX = "release/"
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def build_version() -> str:
+    """The version of the build running this code -- the only version a PASS
+    can ever be claimed for, and the release branch it came from."""
+    try:
+        return json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")).get("version", "?")
+    except (OSError, json.JSONDecodeError):
+        return "?"
+
+
+def release_ref(version: str | None = None) -> str | None:
+    """The public branch that carries exactly this version, or None when the
+    version is not readable SemVer -- rice never pins a ref it made up."""
+    version = build_version() if version is None else version
+    return f"{RELEASE_BRANCH_PREFIX}{version}" if _SEMVER.match(version or "") else None
+
+
 RICE_STYLE = "rice:老弟"  # the plugin's bundled style, namespaced <plugin>:<name> (runtime-verified, #18)
 
 # Leaves rice owns outright: one value, at one dotted path, compared for
@@ -44,6 +77,7 @@ RICE_STYLE = "rice:老弟"  # the plugin's bundled style, namespaced <plugin>:<n
 RICE_DEFINED_KEYS = {
     f"{_MP}.source",
     f"{_MP}.repo",
+    REF_PATH,
     f"enabledPlugins.{PLUGIN_KEY}",
 }
 
@@ -57,7 +91,6 @@ RICE_DEFINED_KEYS = {
 DENY_PATH = "permissions.deny"
 
 OWNER_DEFINED_KEYS = {
-    REF_PATH,
     "env.RICE_SESSION_ARCHIVE",
 }
 
@@ -66,7 +99,7 @@ OWNER_DEFINED_KEYS = {
 # custom project style). Absent key == Claude's native default -- never a
 # placeholder value. The verifier checks that whatever is configured
 # actually resolves to an existing style (scripts/output_styles.py);
-# reconcile never writes or reasserts it; rice-update preserves it.
+# reconcile never writes or reasserts it, in any mode.
 OWNER_CHOICE_KEYS = {
     "outputStyle",
 }
@@ -126,8 +159,9 @@ RICE_DENY_ENTRIES = tuple(_DESTRUCTIVE_DENY + _BRANCH_CREATION_DENY + _MCP_DENY)
 
 def desired_settings(ref: str, archive_default: bool, output_style: str | None = RICE_STYLE) -> dict:
     """The full desired-state settings.json content for the given pinned
-    ref, this release's archive default, and the OWNER's output-style
-    choice (None = Claude default: the key is simply absent).
+    ref (the release branch of the build that is writing it), this release's
+    archive default, and the OWNER's output-style choice (None = Claude
+    default: the key is simply absent).
 
     `archive_default` is what THIS release ships as the default; bootstrap
     passes True/False for it depending on whether the OWNER asked to

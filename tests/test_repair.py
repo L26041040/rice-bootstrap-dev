@@ -55,7 +55,7 @@ PROBES = {"rtk_probe": _ok_rtk, "plugin_probe": _installed}
 
 def _correct_rice_state(root: Path):
     (root / ".claude").mkdir(parents=True, exist_ok=True)
-    s = settings_template.desired_settings("v9.9.9", True)
+    s = settings_template.desired_settings(settings_template.release_ref(), True)
     (root / ".claude" / "settings.json").write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8")
     (root / ".claude" / "rice.md").write_text(reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"), encoding="utf-8")
     (root / "CLAUDE.md").write_text(f"# proj\n\n{reconcile.IMPORT_LINE}\n", encoding="utf-8")
