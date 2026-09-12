@@ -3,6 +3,30 @@
 All notable changes to the `rice` plugin. The top entry's version must equal
 `.claude-plugin/plugin.json`'s `version` (a release check).
 
+## [0.1.3] - 2026-09-12
+
+The OWNER-only setup, written down where it is read first.
+
+- **`README.md` opens with `OWNER-ONLY: Claude Cloud Environment Setup`.**
+  Only the OWNER can do that step, in the Claude Code Web UI, on the
+  Environment itself -- no rice command and no Claude session can stand in
+  for it. It is done once per Environment; every container started from it
+  afterwards comes up with RTK, Matt Pocock's skills and rice already
+  installed, and each new container picks up the newest published release on
+  its own, because the install line names no version.
+- **The canonical setup script is in the README verbatim** -- RTK (install,
+  `PATH`, `rtk init -g --auto-patch`), Matt Pocock's skills marketplace and
+  plugin, then rice from public `main`. The earlier claim that Matt's plugin
+  was already provisioned elsewhere is gone: the script installs it. Matt's
+  repo-level `/mattpocock-skills:setup-matt-pocock-skills` is still a
+  separate OWNER step.
+- **Repo usage comes next, as the two lifecycles it is**: `/rice:bootstrap`
+  to configure this repo, `/rice:rice-uninstall` to remove rice from it.
+  Pinning `@release/<semver>` keeps its own section, moved below them: it is
+  the exception, not the way in.
+- The release check now caps only the README's lead paragraph, not
+  everything above `# FOR AGENTS`, and requires the OWNER-only heading.
+
 ## [0.1.2] - 2026-09-12
 
 Two lifecycles, and releases that never move.

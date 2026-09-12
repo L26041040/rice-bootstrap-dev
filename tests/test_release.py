@@ -227,13 +227,43 @@ class TestReleaseGates(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         default = f"claude plugin marketplace add {export_public.MARKETPLACE_REPO}\n"
         self.assertIn(default, readme)
-        block = readme.split("## Installation")[1].split("## Claude Code Web")[0]
+        block = readme.split("## Installation")[1].split("## Bootstrap")[0]
         self.assertIn(default, block)
-        # ... and the pinned form is still documented, for this version only
+        # ... and the pinned form is still documented, for this version only,
+        # in its own section below the two lifecycles (RICE-FINAL-003)
+        pinning = readme.split("## Pinning a specific version")[1]
         self.assertIn(f"claude plugin marketplace add {export_public.MARKETPLACE_REPO}"
-                      f"@{release.release_branch(release.plugin_version())}", block)
+                      f"@{release.release_branch(release.plugin_version())}", pinning)
         self.assertEqual(sorted(set(re.findall(r"release/\d+\.\d+\.\d+", readme))),
                          [release.release_branch(release.plugin_version())])
+
+    def test_the_readme_opens_with_the_owner_only_environment_setup(self):
+        """RICE-FINAL-003: the one step no rice command and no Claude session
+        can perform is the first thing the README says, with the exact script
+        the OWNER pastes into the Environment -- and the repo's two
+        lifecycles right after it, before any agent-facing contract."""
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        owner = readme.index("# OWNER-ONLY: Claude Cloud Environment Setup")
+        self.assertLess(owner, readme.index("# FOR AGENTS"))
+        self.assertLess(readme.index("/rice:bootstrap"), readme.index("# FOR AGENTS"))
+        self.assertLess(readme.index("/rice:rice-uninstall"), readme.index("# FOR AGENTS"))
+        # ... and pinning is documented, but not up there
+        self.assertGreater(readme.index("## Pinning a specific version"),
+                           readme.index("# FOR AGENTS"))
+        head = readme[owner:readme.index("# FOR AGENTS")]
+        for line in ("set -e",
+                     "curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/"
+                     "refs/heads/master/install.sh | sh",
+                     'export PATH="$HOME/.local/bin:$PATH"',
+                     "rtk init -g --auto-patch",
+                     "claude plugin marketplace add mattpocock/skills",
+                     "claude plugin install mattpocock-skills@mattpocock",
+                     f"claude plugin marketplace add {export_public.MARKETPLACE_REPO}",
+                     "claude plugin install rice@rice-bootstrap"):
+            self.assertIn(line, head)
+        # the cap on the human introduction measures the lead paragraph only,
+        # so an operational block at the top never trips it
+        self.assertEqual(release.gate_readme(ROOT).state, "PASS")
 
     def test_promote_moves_main_onto_an_already_published_release(self):
         """The recovery path, and the only way main moves without a new

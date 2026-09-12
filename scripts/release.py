@@ -31,6 +31,7 @@ import settings_template  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 README_REQUIRED = (
+    "# OWNER-ONLY: Claude Cloud Environment Setup",
     "# FOR AGENTS",
     "## Installation",
     "## Bootstrap",
@@ -141,11 +142,28 @@ def gate_version(root: Path, requested: str | None) -> Gate:
     return Gate("version:consistent", "PASS", pv)
 
 
+def _lead_paragraph(text: str) -> list[str]:
+    """The human introduction: what sits under the title, before the first
+    section. Everything from that heading on -- the OWNER-only Environment
+    setup, its script, the agent contract -- is content this cap does not
+    police."""
+    lines = text.splitlines()
+    out = []
+    for line in lines[1:]:
+        if line.startswith("#"):
+            break
+        if line.strip():
+            out.append(line)
+    return out
+
+
 def gate_readme(root: Path) -> Gate:
     """The README is part of the release surface (RICE-FINAL-002): its
     default install command carries no version, because public `main` is the
     latest pointer an Environment installs from; the only release branch it
-    may name, for pinning, is its own."""
+    may name, for pinning, is its own. It opens with the OWNER-only Cloud
+    Environment setup (RICE-FINAL-003), which is operational content, not
+    introduction -- only the lead paragraph under the title is length-capped."""
     p = root / "README.md"
     if not p.exists():
         return Gate("readme:agent-contract", "FAIL", "README.md missing")
@@ -161,10 +179,10 @@ def gate_readme(root: Path) -> Gate:
                     f"name for pinning is its own, {branch}")
     if missing:
         return Gate("readme:agent-contract", "FAIL", "missing required content: " + ", ".join(repr(m) for m in missing))
-    human_intro = text.split("# FOR AGENTS", 1)[0]
-    body_lines = [l for l in human_intro.splitlines() if l.strip() and not l.startswith("#")]
+    body_lines = _lead_paragraph(text)
     if len(body_lines) > 12:
-        return Gate("readme:agent-contract", "FAIL", f"human introduction too long ({len(body_lines)} lines before FOR AGENTS)")
+        return Gate("readme:agent-contract", "FAIL",
+                    f"human introduction too long ({len(body_lines)} lines under the title)")
     return Gate("readme:agent-contract", "PASS")
 
 
