@@ -407,6 +407,8 @@ class TestThereIsNoUpdateSystem(unittest.TestCase):
         for py in self.SHIPPED:
             if py.name in ("release.py", "export_public.py"):
                 continue  # private release tooling, never shipped to a repo
+            if py.name == "delete_remote_branch.py":
+                continue  # reads whether ONE named branch exists on origin; nothing about "latest"
             code = "".join(py.read_text(encoding="utf-8").split('"""')[::2])
             # tokens that can only mean "rice updating itself". (`upstream` on
             # its own is the session archive's git upstream -- unrelated.)

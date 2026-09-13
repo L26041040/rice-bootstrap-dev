@@ -24,6 +24,15 @@
             "statusMessage": "Syncing session archive..."
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/session_context.py\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [

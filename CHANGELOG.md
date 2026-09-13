@@ -3,6 +3,24 @@
 All notable changes to the `rice` plugin. The top entry's version must equal
 `.claude-plugin/plugin.json`'s `version` (a release check).
 
+## [0.1.6] - 2026-09-13
+
+A privileged channel for the one git write rice denies the agent.
+
+- **`scripts/delete_remote_branch.py`** deletes one branch on `origin` when
+  the OWNER explicitly asks: `python3 <plugin root>/scripts/delete_remote_branch.py
+  <repo_root> <branch>`. Refuses invalid names, origin's default branch,
+  `main` and `master`; never forces; never touches a local branch (the
+  checked-out branch's remote ref may go); an already-absent branch is a
+  success; origin is re-read afterwards and the branch must be gone. The
+  `permissions.deny` rules on `git branch` / `git push --delete` / `git push
+  -d` are unchanged -- the agent runs the helper, the helper runs git.
+- **`scripts/session_context.py`**, a plugin-level `SessionStart` hook: in a
+  repo rice has bootstrapped, one line of context naming that helper by the
+  path of the build actually loaded. Silent everywhere else. No skill, no
+  project setting, no re-bootstrap: an old repo learns the channel the moment
+  a session loads 0.1.6.
+
 ## [0.1.5] - 2026-09-13
 
 Documentation only; no runtime, architecture or test-logic change.

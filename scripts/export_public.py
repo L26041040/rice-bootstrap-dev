@@ -33,6 +33,8 @@ ALLOWLIST = (
     "scripts/repair.py",
     "scripts/archive_hook.py",
     "scripts/output_styles.py",
+    "scripts/delete_remote_branch.py",
+    "scripts/session_context.py",
     "output-styles/laodi.md",
     "resources/rice.md",
     "README.md",
