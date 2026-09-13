@@ -19,10 +19,8 @@ Setting → Permission → Skill/Script → Hook → DELETE-or-Policy
 
 Subagents default to Sonnet: it is the right trade for search, review and
 mechanical work. When a task genuinely needs a stronger model, name it out
-loud when dispatching the subagent -- there is no approval gate for that,
-and no setting pinning it either (RICE-BOOTSTRAP-046: rice stopped writing
-`env.CLAUDE_CODE_SUBAGENT_MODEL`, because that is the OWNER's call per repo,
-not rice's).
+loud when dispatching the subagent -- there is no approval gate and no
+setting pinning it.
 
 ## Conversation numbering
 

@@ -13,13 +13,11 @@ are facts, not ownership, and they live in `evidence.py`
 `verify.py` alone turns them into PASS or FAIL. And it has no git
 responsibility: it writes files, it does not commit them.
 
-Both `apply` and `check_owned` work against the *currently pinned* ref's
-desired state -- the ref is read from the target's own
-.claude/settings.json, never supplied as a parameter and never moved
-afterwards: rice has no update lifecycle (RICE-FINAL-001), so a repo keeps
-the release it was bootstrapped with. `apply(converge_drift=True)` is
-repair's mode: it overwrites rice-owned state that drifted, which ordinary
-reconcile reports as a conflict and leaves alone.
+Both `apply` and `check_owned` work against this build's desired state;
+nothing about the plugin itself is recorded in the repo (RICE-FIX-001).
+`apply(converge_drift=True)` is repair's mode: it overwrites rice-owned
+state that drifted, which ordinary reconcile reports as a conflict and
+leaves alone.
 """
 import json
 from dataclasses import dataclass
@@ -45,9 +43,10 @@ import settings_template
 #                owns exactly what it added and nothing around it. Install
 #                adds what is missing, uninstall subtracts exactly that, and
 #                project-owned bytes are never read as drift.
-#   leaf         one rice-defined settings value at one dotted path. A
-#                different value already there is a collision that cannot be
-#                merged losslessly: reported, never guessed at.
+#   leaf         one settings value at one dotted path -- today only the
+#                owner-defined `env.RICE_SESSION_ARCHIVE`, written once and
+#                never reasserted, and the retired leaves uninstall still
+#                takes back.
 #
 # The pending marker is rice-created repo state too, so it lives here with
 # the rest of what rice puts in a repo (RICE-BOOTSTRAP-045 folded the old
@@ -453,9 +452,7 @@ def write_owner_choices(repo_root, *, archive=None, output_style=UNSET) -> list[
     `outputStyle` are the OWNER's, written once when they are absent and
     never created, fixed or reasserted by an ordinary reconcile pass (#13's
     Ownership model). Each value here is written only if its key is missing,
-    so re-running bootstrap can never overwrite an OWNER's answer. The
-    delivery ref is not here: it is rice-defined and follows the build
-    (RICE-FINAL-001), so `apply` writes it.
+    so re-running bootstrap can never overwrite an OWNER's answer.
 
     `output_style` distinguishes three cases: UNSET (not asked -- leave the
     key exactly as it is), None (the OWNER chose Claude's native default --

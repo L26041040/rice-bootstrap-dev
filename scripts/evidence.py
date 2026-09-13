@@ -118,8 +118,8 @@ CANONICAL_SCOPE = "user"  # RICE-BOOTSTRAP-044C: rice is a user-scope plugin, li
 
 def install_scopes(plugin_probe=None) -> tuple[dict, str | None]:
     """({scope: [versions]} for this plugin, error). The one read of *where*
-    rice is installed, shared by the verifier's rubric and the update
-    lifecycle so there is never a second truth about it."""
+    rice is installed, shared by the verifier's rubric and the bootstrap
+    engine so there is never a second truth about it."""
     entries, err = installed_entries(plugin_probe)
     if err:
         return {}, err
@@ -209,7 +209,7 @@ def classify_install(plugin_probe=None) -> tuple:
     plugin is installed. Two installs -- at different scopes, or twice at the
     canonical one -- is an unsupported duplicate, not a healthy install:
     which one a session loads is not something rice may guess at. The
-    verifier's `plugin:scope` item and the update lifecycle both read this,
+    verifier's `plugin:scope` item and the bootstrap engine both read this,
     so there is never a second truth about it; only how the answer is
     presented differs."""
     scopes, err = install_scopes(plugin_probe)

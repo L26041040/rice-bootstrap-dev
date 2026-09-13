@@ -5,14 +5,12 @@ This module defines DATA (what the settings should look like for the
 current release), not the reconcile logic that writes/compares it -- that
 lives in reconcile.py (ticket #23).
 
-Every rice-owned leaf in settings.json is addressed by a dotted path and
-classified as either rice-defined (kept in sync on every reconcile pass)
-or owner-defined (written once at bootstrap, never reasserted -- see #13's
-Ownership model). Paths are the REAL nesting of the official settings
-schema (docs: plugin-marketplaces -> extraKnownMarketplaces), so they can
-be used verbatim for lookup. Anything not listed here is project-owned and
-never touched -- e.g. `permissions.allow`, other marketplaces, other
-plugins, other env vars.
+Every rice-owned leaf in settings.json is addressed by a dotted path into
+the real nesting of the official settings schema, usable verbatim for
+lookup. The leaves left are owner-defined (written once at bootstrap, never
+reasserted); `permissions.deny` is owned entry by entry. Anything not listed
+here is project-owned and never touched -- e.g. `permissions.allow`,
+marketplaces, plugins, other env vars.
 
 The subagent model is NOT a setting rice writes (RICE-BOOTSTRAP-046). It
 was `env.CLAUDE_CODE_SUBAGENT_MODEL`, hard-enforcing Sonnet on every repo
@@ -47,15 +45,10 @@ MARKETPLACE_REPO = "L26041040/rice-bootstrap"
 PLUGIN_NAME = "rice"
 PLUGIN_KEY = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
 
-# RICE-FINAL-001: a release is a branch on the public repository, named for
-# its exact version and immutable once pushed. That branch name IS the
-# delivery ref a repo records -- derived from the build itself, so nothing
-# ever asks upstream what "latest" is and the OWNER never types a SHA. It is
-# rice-defined, not an OWNER choice: whichever build verifies a repo writes
-# its own release branch there, so the record can never drift from the build
-# that actually configured the repo. There is no update lifecycle; a newer
-# rice is a newer Environment install, and a repo only changes when a newer
-# build bootstraps it.
+# A release is a branch on the public repository, named for its exact
+# version and immutable once pushed. Nothing in a repo records it
+# (RICE-FIX-001); it names the release branch when publishing, and the
+# optional `@release/<x.y.z>` pin in the install instructions.
 RELEASE_BRANCH_PREFIX = "release/"
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")

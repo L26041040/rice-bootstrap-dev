@@ -31,14 +31,13 @@ import settings_template  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 README_REQUIRED = (
-    "# OWNER-ONLY: Claude Cloud Environment Setup",
-    "# FOR AGENTS",
-    "## Installation",
-    "## Bootstrap",
-    "## Uninstall",
-    "## Release",
+    "## Install once",
+    "## Bootstrap a repo",
+    "## Uninstall from a repo",
     f"claude plugin marketplace add {export_public.MARKETPLACE_REPO}\n",
     "claude plugin install rice@rice-bootstrap",
+    "/rice:bootstrap",
+    "/rice:rice-uninstall",
     "RICE-" + "VERIFIED",
     "FINAL-" + "VERIFIED",
     ".claude/rice-" + "version",
@@ -144,9 +143,7 @@ def gate_version(root: Path, requested: str | None) -> Gate:
 
 def _lead_paragraph(text: str) -> list[str]:
     """The human introduction: what sits under the title, before the first
-    section. Everything from that heading on -- the OWNER-only Environment
-    setup, its script, the agent contract -- is content this cap does not
-    police."""
+    section heading. Sections are not capped."""
     lines = text.splitlines()
     out = []
     for line in lines[1:]:
@@ -158,12 +155,10 @@ def _lead_paragraph(text: str) -> list[str]:
 
 
 def gate_readme(root: Path) -> Gate:
-    """The README is part of the release surface (RICE-FINAL-002): its
-    default install command carries no version, because public `main` is the
-    latest pointer an Environment installs from; the only release branch it
-    may name, for pinning, is its own. It opens with the OWNER-only Cloud
-    Environment setup (RICE-FINAL-003), which is operational content, not
-    introduction -- only the lead paragraph under the title is length-capped."""
+    """The README is part of the release surface: the default install
+    command carries no version (public `main` is the latest pointer), the
+    only release branch it may name, for pinning, is its own, and the lead
+    paragraph under the title is length-capped."""
     p = root / "README.md"
     if not p.exists():
         return Gate("readme:agent-contract", "FAIL", "README.md missing")

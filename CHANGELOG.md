@@ -3,6 +3,19 @@
 All notable changes to the `rice` plugin. The top entry's version must equal
 `.claude-plugin/plugin.json`'s `version` (a release check).
 
+## [0.1.5] - 2026-09-13
+
+Documentation only; no runtime, architecture or test-logic change.
+
+- **README** cut to what a user does: requirements, the two install
+  commands, `/rice:bootstrap`, `/rice:rice-uninstall`, what rice configures,
+  license. Architecture history, gate explanations, ownership and release
+  internals are gone from it.
+- **Skills** (`bootstrap`, `rice-uninstall`) cut to their invariants and
+  commands; rationale and ticket history removed. Every MUST / NEVER kept.
+- Stale code comments that still described a repo-recorded release ref, a
+  project-scope distribution or an update lifecycle were corrected.
+
 ## [0.1.4] - 2026-09-13
 
 User-scope Rice, and nothing declared twice.

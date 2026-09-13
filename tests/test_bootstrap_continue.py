@@ -350,9 +350,10 @@ class TestSingleInvocationContract(unittest.TestCase):
 
     def test_readme_describes_no_second_rice_invocation(self):
         readme = (REPO / "README.md").read_text(encoding="utf-8")
-        self.assertIn("bootstrap_continue.py", readme)
-        self.assertIn("exactly one", readme)
+        self.assertIn("Run it once per repo", readme)
+        self.assertIn("finishes on its own", readme)
         self.assertNotIn("After the OWNER's Matt setup: `verify.py <repo> --final`", readme)
+        self.assertNotIn("run `/rice:bootstrap` again", readme)
 
 
 if __name__ == "__main__":

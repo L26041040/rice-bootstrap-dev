@@ -187,9 +187,9 @@ class TestReleaseGates(unittest.TestCase):
 
     def test_readme_contract_required_sections(self):
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d); (root / "README.md").write_text("# x\n\n# FOR AGENTS\n## Installation\n")
+            root = Path(d); (root / "README.md").write_text("# x\n\n## Install once\n")
             g = release.gate_readme(root)
-            self.assertEqual(g.state, "FAIL"); self.assertIn("## Bootstrap", g.detail)
+            self.assertEqual(g.state, "FAIL"); self.assertIn("## Bootstrap a repo", g.detail)
             # ... and a README that names a release branch other than this
             # build's: a reader copying its install command would get the
             # wrong version (RICE-FINAL-001)
@@ -222,47 +222,28 @@ class TestReleaseGates(unittest.TestCase):
             self.assertEqual(release.gate_version(root, "1.2.4").state, "FAIL")
 
     def test_the_default_install_in_the_readme_names_no_version(self):
-        """RICE-FINAL-002: an Environment's line must never need editing, so
-        the canonical install command carries no release branch."""
+        """An Environment's install line must never need editing, so the
+        canonical install command carries no release branch; the pinned form
+        names this version only."""
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         default = f"claude plugin marketplace add {export_public.MARKETPLACE_REPO}\n"
-        self.assertIn(default, readme)
-        block = readme.split("## Installation")[1].split("## Bootstrap")[0]
+        block = readme.split("## Install once")[1].split("## Bootstrap a repo")[0]
         self.assertIn(default, block)
-        # ... and the pinned form is still documented, for this version only,
-        # in its own section below the two lifecycles (RICE-FINAL-003)
-        pinning = readme.split("## Pinning a specific version")[1]
         self.assertIn(f"claude plugin marketplace add {export_public.MARKETPLACE_REPO}"
-                      f"@{release.release_branch(release.plugin_version())}", pinning)
+                      f"@{release.release_branch(release.plugin_version())}", block)
         self.assertEqual(sorted(set(re.findall(r"release/\d+\.\d+\.\d+", readme))),
                          [release.release_branch(release.plugin_version())])
 
-    def test_the_readme_opens_with_the_owner_only_environment_setup(self):
-        """RICE-FINAL-003: the one step no rice command and no Claude session
-        can perform is the first thing the README says, with the exact script
-        the OWNER pastes into the Environment -- and the repo's two
-        lifecycles right after it, before any agent-facing contract."""
+    def test_the_readme_is_short_and_says_only_what_a_user_does(self):
+        """RICE-DOC-001: install once, bootstrap per repo, uninstall per repo
+        -- in that order, in under a minute's reading, with no internals."""
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        owner = readme.index("# OWNER-ONLY: Claude Cloud Environment Setup")
-        self.assertLess(owner, readme.index("# FOR AGENTS"))
-        self.assertLess(readme.index("/rice:bootstrap"), readme.index("# FOR AGENTS"))
-        self.assertLess(readme.index("/rice:rice-uninstall"), readme.index("# FOR AGENTS"))
-        # ... and pinning is documented, but not up there
-        self.assertGreater(readme.index("## Pinning a specific version"),
-                           readme.index("# FOR AGENTS"))
-        head = readme[owner:readme.index("# FOR AGENTS")]
-        for line in ("set -e",
-                     "curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/"
-                     "refs/heads/master/install.sh | sh",
-                     'export PATH="$HOME/.local/bin:$PATH"',
-                     "rtk init -g --auto-patch",
-                     "claude plugin marketplace add mattpocock/skills",
-                     "claude plugin install mattpocock-skills@mattpocock",
-                     f"claude plugin marketplace add {export_public.MARKETPLACE_REPO}",
-                     "claude plugin install rice@rice-bootstrap"):
-            self.assertIn(line, head)
-        # the cap on the human introduction measures the lead paragraph only,
-        # so an operational block at the top never trips it
+        self.assertLess(readme.index("## Install once"), readme.index("## Bootstrap a repo"))
+        self.assertLess(readme.index("## Bootstrap a repo"), readme.index("## Uninstall from a repo"))
+        self.assertLessEqual(len(readme.splitlines()), 80)
+        for internal in ("Gate A", "Gate B", "reconcile", "verify.py", "repair.py",
+                         "release.py", "ownership", "manifest", "extraKnownMarketplaces"):
+            self.assertNotIn(internal, readme, internal)
         self.assertEqual(release.gate_readme(ROOT).state, "PASS")
 
     def test_promote_moves_main_onto_an_already_published_release(self):
