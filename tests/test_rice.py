@@ -430,33 +430,6 @@ class TestThereIsNoUpdateSystem(unittest.TestCase):
         self.assertEqual(rice.RELEASE_REF, f"release/{manifest['version']}")
 
 
-class TestTheRefFollowsTheBuild(LifecycleBase):
-    def test_a_build_that_cannot_name_its_release_pins_nothing(self):
-        """An unreadable plugin.json must never become `release/?` on disk."""
-        self.assertIsNone(settings_template.release_ref("?"))
-        with mock.patch.object(settings_template, "build_version", return_value="?"), \
-             tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            items = {i.name: i for i in reconcile.apply(root)}
-            self.assertEqual(items[f"settings:{settings_template.REF_PATH}"].state, "conflict")
-            self.assertFalse((root / ".claude" / "settings.json").exists())
-
-    def test_a_newer_build_bootstrapping_the_repo_records_its_own_release(self):
-        """With no update path, the only thing that can move a repo's
-        recorded release is a newer build bootstrapping it -- and it must, or
-        the record would outlive the build that made it."""
-        self.bootstrap()
-        s = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        reconcile._set_path(s, settings_template.REF_PATH, "release/0.0.1")  # bootstrapped long ago
-        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
-
-        outcome = self.bootstrap()
-        self.assertTrue(outcome.ok, outcome.lines)
-        after = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        self.assertEqual(reconcile._get_path(after, settings_template.REF_PATH), rice.RELEASE_REF)
-        self.assertTrue(any("source.ref" in a for a in outcome.repaired.applied), outcome.repaired.applied)
-
-
 class TestDirectives(LifecycleBase):
     """Every OWNER-facing reply is decided here, so the adapter can present it
     without branching."""
@@ -504,7 +477,6 @@ class TestOwnerChoices(LifecycleBase):
     def test_owner_answers_are_written_once_and_never_overwritten(self):
         self.bootstrap(output_style="mine")
         s = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        self.assertEqual(reconcile._get_path(s, settings_template.REF_PATH), rice.RELEASE_REF)
         self.assertEqual(s["env"]["RICE_SESSION_ARCHIVE"], "1")
         self.assertEqual(s["outputStyle"], "mine")
         self.bootstrap(archive=False, output_style="other")
@@ -512,18 +484,56 @@ class TestOwnerChoices(LifecycleBase):
         self.assertEqual(s["env"]["RICE_SESSION_ARCHIVE"], "1")
         self.assertEqual(s["outputStyle"], "mine")
 
-    def test_the_pinned_ref_is_this_builds_release_branch(self):
-        """RICE-FINAL-001: read from the build, never asked of upstream, and
-        it never moves under a bootstrapped repo."""
-        self.assertEqual(rice.RELEASE_REF, f"release/{evidence.build_version()}")
+    def test_bootstrap_never_declares_the_plugin_at_project_scope(self):
+        """RICE-FIX-001: rice's own install is user scope only -- a fresh
+        bootstrap must never write `extraKnownMarketplaces`/`enabledPlugins`
+        into the repo it configures."""
         self.bootstrap()
         s = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        self.assertEqual(reconcile._get_path(s, settings_template.REF_PATH), rice.RELEASE_REF)
+        self.assertNotIn("extraKnownMarketplaces", s)
+        self.assertNotIn("enabledPlugins", s)
 
     def test_claude_default_style_stays_absent_never_a_placeholder(self):
         self.bootstrap(output_style=None)
         s = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
         self.assertNotIn("outputStyle", s)
+
+
+class TestLegacyProjectScopeMigration(LifecycleBase):
+    """RICE-FIX-001: a repo `/rice:bootstrap` configured under 0.1.3 also
+    carries a project-scope plugin declaration that build wrote. Re-running
+    bootstrap on it must migrate that away and still reach the same outcome
+    a fresh repo would."""
+
+    def _plant_013_leftover(self):
+        p = self.root / ".claude" / "settings.json"
+        s = json.loads(p.read_text(encoding="utf-8"))
+        s.setdefault("extraKnownMarketplaces", {})[settings_template.MARKETPLACE_NAME] = {
+            "source": {"source": "github", "repo": settings_template.MARKETPLACE_REPO,
+                      "ref": f"release/{evidence.build_version()}"}
+        }
+        s.setdefault("enabledPlugins", {})[settings_template.PLUGIN_KEY] = True
+        p.write_text(json.dumps(s), encoding="utf-8")
+
+    def test_bootstrap_migrates_a_013_leftover_and_still_reaches_matt_handoff(self):
+        self.bootstrap()  # a fresh repo, as 0.1.3 would have left it up to the Matt hand-off
+        self._plant_013_leftover()
+        outcome = self.bootstrap()
+        self.assertEqual(outcome.stage, "waiting-for-matt", outcome.lines)
+        s = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        self.assertNotIn(settings_template.MARKETPLACE_NAME, s.get("extraKnownMarketplaces", {}))
+        self.assertNotIn(settings_template.PLUGIN_KEY, s.get("enabledPlugins", {}))
+
+    def test_bootstrap_migrates_a_013_leftover_all_the_way_to_final_verified(self):
+        _matt_artifacts(self.root)
+        self.bootstrap()  # a fresh repo already past the Matt hand-off (0.1.3-era)
+        self._plant_013_leftover()
+        outcome = self.bootstrap()
+        self.assertEqual(outcome.stage, "finalized", outcome.lines)
+        self.assertTrue(outcome.ok, outcome.lines)
+        s = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        self.assertNotIn(settings_template.MARKETPLACE_NAME, s.get("extraKnownMarketplaces", {}))
+        self.assertNotIn(settings_template.PLUGIN_KEY, s.get("enabledPlugins", {}))
 
     def test_styles_lists_this_builds_bundled_style(self):
         values = [s["value"] for s in rice.styles(self.root, **PROBES)]

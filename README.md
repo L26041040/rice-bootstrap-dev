@@ -221,7 +221,7 @@ moved or overwritten. Name it only when you mean to pin — reproducing a build,
 or rolling back:
 
 ```
-claude plugin marketplace add L26041040/rice-bootstrap@release/0.1.3
+claude plugin marketplace add L26041040/rice-bootstrap@release/0.1.4
 claude plugin install rice@rice-bootstrap
 ```
 

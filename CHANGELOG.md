@@ -3,6 +3,30 @@
 All notable changes to the `rice` plugin. The top entry's version must equal
 `.claude-plugin/plugin.json`'s `version` (a release check).
 
+## [0.1.4] - 2026-09-13
+
+User-scope Rice, and nothing declared twice.
+
+- **No more project-scope plugin declaration.** Through 0.1.3, bootstrap
+  also wrote `extraKnownMarketplaces.rice-bootstrap` and
+  `enabledPlugins.rice@rice-bootstrap` into the target repo's own
+  `.claude/settings.json`, pinned to the release that configured it. Rice's
+  distribution is user scope only -- the Environment installs it once, the
+  same way Matt Pocock's plugin is installed -- and a repo also declaring
+  the plugin risked Claude Code reading it as a second, unsupported
+  install, exactly what `plugin:scope` already exists to fail. Nothing
+  writes those keys anymore.
+- **`/rice:bootstrap` only confirms a usable install exists** (the
+  canonical, user-scope one) before reconciling a repo; it never installs,
+  enables, or pins the plugin itself.
+- **Migration.** A repo a 0.1.3-era bootstrap already left with that
+  project-scope declaration has it removed automatically -- on the next
+  `/rice:bootstrap` (identified narrowly enough that a project's own
+  unrelated marketplace or plugin entry is never touched) and on
+  `/rice:rice-uninstall` either way.
+- `/rice:rice-uninstall` still never touches the user-level plugin or
+  marketplace install; only this repo's own configuration.
+
 ## [0.1.3] - 2026-09-12
 
 The OWNER-only setup, written down where it is read first.

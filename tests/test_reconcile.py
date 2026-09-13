@@ -19,18 +19,16 @@ import reconcile  # noqa: E402
 import settings_template  # noqa: E402
 
 REF = settings_template.release_ref()
-# a rice-defined leaf, wherever a test needs "one value rice owns"
-LEAF_PATH = f"extraKnownMarketplaces.{settings_template.MARKETPLACE_NAME}.source.repo"
-LEAF_ITEM = f"settings:{LEAF_PATH}"
+LEGACY_ITEM = "settings:legacy-project-scope"
 
 
-def _leaf(settings):
-    return settings["extraKnownMarketplaces"]["rice-bootstrap"]["source"]["repo"]
-
-
-def _set_leaf(settings, value):
-    settings["extraKnownMarketplaces"]["rice-bootstrap"]["source"]["repo"] = value
-REF_PATH = settings_template.REF_PATH
+def _plant_legacy(settings: dict) -> None:
+    """A 0.1.3-era project-scope Rice declaration, exactly as that build's
+    `desired_settings` used to write it (RICE-FIX-001)."""
+    settings.setdefault("extraKnownMarketplaces", {})[settings_template.MARKETPLACE_NAME] = {
+        "source": {"source": "github", "repo": settings_template.MARKETPLACE_REPO, "ref": REF}
+    }
+    settings.setdefault("enabledPlugins", {})[settings_template.PLUGIN_KEY] = True
 
 
 def _states(items):
@@ -49,7 +47,7 @@ def _read_settings(repo_root: Path) -> dict:
 
 
 def _fully_correct_settings() -> dict:
-    return settings_template.desired_settings(settings_template.release_ref(), True)
+    return settings_template.desired_settings(True)
 
 
 def _make_correct_repo(repo_root: Path) -> None:
@@ -102,46 +100,46 @@ class ReconcileTestBase(unittest.TestCase):
         self._tmp.cleanup()
 
 
-class TestSettingsKeyStates(ReconcileTestBase):
-    def test_rice_defined_key_missing_is_created_on_apply_and_fails_check(self):
-        settings = _fully_correct_settings()
-        del settings["extraKnownMarketplaces"]["rice-bootstrap"]["source"]["repo"]
-        _write_settings(self.repo_root, settings)
+class TestLegacyProjectScopeMigration(ReconcileTestBase):
+    """RICE-FIX-001: 0.1.3 declared the plugin at PROJECT scope too. Rice's
+    distribution is user scope only; nothing here writes those keys again,
+    apply only ever migrates a leftover one away."""
 
-        check_items = _rubric(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(check_items)[LEAF_ITEM], "FAIL")
-
-        apply_items = reconcile.apply(self.repo_root)
-        self.assertEqual(_states(apply_items)[LEAF_ITEM], "created")
-        self.assertEqual(_leaf(_read_settings(self.repo_root)), settings_template.MARKETPLACE_REPO)
-
-    def test_rice_defined_key_match_is_noop(self):
+    def test_absent_is_pass_and_apply_is_a_noop(self):
         _write_settings(self.repo_root, _fully_correct_settings())
         check_items = _rubric(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(check_items)[LEAF_ITEM], "PASS")
+        self.assertEqual(_states(check_items)[LEGACY_ITEM], "PASS")
         apply_items = reconcile.apply(self.repo_root)
-        self.assertEqual(_states(apply_items)[LEAF_ITEM], "noop")
+        self.assertEqual(_states(apply_items)[LEGACY_ITEM], "noop")
 
-    def test_rice_defined_key_drift_without_rice_update_is_conflict_and_untouched(self):
+    def test_a_013_era_declaration_fails_check_and_is_migrated_away_on_apply(self):
         settings = _fully_correct_settings()
-        _set_leaf(settings, "elsewhere/repo")
+        _plant_legacy(settings)
         _write_settings(self.repo_root, settings)
 
         check_items = _rubric(self.repo_root, rtk_probe=_ok_rtk_probe)
-        self.assertEqual(_states(check_items)[LEAF_ITEM], "FAIL")
+        self.assertEqual(_states(check_items)[LEGACY_ITEM], "FAIL")
 
-        apply_items = reconcile.apply(self.repo_root, converge_drift=False)
-        self.assertEqual(_states(apply_items)[LEAF_ITEM], "conflict")
-        self.assertEqual(_leaf(_read_settings(self.repo_root)), "elsewhere/repo")
+        apply_items = reconcile.apply(self.repo_root)
+        self.assertEqual(_states(apply_items)[LEGACY_ITEM], "removed")
+        after = _read_settings(self.repo_root)
+        self.assertNotIn(settings_template.MARKETPLACE_NAME, after.get("extraKnownMarketplaces", {}))
+        self.assertNotIn(settings_template.PLUGIN_KEY, after.get("enabledPlugins", {}))
 
-    def test_rice_defined_key_drift_with_rice_update_is_overwritten(self):
+        # ... and it stays gone: a second apply is a plain noop
+        self.assertEqual(_states(reconcile.apply(self.repo_root))[LEGACY_ITEM], "noop")
+        self.assertEqual(_states(_rubric(self.repo_root, rtk_probe=_ok_rtk_probe))[LEGACY_ITEM], "PASS")
+
+    def test_a_projects_own_marketplace_or_plugin_at_another_name_is_untouched(self):
         settings = _fully_correct_settings()
-        _set_leaf(settings, "elsewhere/repo")
+        settings["extraKnownMarketplaces"] = {"other-marketplace": {"source": {"source": "github", "repo": "someone/else"}}}
+        settings["enabledPlugins"] = {"other-plugin@other-marketplace": True}
         _write_settings(self.repo_root, settings)
-
-        apply_items = reconcile.apply(self.repo_root, converge_drift=True)
-        self.assertEqual(_states(apply_items)[LEAF_ITEM], "updated")
-        self.assertEqual(_leaf(_read_settings(self.repo_root)), settings_template.MARKETPLACE_REPO)
+        self.assertEqual(_states(_rubric(self.repo_root, rtk_probe=_ok_rtk_probe))[LEGACY_ITEM], "PASS")
+        reconcile.apply(self.repo_root)
+        after = _read_settings(self.repo_root)
+        self.assertTrue(after["enabledPlugins"]["other-plugin@other-marketplace"])
+        self.assertIn("other-marketplace", after["extraKnownMarketplaces"])
 
     def test_output_style_is_owner_choice_never_written_or_reasserted(self):
         # OWNER chose a custom project style -> apply (even converging drift) leaves it alone
@@ -182,43 +180,6 @@ class TestOwnerAndRiceDefinedKeys(ReconcileTestBase):
         apply_items = reconcile.apply(self.repo_root)
         self.assertEqual(_states(apply_items)["settings:env.RICE_SESSION_ARCHIVE"], "FAIL")
         self.assertNotIn("RICE_SESSION_ARCHIVE", _read_settings(self.repo_root)["env"])
-
-    def test_ref_never_written_even_under_rice_update_with_newer_release_available(self):
-        settings = _fully_correct_settings()
-        _write_settings(self.repo_root, settings)
-        # Even though the caller is converging drift (as if a newer
-        # release exists), apply() has no code path that writes `ref` --
-        # it only ever reads it to know which version's desired state to
-        # converge everything else against.
-        reconcile.apply(self.repo_root, converge_drift=True)
-        current = _read_settings(self.repo_root)
-        self.assertEqual(
-            current["extraKnownMarketplaces"][settings_template.MARKETPLACE_NAME]["source"]["ref"], REF
-        )
-
-    def test_the_delivery_ref_is_rice_defined_and_follows_this_build(self):
-        """RICE-FINAL-001: the ref records which release configured this repo,
-        so rice writes it, converges it, and the OWNER never types it."""
-        settings = _fully_correct_settings()
-        del settings["extraKnownMarketplaces"][settings_template.MARKETPLACE_NAME]["source"]["ref"]
-        _write_settings(self.repo_root, settings)
-
-        self.assertEqual(_states(_rubric(self.repo_root, rtk_probe=_ok_rtk_probe))[f"settings:{REF_PATH}"], "FAIL")
-        self.assertEqual(_states(reconcile.apply(self.repo_root))[f"settings:{REF_PATH}"], "created")
-        self.assertEqual(reconcile._get_path(_read_settings(self.repo_root), REF_PATH),
-                         settings_template.release_ref())
-        self.assertEqual(_states(_rubric(self.repo_root, rtk_probe=_ok_rtk_probe))[f"settings:{REF_PATH}"], "PASS")
-
-    def test_a_ref_from_another_release_is_drift_only_repair_converges(self):
-        settings = _fully_correct_settings()
-        reconcile._set_path(settings, REF_PATH, "release/0.0.1")
-        _write_settings(self.repo_root, settings)
-        self.assertEqual(_states(reconcile.apply(self.repo_root))[f"settings:{REF_PATH}"], "conflict")
-        self.assertEqual(reconcile._get_path(_read_settings(self.repo_root), REF_PATH), "release/0.0.1")
-        self.assertEqual(_states(reconcile.apply(self.repo_root, converge_drift=True))[f"settings:{REF_PATH}"], "updated")
-        self.assertEqual(reconcile._get_path(_read_settings(self.repo_root), REF_PATH),
-                         settings_template.release_ref())
-
 
 class TestRiceMdWholeFile(ReconcileTestBase):
     def test_missing_is_created_on_apply_and_fails_check(self):
@@ -389,15 +350,14 @@ class TestProjectOwnedSettingsPreserved(ReconcileTestBase):
     def test_project_owned_keys_survive_apply_in_every_mode(self):
         settings = _fully_correct_settings()
         settings["permissions"]["allow"] = ["Bash(npm test *)"]
-        settings["enabledPlugins"]["other-plugin@other-marketplace"] = True
-        settings["extraKnownMarketplaces"]["other-marketplace"] = {
-            "source": {"source": "github", "repo": "someone/else"}
-        }
+        settings["enabledPlugins"] = {"other-plugin@other-marketplace": True}
+        settings["extraKnownMarketplaces"] = {"other-marketplace": {"source": {"source": "github", "repo": "someone/else"}}}
         settings["env"]["MY_OWN_VAR"] = "keep-me"
         settings["someOtherKey"] = {"nested": True}
-        # force a rice-defined drift so apply actually writes the file
+        # a 0.1.3-era legacy declaration, alongside the project's own --
+        # force a real write so apply actually touches the file
+        _plant_legacy(settings)
         settings["outputStyle"] = "drifted"
-        _set_leaf(settings, "elsewhere/repo")
         settings["permissions"]["ask"] = ["Bash(rm *)"]  # project-owned now (-024)
         _write_settings(self.repo_root, settings)
 
@@ -406,7 +366,10 @@ class TestProjectOwnedSettingsPreserved(ReconcileTestBase):
         self.assertEqual(after["outputStyle"], "drifted")  # OWNER choice: untouched by apply
         self.assertEqual(after["permissions"]["allow"], ["Bash(npm test *)"])
         self.assertEqual(after["permissions"]["ask"], ["Bash(rm *)"])
-        self.assertEqual(_leaf(after), settings_template.MARKETPLACE_REPO)  # rice-defined: converged
+        # the legacy rice declaration is migrated away ...
+        self.assertNotIn(settings_template.MARKETPLACE_NAME, after["extraKnownMarketplaces"])
+        self.assertNotIn(settings_template.PLUGIN_KEY, after["enabledPlugins"])
+        # ... and the project's own, differently-named entries are not
         self.assertTrue(after["enabledPlugins"]["other-plugin@other-marketplace"])
         self.assertIn("other-marketplace", after["extraKnownMarketplaces"])
         self.assertEqual(after["env"]["MY_OWN_VAR"], "keep-me")
@@ -433,7 +396,7 @@ class TestRubricKinds(ReconcileTestBase):
             "plugin:installed", "plugin:build", "plugin:scope",
             "output-style:bundled", "output-style:choice",
             "settings:permissions.deny",
-            LEAF_ITEM, "rice.md", "CLAUDE.md:import-line",
+            LEGACY_ITEM, "rice.md", "CLAUDE.md:import-line",
             "AGENTS.md:rice-pointer",
             "archive-hook:exists", "archive-sync-hook:exists", "continuation-hook:exists",
             "git-deny:behaves", "matt:artifacts", "rtk",

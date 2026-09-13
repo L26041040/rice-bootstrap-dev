@@ -116,12 +116,22 @@ AGENTS_POINTER = (
 )
 RICE_MD_RESOURCE = Path(__file__).resolve().parent.parent / "resources" / "rice.md"
 
-REF_PATH = settings_template.REF_PATH
 # settings_template's classification sets hold real dotted paths into the
 # official settings shape, usable verbatim for lookup. Sorted so report
 # order is stable.
-_RICE_LEAF_KEYS = sorted(settings_template.RICE_DEFINED_KEYS)
 _OWNER_LEAF_KEYS = sorted(settings_template.OWNER_DEFINED_KEYS)
+
+# RICE-FIX-001: through 0.1.3, rice also declared itself at PROJECT scope --
+# exactly the marketplace entry named `rice-bootstrap` pointing at this
+# build's own public repo, and `enabledPlugins.rice@rice-bootstrap`. Rice's
+# distribution is user scope only (RICE-BOOTSTRAP-044C); nothing here ever
+# writes these keys again. They are identified narrowly enough that a
+# project's own unrelated marketplace or plugin entry is never touched, and
+# migrated away wherever they are found -- on `apply` (so re-running
+# `/rice:bootstrap` on an old repo cleans them up before continuing) and on
+# `remove` (so uninstalling one never leaves them behind either).
+LEGACY_MARKETPLACE_PATH = f"extraKnownMarketplaces.{settings_template.MARKETPLACE_NAME}"
+LEGACY_ENABLED_PLUGIN_PATH = f"enabledPlugins.{settings_template.PLUGIN_KEY}"
 
 _MISSING = object()
 
@@ -184,47 +194,61 @@ def _current_settings(repo_root: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _current_ref(settings: dict) -> str | None:
-    v = _get_path(settings, REF_PATH)
-    return None if v is _MISSING else v
+def _is_rice_legacy_marketplace(entry) -> bool:
+    """Only a marketplace entry that is unmistakably rice's own -- source
+    `github`, repo this build's own public repo -- is 0.1.3-era rice state.
+    Anything else at the same name is the project's, and is left alone."""
+    if not isinstance(entry, dict):
+        return False
+    source = entry.get("source")
+    return (isinstance(source, dict) and source.get("source") == "github"
+            and source.get("repo") == settings_template.MARKETPLACE_REPO)
+
+
+def _legacy_project_scope_present(d: dict) -> tuple[bool, bool]:
+    mp = _get_path(d, LEGACY_MARKETPLACE_PATH)
+    has_mp = mp is not _MISSING and _is_rice_legacy_marketplace(mp)
+    has_plugin = _get_path(d, LEGACY_ENABLED_PLUGIN_PATH) is not _MISSING
+    return has_mp, has_plugin
+
+
+def _strip_legacy_project_scope(d: dict) -> bool:
+    """Remove a 0.1.3-era project-scope Rice declaration in place. Returns
+    whether anything was removed. Unconditional and always safe: the
+    identity check above is narrow enough that nothing project-owned is
+    ever at risk."""
+    has_mp, has_plugin = _legacy_project_scope_present(d)
+    if has_mp:
+        _del_path(d, LEGACY_MARKETPLACE_PATH)
+    if has_plugin:
+        _del_path(d, LEGACY_ENABLED_PLUGIN_PATH)
+    return has_mp or has_plugin
+
+
+def _legacy_project_scope_item(current: dict, *, write: bool) -> ItemResult:
+    name = "settings:legacy-project-scope"
+    has_mp, has_plugin = _legacy_project_scope_present(current)
+    if not has_mp and not has_plugin:
+        return ItemResult(name, "noop" if write else "PASS", kind=EXISTS, owned=True)
+    if not write:
+        found = ", ".join(p for p, present in
+                          ((LEGACY_MARKETPLACE_PATH, has_mp), (LEGACY_ENABLED_PLUGIN_PATH, has_plugin)) if present)
+        return ItemResult(
+            name, "FAIL",
+            f"0.1.3-era project-scope Rice plugin declaration still present ({found}) -- rice is "
+            "distributed at user scope only; run bootstrap again to migrate it away", kind=EXISTS, owned=True,
+        )
+    _strip_legacy_project_scope(current)
+    return ItemResult(name, "removed", "migrated away a 0.1.3-era project-scope Rice plugin declaration",
+                      kind=EXISTS, owned=True)
 
 
 def _settings_items(repo_root: Path, current: dict, *, write: bool, converge_drift: bool):
     """Returns (items, current) -- `current` is mutated in place when
     write=True and an item needs creating/updating."""
-    ref = settings_template.release_ref()
-    if ref is None:
-        # this build cannot say which release it is, so it must not pin one
-        return [ItemResult(
-            f"settings:{REF_PATH}", "conflict" if write else "FAIL",
-            "this build's version is not readable SemVer, so there is no release branch to "
-            "record; nothing was written", kind=EXISTS, owned=True,
-        )], current
-    desired = settings_template.desired_settings(ref, True)  # archive_default is inert here:
-    # env.RICE_SESSION_ARCHIVE is owner-defined and never taken from `desired`.
-
-    # read before the leaves below are written: they are the marker itself
-    fresh = _is_fresh_install(repo_root, current)
-    items = []
-    for key in _RICE_LEAF_KEYS:
-        cur = _get_path(current, key)
-        des = _get_path(desired, key)
-        if cur is _MISSING:
-            if write:
-                _set_path(current, key, des)
-                items.append(ItemResult(f"settings:{key}", "created", f"set to {des!r}", owned=True))
-            else:
-                items.append(ItemResult(f"settings:{key}", "FAIL", f"missing; desired={des!r}", owned=True))
-        elif cur == des:
-            items.append(ItemResult(f"settings:{key}", "noop" if write else "PASS", owned=True))
-        elif write and converge_drift:
-            _set_path(current, key, des)
-            items.append(ItemResult(f"settings:{key}", "updated", f"{cur!r} -> {des!r}", owned=True))
-        else:
-            items.append(ItemResult(
-                f"settings:{key}", "conflict" if write else "FAIL",
-                f"drift: current={cur!r} desired={des!r} (not overwritten)", owned=True,
-            ))
+    # read before anything below is written: it is the marker itself
+    fresh = _is_fresh_install(repo_root)
+    items = [_legacy_project_scope_item(current, write=write)]
     items.append(_deny_item(current, write=write, fresh=fresh))
 
     for key in _OWNER_LEAF_KEYS:
@@ -257,27 +281,37 @@ def _deny_entries(current: dict):
     return (cur, True) if isinstance(cur, list) else (cur, False)
 
 
-def rice_installed_here(current: dict) -> bool:
-    """Are rice's own settings already in this repo? The rice-defined leaves
-    are that marker: `apply` writes them and nothing else does, they live in
-    the very file being edited, and `remove` takes them away again."""
-    return any(_get_path(current, k) is not _MISSING for k in _RICE_LEAF_KEYS)
+def rice_installed_here(repo_root) -> bool:
+    """Is rice installed in this repo, right now? RICE-FIX-001 retired the
+    settings leaves that used to answer this (they were rice's PROJECT-scope
+    plugin declaration, itself removed) -- deliberately not a manifest, this
+    reads it instead from rice's own artifacts on disk: `.claude/rice.md`,
+    the import line in CLAUDE.md, the pointer block in AGENTS.md. Any ONE is
+    enough, the same way the old leaf pair required BOTH gone to read
+    "fresh": losing a single artifact to an unrelated edit or a partial
+    manual cleanup must never misread a still-bootstrapped repo as absent
+    and skip taking back rice's own `permissions.deny` occurrence on
+    uninstall. `apply` creates all three together; `remove` takes all three
+    away together."""
+    repo_root = Path(repo_root)
+    if (repo_root / ".claude" / "rice.md").exists():
+        return True
+    claude_md = repo_root / "CLAUDE.md"
+    if claude_md.exists() and any(
+            l.strip() == IMPORT_LINE for l in claude_md.read_text(encoding="utf-8").splitlines()):
+        return True
+    agents_md = repo_root / "AGENTS.md"
+    if agents_md.exists() and _agents_block_span(agents_md.read_text(encoding="utf-8")) is not None:
+        return True
+    return False
 
 
-def _is_fresh_install(repo_root: Path, current: dict) -> bool:
+def _is_fresh_install(repo_root: Path) -> bool:
     """Is this apply the moment rice arrives in this repo -- the one moment
     it may add its own occurrence of a deny rule the project may already
-    have (RICE-BOOTSTRAP-046)?
-
-    Both rice markers must be absent: its settings leaves AND the file it
-    copies in. They are written by the same `apply`, so requiring both makes
-    the answer robust to one of them being edited away afterwards -- the one
-    case a single marker would misread as "fresh" and let the multiset grow
-    by a whole set. Without a provenance manifest (deliberately not kept),
-    a truly fresh repo that already denies a rice rule and an established
-    repo stripped of BOTH markers are indistinguishable; this reads that
-    pair as fresh, which is the only reading that keeps 1 + 1 = 2."""
-    return not rice_installed_here(current) and not (repo_root / ".claude" / "rice.md").exists()
+    have (RICE-BOOTSTRAP-046)? Read from `rice_installed_here`, which is
+    exactly this question asked before `apply` writes anything."""
+    return not rice_installed_here(repo_root)
 
 
 def _deny_item(current: dict, *, write: bool, fresh: bool = False) -> ItemResult:
@@ -460,7 +494,7 @@ def apply(repo_root, *, converge_drift: bool = False) -> list[ItemResult]:
     settings_path = repo_root / ".claude" / "settings.json"
     current = _current_settings(repo_root)
     items, mutated = _settings_items(repo_root, current, write=True, converge_drift=converge_drift)
-    if any(i.state in ("created", "updated") for i in items):
+    if any(i.state in ("created", "updated", "removed") for i in items):
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         settings_path.write_text(json.dumps(mutated, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
                                  encoding="utf-8")
@@ -470,34 +504,31 @@ def apply(repo_root, *, converge_drift: bool = False) -> list[ItemResult]:
     return items
 
 
-def project_settings(current: dict) -> dict:
-    """`current` minus rice's own entries. Leaves go only when they still hold
-    rice's canonical value (a project value that replaced one is theirs now);
-    deny entries are subtracted one by one, keeping every project rule in its
-    original order; containers rice emptied are dropped, containers with
-    project content stay."""
+def project_settings(repo_root, current: dict) -> dict:
+    """`current` minus rice's own entries. A 0.1.3-era project-scope
+    declaration goes unconditionally (RICE-FIX-001); owner-defined leaves and
+    retired ones go by key/value; deny entries are subtracted one by one,
+    keeping every project rule in its original order; containers rice
+    emptied are dropped, containers with project content stay.
+
+    `repo_root` decides whether the deny subtraction runs at all --
+    `rice_installed_here(repo_root)`, read at the moment this is called, is
+    rice's only marker of "was rice actually here" now that there is no
+    settings leaf left to answer it. That makes removal idempotent by
+    construction: called before `remove()` deletes `.claude/rice.md` it sees
+    rice installed and subtracts; called again afterwards (a second
+    uninstall, or a plain check) it does not, so a project's own identical
+    deny rule is never eaten."""
     out = json.loads(json.dumps(current))  # deep copy, JSON-shaped
-    desired = settings_template.desired_settings(settings_template.release_ref() or "", True)
-    was_installed = rice_installed_here(current)
-    for key in _RICE_LEAF_KEYS:
-        # the delivery ref is the one leaf whose whole key is rice's: nothing
-        # but rice ever writes under its marketplace entry, so it goes
-        # whatever release it records -- including one an older build wrote.
-        if key == REF_PATH or _get_path(out, key) == _get_path(desired, key):
-            _del_path(out, key)
+    was_installed = rice_installed_here(repo_root)
+    _strip_legacy_project_scope(out)
     for key in _OWNER_LEAF_KEYS:
         _del_path(out, key)
     for key, value in RETIRED_LEAVES.items():
         if _get_path(out, key) == value:
             _del_path(out, key)
-    # Rice's deny occurrence goes only on the projection that actually
-    # completes the removal -- rice was installed here, and afterwards its
-    # marker is gone. That makes removal idempotent by construction: a second
-    # run, or one that leaves a drifted rice leaf behind, never subtracts
-    # again and so can never eat the project's own copy of a rule.
-    finishes_removal = was_installed and not rice_installed_here(out)
     cur, usable = _deny_entries(out)
-    if usable and cur and finishes_removal:
+    if usable and cur and was_installed:
         kept = _subtract_rice_deny(cur)
         if kept:
             _set_path(out, DENY_PATH, kept)
@@ -581,14 +612,17 @@ def remove(repo_root) -> list[str]:
     and byte-for-byte a no-op on everything rice does not own."""
     repo_root = Path(repo_root)
     actions = []
+    s_path = repo_root / ".claude" / "settings.json"
+    current = current_settings(repo_root) if s_path.exists() else None
+    # computed before `.claude/rice.md` is deleted below: `project_settings`
+    # reads "was rice here" from that file, and this is the one moment its
+    # answer must be "yes" for a repo rice actually configured.
+    projected = project_settings(repo_root, current) if current is not None else None
     for rel in OWNED_FILES:
         path = repo_root / rel
         if path.exists():
             path.unlink(); actions.append(f"removed {rel}")
-    s_path = repo_root / ".claude" / "settings.json"
-    current = current_settings(repo_root) if s_path.exists() else None
     if current is not None:  # None = not a JSON object: rice touches nothing it cannot read
-        projected = project_settings(current)
         if projected != current:
             if projected:
                 s_path.write_text(json.dumps(projected, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
@@ -629,6 +663,6 @@ def remnants(repo_root) -> dict:
         out["settings:rice-absent"] = ".claude/settings.json is not a JSON object"
     else:
         out["settings:rice-absent"] = ("rice entries remain in .claude/settings.json"
-                                       if project_settings(current) != current else "")
+                                       if project_settings(repo_root, current) != current else "")
     return out
 

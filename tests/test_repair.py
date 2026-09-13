@@ -55,7 +55,7 @@ PROBES = {"rtk_probe": _ok_rtk, "plugin_probe": _installed}
 
 def _correct_rice_state(root: Path):
     (root / ".claude").mkdir(parents=True, exist_ok=True)
-    s = settings_template.desired_settings(settings_template.release_ref(), True)
+    s = settings_template.desired_settings(True)
     (root / ".claude" / "settings.json").write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8")
     (root / ".claude" / "rice.md").write_text(reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"), encoding="utf-8")
     (root / "CLAUDE.md").write_text(f"# proj\n\n{reconcile.IMPORT_LINE}\n", encoding="utf-8")
@@ -133,21 +133,25 @@ class TestRepairActsOnlyOnNamedFailures(RepairBase):
     def test_rice_owned_failures_are_restored_from_canonical_state(self):
         _correct_rice_state(self.root)
         _git_denied_transcript(self.root)
-        # three rice-owned failures of three kinds: drift, missing file, missing leaf
+        # three rice-owned failures of three kinds: drift, missing file, a
+        # 0.1.3-era project-scope leftover that must be migrated away
         (self.root / ".claude" / "rice.md").write_text("hand-edited\n", encoding="utf-8")
         (self.root / "AGENTS.md").unlink()
         s = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        del s["enabledPlugins"]["rice@rice-bootstrap"]
+        s["enabledPlugins"] = {settings_template.PLUGIN_KEY: True}
         (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
 
         done, after = self.repair_once()
         self.assertTrue(after.ok, after.lines)
         self.assertTrue(any(a.startswith("rice.md") for a in done.applied), done.applied)
         self.assertTrue(any(a.startswith("AGENTS.md") for a in done.applied), done.applied)
-        self.assertTrue(any(a.startswith("settings:enabledPlugins") for a in done.applied))
+        self.assertTrue(any(a.startswith("settings:legacy-project-scope") for a in done.applied))
         self.assertEqual(done.unresolved, [])
         self.assertEqual((self.root / ".claude" / "rice.md").read_text(encoding="utf-8"),
                          reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
+        self.assertNotIn(settings_template.PLUGIN_KEY,
+                         json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
+                         .get("enabledPlugins", {}))
 
     def test_nothing_named_nothing_touched(self):
         """Repair re-derives nothing: handed a report with no failures it

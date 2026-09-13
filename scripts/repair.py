@@ -124,7 +124,7 @@ def repair(repo_root, report, *, plugin_probe=None, **_unused) -> RepairResult:
     if any(i.owned for i in failing):
         for a in reconcile.apply(repo_root, converge_drift=True):
             converged[a.name] = a
-            if a.state in ("created", "updated"):
+            if a.state in ("created", "updated", "removed"):
                 result.applied.append(f"{a.name}: {a.state} from canonical state" + (f" ({a.detail})" if a.detail else ""))
     for i in failing:
         if i.owned:
@@ -132,7 +132,7 @@ def repair(repo_root, report, *, plugin_probe=None, **_unused) -> RepairResult:
             # artifact apply could not converge losslessly (a `conflict`) is
             # reported, never silently counted as handled.
             a = converged.get(i.name)
-            if a is not None and a.state in ("created", "updated", "noop"):
+            if a is not None and a.state in ("created", "updated", "removed", "noop"):
                 continue
             state, detail = (a.state, a.detail) if a is not None else (i.state, i.detail)
             result.unresolved.append(f"{i.name}: {state}" + (f" -- {detail}" if detail else ""))

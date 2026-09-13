@@ -53,8 +53,11 @@ subsystem for this; those two commands are the whole mechanism.
 itself only if rice created it with nothing but that line); the
 marker-delimited rice pointer block in `AGENTS.md` (the file itself only if
 rice created it with nothing but that block);
-`.claude/rice-version`; `WAITING_FOR_MATT`; the `rice-bootstrap`
-marketplace entry; `enabledPlugins.rice@rice-bootstrap`;
+`.claude/rice-version`; `WAITING_FOR_MATT`; a 0.1.3-era PROJECT-scope
+leftover, if this repo still carries one -- the `rice-bootstrap`
+marketplace entry and `enabledPlugins.rice@rice-bootstrap` (RICE-FIX-001:
+rice's own install is user scope only, so nothing here writes these keys,
+only takes a leftover back);
 `env.RICE_SESSION_ARCHIVE`; `env.CLAUDE_CODE_SUBAGENT_MODEL` only while it
 still holds the `sonnet` rice used to write there before that pin was
 retired (RICE-BOOTSTRAP-046); one occurrence of each of rice's own

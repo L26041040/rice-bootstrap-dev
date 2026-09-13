@@ -54,7 +54,7 @@ def _installed_plugin_probe(cmd):
 
 
 def _fully_correct_settings() -> dict:
-    return settings_template.desired_settings(settings_template.release_ref(), True)
+    return settings_template.desired_settings(True)
 
 
 def _write_settings(repo_root: Path, settings: dict) -> Path:

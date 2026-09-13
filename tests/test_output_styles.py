@@ -104,20 +104,20 @@ class TestVerifierChoiceItem(unittest.TestCase):
         return {i.name: i for i in items}["output-style:choice"]
 
     def test_default_absent_passes(self):
-        self.assertEqual(self._state(settings_template.desired_settings("v1", True, output_style=None)).state, "PASS")
+        self.assertEqual(self._state(settings_template.desired_settings(True, output_style=None)).state, "PASS")
 
     def test_rice_style_passes(self):
-        self.assertEqual(self._state(settings_template.desired_settings("v1", True)).state, "PASS")
+        self.assertEqual(self._state(settings_template.desired_settings(True)).state, "PASS")
 
     def test_custom_project_style_passes_only_if_file_exists(self):
-        s = settings_template.desired_settings("v1", True, output_style="brand")
+        s = settings_template.desired_settings(True, output_style="brand")
         self.assertEqual(self._state(s).state, "FAIL")
         d = self.root / ".claude" / "output-styles"; d.mkdir()
         (d / "brand.md").write_text("---\nname: brand\n---\n", encoding="utf-8")
         self.assertEqual(self._state(s).state, "PASS")
 
     def test_dangling_value_fails(self):
-        self.assertEqual(self._state(settings_template.desired_settings("v1", True, output_style="ghost:style")).state, "FAIL")
+        self.assertEqual(self._state(settings_template.desired_settings(True, output_style="ghost:style")).state, "FAIL")
 
 
 if __name__ == "__main__":

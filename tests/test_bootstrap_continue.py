@@ -50,7 +50,7 @@ def _installed(cmd):
 
 def _make_correct_repo(root: Path, *, matt: bool):
     (root / ".claude").mkdir(parents=True, exist_ok=True)
-    s = settings_template.desired_settings(settings_template.release_ref(), True)
+    s = settings_template.desired_settings(True)
     (root / ".claude" / "settings.json").write_text(json.dumps(s, ensure_ascii=False), encoding="utf-8")
     (root / ".claude" / "rice.md").write_text(reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"), encoding="utf-8")
     claude_md = f"# proj\n\n{reconcile.IMPORT_LINE}\n"

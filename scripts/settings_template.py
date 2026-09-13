@@ -21,6 +21,17 @@ per task, or not at all. It is a working rule now, in `.claude/rice.md`:
 prefer Sonnet for subagents, name another model when a task wants one.
 Nothing here enforces it, and uninstall has nothing to take back.
 
+Rice's own marketplace/plugin declaration is NOT a setting rice writes
+either (RICE-FIX-001). Through 0.1.3 this template also declared
+`extraKnownMarketplaces.rice-bootstrap` and `enabledPlugins.rice@rice-bootstrap`
+at PROJECT scope, pinned to the release that bootstrapped the repo. Rice's
+distribution is user scope only (RICE-BOOTSTRAP-044C) -- the Environment's
+own setup script installs it once, the same way Matt Pocock's plugin is
+installed -- and a project also declaring the plugin risked Claude Code
+reading it as a second, unsupported install, exactly what `plugin:scope`
+already exists to fail. Nothing here writes those keys again;
+`reconcile.py` only ever migrates a 0.1.3-era declaration back out.
+
 Git safety is permission-only (RICE-BOOTSTRAP-019 superseded the narrow
 PreToolUse hook of #17): the whole `git branch` command class is denied,
 so Claude never creates a branch through it and also can't use it to list
@@ -35,9 +46,6 @@ MARKETPLACE_NAME = "rice-bootstrap"
 MARKETPLACE_REPO = "L26041040/rice-bootstrap"
 PLUGIN_NAME = "rice"
 PLUGIN_KEY = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
-
-_MP = f"extraKnownMarketplaces.{MARKETPLACE_NAME}.source"
-REF_PATH = f"{_MP}.ref"
 
 # RICE-FINAL-001: a release is a branch on the public repository, named for
 # its exact version and immutable once pushed. That branch name IS the
@@ -70,16 +78,6 @@ def release_ref(version: str | None = None) -> str | None:
 
 
 RICE_STYLE = "rice:老弟"  # the plugin's bundled style, namespaced <plugin>:<name> (runtime-verified, #18)
-
-# Leaves rice owns outright: one value, at one dotted path, compared for
-# equality. A leaf whose value is not rice's canonical one is a collision,
-# never something to overwrite outside an update.
-RICE_DEFINED_KEYS = {
-    f"{_MP}.source",
-    f"{_MP}.repo",
-    REF_PATH,
-    f"enabledPlugins.{PLUGIN_KEY}",
-}
 
 # `permissions.deny` is NOT a rice-owned leaf (RICE-BOOTSTRAP-045/-046): it
 # is a list a repo may already be using, so rice owns exactly ONE occurrence
@@ -157,29 +155,18 @@ _MCP_DENY = [
 RICE_DENY_ENTRIES = tuple(_DESTRUCTIVE_DENY + _BRANCH_CREATION_DENY + _MCP_DENY)
 
 
-def desired_settings(ref: str, archive_default: bool, output_style: str | None = RICE_STYLE) -> dict:
-    """The full desired-state settings.json content for the given pinned
-    ref (the release branch of the build that is writing it), this release's
-    archive default, and the OWNER's output-style choice (None = Claude
-    default: the key is simply absent).
+def desired_settings(archive_default: bool, output_style: str | None = RICE_STYLE) -> dict:
+    """The full desired-state settings.json content this repo should carry:
+    this release's archive default and the OWNER's output-style choice
+    (None = Claude default: the key is simply absent). Never the marketplace
+    or the plugin (RICE-FIX-001) -- rice's own install is user scope only,
+    and no repo-level desired state may declare it.
 
     `archive_default` is what THIS release ships as the default; bootstrap
     passes True/False for it depending on whether the OWNER asked to
     override it. Once written, `RICE_SESSION_ARCHIVE` and `outputStyle`
     are the OWNER's -- ordinary reconcile never reasserts them."""
     settings = {
-        "extraKnownMarketplaces": {
-            MARKETPLACE_NAME: {
-                "source": {
-                    "source": "github",
-                    "repo": MARKETPLACE_REPO,
-                    "ref": ref,
-                }
-            }
-        },
-        "enabledPlugins": {
-            PLUGIN_KEY: True,
-        },
         "env": {
             "RICE_SESSION_ARCHIVE": "1" if archive_default else "0",
         },

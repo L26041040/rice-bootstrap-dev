@@ -48,11 +48,13 @@ python3 "<plugin root>/scripts/rice.py" bootstrap <repo_root> \
     [--archive 0|1] [--output-style <name>|none]
 ```
 
-That is the entire bootstrap. It checks that rice is loaded, derives the
-delivery ref from its own release branch, writes the OWNER's answers if absent,
-reconciles rice-owned state, and runs the canonical flow — verify,
-deterministic repair on a FAIL, verify again — printing the verifier's own
-lines.
+That is the entire bootstrap. It checks that rice is loaded at the
+canonical user scope (never installing or declaring the plugin itself —
+that is the Environment's job, done once), writes the OWNER's answers if
+absent, reconciles rice-owned state — migrating away a 0.1.3-era
+project-scope plugin declaration if this repo still carries one
+(RICE-FIX-001) — and runs the canonical flow — verify, deterministic repair
+on a FAIL, verify again — printing the verifier's own lines.
 
 Do not run anything else first. Do not analyse the repo, hand-edit files,
 or try commands before this command has spoken: you are the last step in

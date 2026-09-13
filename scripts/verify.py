@@ -51,7 +51,7 @@ GATE_A = (
     "plugin:scope",
     "output-style:bundled",
     "output-style:choice",
-    *sorted(f"settings:{k}" for k in settings_template.RICE_DEFINED_KEYS),
+    "settings:legacy-project-scope",
     f"settings:{settings_template.DENY_PATH}",
     *sorted(f"settings:{k}" for k in settings_template.OWNER_DEFINED_KEYS),
     "rice.md",

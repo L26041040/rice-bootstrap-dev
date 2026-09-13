@@ -34,13 +34,13 @@ def _bootstrapped_repo(root: Path, *, extra_project_settings=True) -> None:
     """A fully rice-bootstrapped repo that also carries project-owned
     content of every kind rice must leave alone."""
     (root / ".claude").mkdir(parents=True, exist_ok=True)
-    s = settings_template.desired_settings(settings_template.release_ref(), True)
+    s = settings_template.desired_settings(True)
     if extra_project_settings:
         s["permissions"]["allow"] = ["Bash(npm test *)"]
         s["permissions"]["ask"] = ["Bash(rm *)"]
         s["permissions"]["deny"] = ["Bash(curl *)"] + s["permissions"]["deny"] + ["Bash(wget *)"]
-        s["enabledPlugins"]["other@mp"] = True
-        s["extraKnownMarketplaces"]["mp"] = {"source": {"source": "github", "repo": "x/y"}}
+        s["enabledPlugins"] = {"other@mp": True}
+        s["extraKnownMarketplaces"] = {"mp": {"source": {"source": "github", "repo": "x/y"}}}
         s["env"]["MY_VAR"] = "keep"
         s["hooks"] = {"SessionEnd": [{"matcher": "clear", "hooks": [{"type": "command", "command": "echo hi"}]}]}
         s["someOtherKey"] = {"nested": True}
@@ -93,7 +93,7 @@ class TestCleanUninstall(UninstallBase):
         self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", s["env"])
         self.assertNotIn("RICE_SESSION_ARCHIVE", s["env"])
         self.assertNotIn("outputStyle", s)  # rice's own canonical value goes with rice
-        for rule in settings_template.desired_settings("x", True)["permissions"]["deny"]:
+        for rule in settings_template.desired_settings(True)["permissions"]["deny"]:
             self.assertNotIn(rule, s["permissions"]["deny"])
 
     def test_project_owned_settings_preserved(self):
@@ -186,6 +186,26 @@ class TestCleanUninstall(UninstallBase):
             items, verdict = uninstall.check(root, expected=expected)
             self.assertEqual(verdict, "RICE-UNINSTALLED")
             self.assertEqual(sorted(p.name for p in root.iterdir()), ["README.md"])
+
+    def test_a_013_era_project_scope_leftover_is_migrated_away_too(self):
+        """RICE-FIX-001: uninstall never touches the user-level plugin
+        install, but a 0.1.3-era PROJECT-scope declaration is rice's own
+        leftover in the repo, and goes with everything else."""
+        _bootstrapped_repo(self.root)
+        s = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        s["extraKnownMarketplaces"][settings_template.MARKETPLACE_NAME] = {
+            "source": {"source": "github", "repo": settings_template.MARKETPLACE_REPO, "ref": "release/0.1.3"}
+        }
+        s["enabledPlugins"][settings_template.PLUGIN_KEY] = True
+        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
+        items, verdict = self._run()
+        self.assertEqual(verdict, "RICE-UNINSTALLED", "\n".join(f"{i.name} {i.state} {i.detail}" for i in items))
+        after = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        self.assertNotIn(settings_template.MARKETPLACE_NAME, after["extraKnownMarketplaces"])
+        self.assertNotIn(settings_template.PLUGIN_KEY, after["enabledPlugins"])
+        # ... and the project's own, unrelated entries in those same containers survive
+        self.assertTrue(after["enabledPlugins"]["other@mp"])
+        self.assertEqual(after["extraKnownMarketplaces"]["mp"]["source"]["repo"], "x/y")
 
     def test_claude_dir_removed_only_when_nothing_project_owned_remains(self):
         _bootstrapped_repo(self.root, extra_project_settings=False)

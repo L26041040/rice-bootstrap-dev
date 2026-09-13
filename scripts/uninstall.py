@@ -50,7 +50,7 @@ def expected_after(repo_root) -> dict:
     s_path = repo_root / ".claude" / "settings.json"
     if s_path.exists():
         current = reconcile.current_settings(repo_root)
-        exp["settings"] = reconcile.project_settings(current) if current is not None else None
+        exp["settings"] = reconcile.project_settings(repo_root, current) if current is not None else None
     for key, rel, project_view in (("claude_md", "CLAUDE.md", reconcile.project_claude_md),
                                    ("agents_md", "AGENTS.md", reconcile.project_agents_md)):
         path = repo_root / rel
