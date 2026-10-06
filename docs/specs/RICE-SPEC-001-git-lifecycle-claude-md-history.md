@@ -1,0 +1,503 @@
+# RICE-SPEC-001 — Git convergence, CLAUDE.md governance, session-history gate
+
+Status: canonical, frozen. Source: RICE-ARCH-REVIEW-001/-002/-003 and the OWNER's
+final decisions. This document freezes an approved design; it does not reopen it.
+Base: rice 0.1.6 (private main `4e7f210`).
+
+Keywords MUST / MUST NOT / MAY are normative.
+
+---
+
+## Problem Statement
+
+Three things keep going wrong for the OWNER in repos rice has bootstrapped:
+
+1. **Branches pile up.** Every Cloud session works on a platform-created
+   `claude/<slug>` branch. Rice denies the agent the git commands that would
+   finish such a branch, so the work is never converged onto `main` and the
+   branch is never removed — or the agent improvises around the deny.
+2. **CLAUDE.md turns into a trash can.** Agents append status reports,
+   decisions and hand-off notes to `CLAUDE.md`. Everything in that file is
+   loaded into every session, so the repo's always-on context grows with every
+   bit of working state anyone jotted down.
+3. **History is either always in the way or unreachable.** `session-history/`
+   is a cold archive of past sessions. An agent that greps the repo pulls old
+   conversations into context; an OWNER who actually needs the archaeology has
+   no sanctioned way to let the agent at it.
+
+## Solution
+
+From the OWNER's point of view:
+
+1. Work on whatever branch the platform gave the session. When the OWNER says
+   **「合併回主枝」**, the agent converges that branch onto the default branch in a
+   fixed, provable order and removes the remote temporary branch — and only then.
+   Nothing is ever merged or deleted on the agent's own judgement.
+2. `CLAUDE.md` stays routing-only forever. An agent that tries to write anything
+   else there is mechanically refused and told to put the content in an
+   ordinary project file that is not loaded automatically. The OWNER is never
+   prompted. Rice's one import line and Matt Pocock's fixed `## Agent skills`
+   block remain legal.
+3. `session-history/` is closed to the agent by default. The OWNER invokes the
+   **History Skill** (`/rice:history`) to hand the agent the key for the current
+   `/clear` segment; the agent then decides for itself what to search and read.
+   The key closes itself at the next `/clear`.
+
+All of it ships inside the rice plugin: one PreToolUse guard, one thin skill, a
+few lines in `rice.md`. No repo state is added, so bootstrap, repair, verify and
+uninstall are unchanged, and repos bootstrapped by older builds pick the
+behaviour up the moment a session loads the new build.
+
+---
+
+## User Stories
+
+1. As the OWNER, I want platform-created session branches and worktrees to be legal, so that Cloud and worktree sessions work without fighting rice.
+2. As the OWNER, I want the agent never to invent an additional branch, so that a repo has exactly the branches the platform and I created.
+3. As the OWNER, I want a session branch to count as finished only when I say 「合併回主枝」, so that nothing is merged behind my back.
+4. As the OWNER, I want convergence to run in one fixed order inside the same session, so that I can predict exactly what happens when I ask for it.
+5. As the OWNER, I want the agent to prove the default branch contains the session's work before any branch is deleted, so that work can never be lost to a cleanup.
+6. As the OWNER, I want a non-fast-forward or conflicting merge to stop everything and be reported, so that I resolve conflicts, not the agent.
+7. As the OWNER, I want PR-based merges to rely on GitHub deleting the head branch, so that rice does nothing GitHub already does.
+8. As the OWNER, I want the existing remote-branch helper used for the non-PR path, so that no new cleanup tooling appears.
+9. As the OWNER, I want no timer, scanner, pending-task store or background cleanup, so that rice never acts when I am not asking.
+10. As the OWNER, I want the destructive git deny rules unchanged, so that force-pushes and history rewrites stay impossible for the agent.
+11. As the OWNER, I want `CLAUDE.md` to stay routing-only, so that every session starts with a small, stable context.
+12. As the OWNER, I want an agent's attempt to write status into `CLAUDE.md` refused mechanically, so that the rule does not depend on the agent remembering it.
+13. As the OWNER, I want that refusal to tell the agent where to put the content instead, so that my task still gets done without me.
+14. As the OWNER, I want never to be prompted about `CLAUDE.md` writes, so that the guard costs me nothing.
+15. As the OWNER, I want the agent to choose the destination file itself, so that there is no single permanent dumping-ground file.
+16. As the OWNER, I want the agent never to be steered toward an always-loaded destination, so that the bloat does not simply move.
+17. As the OWNER, I want Matt Pocock's setup to keep writing its routing block, so that my workflow is untouched.
+18. As the OWNER, I want that exception to be narrow, so that "has a heading" is not a loophole.
+19. As the OWNER, I want rice to leave Claude's Auto Memory entirely alone, so that there is one memory system, Anthropic's.
+20. As the OWNER, I want the `/clear` archive to keep working exactly as today, so that nothing I rely on changes.
+21. As the OWNER, I want the agent not to read `session-history/` on its own, so that cold evidence stays out of live context.
+22. As the OWNER, I want a single command that opens history access for this `/clear` segment, so that archaeology is one invocation, not a negotiation.
+23. As the OWNER, I want to give no keywords and approve no individual reads once I have invoked the skill, so that the agent does the digging.
+24. As the OWNER, I want the key to close at the next `/clear`, so that history access never stays open by accident.
+25. As the OWNER, I want no search API, index, ranking or summary engine, so that rice does not grow a product around my archive.
+26. As the OWNER, I accept that a repo-wide search may show a few matching history lines, so that rice does not add machinery to chase them.
+27. As the OWNER, I want repos bootstrapped by older rice builds to gain all of this by loading the new build, so that no repo needs re-bootstrapping or migration.
+28. As the OWNER, I want `/rice:rice-uninstall` to remain an exact subtraction with nothing new to subtract, so that leaving rice is as clean as before.
+29. As an agent, I want the refusal reason to name what to do next, so that I can finish the task without asking.
+30. As an agent, I want the guard to stay silent in repos rice has not bootstrapped, so that rice never governs a repo it was not asked into.
+31. As an agent, I want a guard failure never to block unrelated work, so that a bug in rice does not stall a session.
+32. As the OWNER, I want the hook's words to be the only place these rules are decided, so that skills and prose carry no second copy of the logic.
+
+---
+
+## Glossary (terms used normatively below)
+
+- **default branch** — the branch `origin/HEAD` points at (the same read
+  `delete_remote_branch.py` already makes). Falls back to the local
+  `refs/remotes/origin/HEAD` symref. Unknown ⇒ convergence refuses.
+- **session branch** — the branch checked out when the OWNER asks for
+  convergence. It MUST NOT be the default branch.
+- **convergence** — the fixed sequence in §2 that lands a session branch on the
+  default branch and removes its remote ref. Triggered by the OWNER only.
+- **routing content** — in `CLAUDE.md`: rice's `@.claude/rice.md` import line
+  and Matt's `## Agent skills` block. Nothing else.
+- **working state** — status, progress, reports, decisions, hand-off notes,
+  working memory. Never routing content.
+- **always-loaded destination** — any file Claude Code loads into every
+  session: `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`, files reached by
+  `@import`, `.claude/rules/*.md` without `paths:` frontmatter, auto memory's
+  `MEMORY.md`, `AGENTS.md` when it is the project instruction file.
+- **the guard** — the single plugin-level PreToolUse hook introduced by this
+  spec.
+- **History Skill** — the plugin skill `history`, invoked as `/rice:history`.
+  A capability key; it does nothing but open the gate.
+- **/clear segment** — the records of the current transcript after the last
+  genuine `/clear` boundary, as `archive_hook.clear_boundary_ends` already
+  defines it (a user message whose content is the `/clear` command string;
+  tool results that merely mention `/clear` are not boundaries).
+- **rice repo** — a repo where `reconcile.rice_installed_here(cwd)` is true.
+
+---
+
+## 1. Invariants
+
+- I1 Convergence MUST be triggered only by the OWNER's explicit request to merge
+  back to the default branch. Rice MUST NOT infer completion from any signal.
+- I2 Convergence MUST follow the order in §2 and MUST stop at the first failing
+  step without deleting anything.
+- I3 Rice MUST NOT add a timer, scheduler, poller, pending-cleanup store, stale-
+  branch scanner or background cleanup of any kind.
+- I4 The 28 existing `permissions.deny` entries MUST stay byte-identical. The
+  verifier's `git-deny:behaves` probe (`git branch --show-current`) MUST stay.
+- I5 `CLAUDE.md` in a rice repo MUST contain only routing content from the day
+  the guard is active. Pre-existing project content is project-owned and MUST
+  NOT be rewritten by rice.
+- I6 Any Edit / Write / NotebookEdit targeting a rice repo's `CLAUDE.md` that is
+  not covered by the Matt exception (§4) MUST be denied by the guard with a
+  reason. Rice MUST NOT ask the OWNER, MUST NOT use `updatedInput`, and MUST
+  NOT add a `permissions.ask` or `permissions.deny` rule for this.
+- I7 The deny reason MUST tell the model to put working state in an ordinary
+  project file that is not loaded automatically, MUST list the always-loaded
+  destinations as forbidden, and MUST NOT name a specific destination file.
+- I8 Rice MUST NOT read, write, sync, enable or disable Claude's Auto Memory.
+- I9 The `/clear` archive lifecycle (`SessionEnd(clear)` archive, local commit,
+  `SessionStart(clear)` safe sync) MUST stay unchanged. No other `SessionEnd`
+  reason MAY archive.
+- I10 Reads that explicitly target `session-history/**` MUST be denied by the
+  guard unless the History Skill was invoked in the current `/clear` segment.
+- I11 The History Skill MUST be the only key. Once invoked, the guard MUST allow
+  targeted history reads for the rest of the segment without any further OWNER
+  approval. The key MUST close at the next `/clear`.
+- I12 Rice MUST NOT add repo-level state for any of this: no new settings keys,
+  no marker files, no Gate A/B items. Everything lives in the plugin.
+- I13 The guard MUST stay silent (no decision) outside rice repos, and MUST stay
+  silent on its own internal error so that a rice bug never blocks a session.
+- I14 Existing bootstrap / repair / verify / uninstall behaviour MUST be
+  unchanged, bit for bit, by this spec.
+
+---
+
+## 2. Exact lifecycle — convergence
+
+Trigger: the OWNER's explicit request (e.g. 「合併回主枝」, "merge this back to
+main"). Anything less — a finished task, a green test run, a closing message —
+MUST NOT trigger it.
+
+Preconditions the agent MUST check first; any failure ⇒ report and stop:
+
+- The repo is a git work tree with remote `origin`.
+- The default branch is readable (glossary).
+- The current branch is a session branch (not the default branch). If the
+  session is already on the default branch, convergence is a no-op: report it.
+- The working tree is clean (`git status --porcelain` empty). Uncommitted work
+  is the OWNER's to commit or discard; rice MUST NOT auto-commit here.
+
+Steps, in this order, each one gated on the previous:
+
+1. **Worktree.** If the session is inside a worktree Claude Code created, leave
+   it with the native lifecycle first (`ExitWorktree` keep/remove). The
+   remaining steps run in the primary checkout. Rice MUST NOT delete a
+   worktree itself.
+2. **Switch.** `git switch <default>`.
+3. **Fetch.** `git fetch origin`.
+4. **Fast-forward.** `git merge --ff-only <session>`. A non-fast-forward or a
+   conflict MUST stop everything here, leave both branches as they are, and
+   report the exact git output to the OWNER.
+5. **Push.** `git push origin <default>`. (A push on the default branch does not
+   match any rice deny rule; Auto mode MAY ask the OWNER once — that is the
+   platform's prompt, not rice's.)
+6. **Prove.** `git merge-base --is-ancestor <session> origin/<default>` MUST
+   succeed. If it does not, stop; nothing is deleted.
+7. **Cleanup remote.** Only now:
+   - PR path: if the OWNER merged through a pull request and GitHub's
+     *Automatically delete head branches* is on, the branch is already gone;
+     verify with `git ls-remote --heads origin <session>` and report.
+   - Otherwise: `python3 <plugin root>/scripts/delete_remote_branch.py <repo> <session>`.
+     Its existing refusals (default branch, `main`, `master`, invalid name,
+     unreadable origin) stand. An already-absent branch is success.
+   - A session branch that was never pushed has no remote ref: skip and report.
+
+What convergence MUST NOT do:
+
+- MUST NOT delete the local session branch or any worktree. Cloud VMs discard
+  them; local sessions use Claude Code's exit-time keep/remove and
+  `ExitWorktree`. (`Bash(git branch *)` stays denied; no new helper.)
+- MUST NOT use `--force`, `-D`, rebase, or any denied command.
+- MUST NOT run any step while a previous one has failed.
+
+Reporting: on success, name the default-branch SHA the push produced and the
+cleanup outcome. On failure, quote the failing command and its output; name the
+step; state that no branch was deleted.
+
+Where the order lives: in `rice.md` (the OWNER's working rules), as a numbered
+procedure. It is agent behaviour over existing git commands and the existing
+helper; it is not a new script.
+
+---
+
+## 3. The guard — hook behaviour
+
+One plugin-level PreToolUse hook, registered in `hooks/hooks.json` with matcher
+`Edit|Write|NotebookEdit|Read|Grep|Glob|Bash`, implemented as one script under
+`scripts/`. It receives the hook payload on stdin (`cwd`, `tool_name`,
+`tool_input`, `transcript_path`) and prints at most one JSON decision.
+
+Common rules:
+
+- G1 If `reconcile.rice_installed_here(cwd)` is false ⇒ print nothing, exit 0.
+- G2 Paths are resolved against `cwd` (which follows the agent into worktrees).
+  "Targets X" means the resolved path equals X or lies under X.
+- G3 A decision is `{"hookSpecificOutput": {"hookEventName": "PreToolUse",
+  "permissionDecision": "deny", "permissionDecisionReason": <reason>}}`.
+  The guard MUST NOT emit `allow` (it never widens permissions), MUST NOT emit
+  `ask`, and MUST NOT emit `updatedInput`.
+- G4 Any exception inside the guard ⇒ print nothing, exit 0 (I13). The guard
+  MAY write one line to stderr.
+- G5 The guard MUST evaluate both rules below on every call and deny if either
+  says so; it MUST NOT keep state between calls.
+
+### 3.1 CLAUDE.md governance
+
+Applies when the tool is Edit, Write or NotebookEdit and `file_path` targets
+`<repo>/CLAUDE.md`, or when the tool is Bash and the command text names
+`CLAUDE.md` as the target of a write (a redirection `>`/`>>` or `tee` whose
+operand resolves to `<repo>/CLAUDE.md`; `rtk`-rewritten forms count the same).
+
+- C1 Deny, unless the Matt exception (§4) holds.
+- C2 Reason text (normative content, wording MAY vary):
+  "rice: CLAUDE.md is routing only. Do not write status, progress, reports,
+  decisions, hand-off or working memory here. Put the content in an ordinary
+  project file that Claude Code does not load automatically — choose the file
+  from the content. Never: CLAUDE.md, any @import of it, .claude/rules files
+  without `paths:`, auto-memory MEMORY.md, AGENTS.md. If the OWNER wants
+  CLAUDE.md itself changed, the OWNER edits it directly."
+- C3 Reads of `CLAUDE.md` are never affected.
+- C4 Rice's own writes to `CLAUDE.md` (reconcile.apply, repair) are Python
+  subprocesses, not tool calls; the guard never sees them. No Rice exception is
+  needed and none MUST be added.
+
+### 3.2 session-history gate
+
+Applies when the tool is Read, Grep or Glob and `file_path`/`path`/`pattern`
+targets `<repo>/session-history/**`, or when the tool is Bash and the command
+text contains the path segment `session-history` (any form: `cat`, `head`,
+`sed`, `rtk read`, `cd session-history && …`, `grep … session-history`).
+
+- H1 Deny unless the key is present (§5).
+- H2 Reason text (normative content): "rice: session-history/ is cold
+  historical evidence and is closed by default. If this task genuinely needs
+  it, ask the OWNER to invoke /rice:history; do not work around this."
+- H3 Repo-wide Grep/Glob/`grep -r` whose arguments do not name
+  `session-history` are NOT matched. The OWNER has accepted that such searches
+  MAY surface individual matching lines or filenames from the archive. Rice
+  MUST NOT add filtering, `updatedInput` globs, `.ignore` files or any other
+  mechanism for this.
+- H4 Subprocess reads that do not name the path (e.g. a Python one-liner) are
+  outside the guard's reach by design. Rice MUST NOT add a sandbox
+  configuration, OS-level deny, or any other mechanism for this.
+- H5 The archive hook's own reads and writes of `session-history/` are hook
+  subprocesses, not tool calls; unaffected.
+
+---
+
+## 4. Matt exception boundary
+
+The Matt exception lets the official `setup-matt-pocock-skills` skill write its
+routing block. It is the only exception to §3.1 and it is two conditions, both
+required:
+
+- M1 **Actor.** The current `/clear` segment of the transcript contains an
+  invocation of the Matt setup skill: a `Skill` tool_use whose `skill` is
+  `mattpocock-skills:setup-matt-pocock-skills`, or a user message carrying the
+  `/mattpocock-skills:setup-matt-pocock-skills` command.
+- M2 **Shape.** Applying the edit in memory (old_string → new_string for Edit;
+  whole content for Write) changes the file only inside one `## Agent skills`
+  section: every added, removed or changed line lies between the `## Agent
+  skills` heading and the next heading of level 2 or higher (or end of file),
+  and every non-blank line of the resulting section is one of: the `## Agent
+  skills` heading; a `### ` sub-heading; or a one-line pointer containing
+  `docs/agents/`. Lines outside that section MUST be byte-identical before and
+  after.
+
+If either condition fails, the write is denied with the §3.1 reason. A heading
+string alone MUST NOT open the exception (M2 bounds the content; M1 bounds the
+actor). The exception MUST NOT be widened to other sections, other skills or
+other files.
+
+Rice's verifier keeps requiring the `## Agent skills` heading in `CLAUDE.md`
+(`evidence.MATT_HEADING`); nothing in this spec changes Matt's workflow or
+that check.
+
+---
+
+## 5. History Skill scope
+
+- S1 The skill is `skills/history/SKILL.md`, invoked as `/rice:history`. It is
+  the key and nothing else: it MUST NOT run scripts, MUST NOT ask the OWNER for
+  keywords, MUST NOT produce an index, summary, ranking or reader. Its body
+  tells the agent: history access is open for this `/clear` segment; decide
+  from the original task what to search and read in `session-history/`; use
+  what you find for that task; do not summarize the archive unless asked.
+- S2 Key detection (in the guard): the current `/clear` segment contains a
+  `Skill` tool_use whose `skill` is `rice:history` (or the unqualified
+  `history` when the plugin loader records it that way), or a user message
+  carrying the `/rice:history` command. Detection reads the transcript at
+  `transcript_path` only; it MUST NOT read or write any marker file.
+- S3 Scope: from the invocation to the next genuine `/clear` boundary. A new
+  session, a `/clear`, or a transcript without the invocation ⇒ closed. Cloud
+  `/clear` starts a new transcript and therefore closes the key by
+  construction.
+- S4 While open, every Read/Grep/Glob/Bash that targets `session-history/**` is
+  allowed (the guard simply prints nothing). No OWNER approval is requested per
+  read.
+- S5 Invoking the skill in a repo without rice is harmless: the guard is silent
+  there anyway (G1).
+
+---
+
+## 6. Ownership
+
+| Artifact | Created by | Repaired by | Verified by | Removed by |
+| --- | --- | --- | --- | --- |
+| guard script + `hooks.json` entry | the plugin build | n/a (plugin file) | tests only; no Gate item | uninstalling the plugin |
+| `skills/history/SKILL.md` | the plugin build | n/a | tests only | uninstalling the plugin |
+| `rice.md` policy lines | `reconcile.apply` (whole-file, existing) | `repair` (existing drift convergence) | Gate A `rice.md` (existing) | `/rice:rice-uninstall` (existing) |
+
+Nothing new is written into a target repo. `OWNED_FILES`, `RICE_DENY_ENTRIES`,
+`OWNER_DEFINED_KEYS`, `GATE_A`, `GATE_B` MUST NOT change. The export allowlist
+gains exactly the guard script and the skill file.
+
+---
+
+## 7. Failure behaviour
+
+- Convergence: first failing step stops the sequence; nothing is deleted; the
+  OWNER gets the failing command and its output. Rice MUST NOT retry, MUST NOT
+  fall back to `--no-ff`, rebase or force, and MUST NOT delete on a later turn
+  without the OWNER asking again.
+- Guard: a denied write/read returns the reason to the model as a tool error;
+  the model proceeds under that instruction. A guard crash is silent (G4). An
+  unreadable transcript ⇒ treat the key as absent and the Matt actor condition
+  as false (fail closed on the privilege, fail open on the session).
+- Archive: unchanged — report to stderr, never block.
+
+---
+
+## 8. Interaction with bootstrap / repair / uninstall / verify
+
+- `/rice:bootstrap`: unchanged. `reconcile.apply` writes the updated `rice.md`
+  on a fresh repo; on an already-bootstrapped repo the old `rice.md` is a Gate A
+  drift that `repair` converges when bootstrap is re-run. The guard and the skill
+  are active regardless, from the moment the new build is loaded.
+- `repair`: unchanged (converges `rice.md` as any whole-file drift).
+- `verify`: unchanged rubric; no new items (the rubric invariant that every
+  produced item is gated stays trivially true).
+- `/rice:rice-uninstall`: unchanged subtraction; there is nothing new in the
+  repo to subtract. `remnants` reports clean exactly as before.
+- Stop continuation, SessionStart context, archive hooks: unchanged; the new
+  hook is an additional entry in `hooks.json`, not a modification of existing
+  entries.
+- Matt setup: unchanged; passes the guard via §4.
+
+---
+
+## 9. Implementation Decisions
+
+- One new hook script implements both §3.1 and §3.2 as pure decision functions
+  over the parsed payload plus a transcript reader; the CLI entry only does I/O.
+  It imports `reconcile.rice_installed_here` and reuses
+  `archive_hook.clear_boundary_ends` for segmenting; it MUST NOT re-implement
+  either.
+- The History Skill is prose only.
+- `rice.md` gains: the convergence procedure (§2, numbered); "platform session
+  branches/worktrees are workspaces, never invent a branch"; "CLAUDE.md is
+  routing only; working state goes to ordinary project files"; "session-history
+  is cold; do not read it unless /rice:history was invoked".
+- `session_context.py`'s one-line SessionStart context stays as is (it already
+  points at the remote-branch helper); it MUST NOT grow.
+- Version: one plugin release carries all of the above. CHANGELOG entry
+  required. README MAY gain one line each for `/rice:history` and 「合併回主枝」;
+  it MUST stay short.
+
+---
+
+## 10. Testing Decisions
+
+Good tests here exercise external behaviour only: a hook payload in, a decision
+(or silence) out; a git repo in, branch/ref state out. No test inspects the
+guard's internals.
+
+Seams (existing ones preferred; one new one):
+
+- **Hook payload → stdout** — the seam every rice hook already uses
+  (`tests/test_bootstrap_continue.py`, `tests/test_delete_remote_branch.py::TestSessionContext`).
+  Feed JSON payloads with a temp repo and a fixture transcript; assert the
+  exact decision or empty output.
+- **Transcript fixture** — a small JSONL with and without the key / Matt
+  invocation, before and after a genuine `/clear` boundary. Prior art:
+  `tests/test_archive_hook.py` transcript fixtures.
+- **Temp git repos with a bare origin** — prior art:
+  `tests/test_delete_remote_branch.py::_make`. Used to assert the convergence
+  procedure's git preconditions as documented in `rice.md` and the helper's
+  behaviour at step 7 (already covered; extend only if the helper changes —
+  it MUST NOT).
+
+Coverage the ticket MUST include:
+
+- Guard silent in a non-rice repo; silent on malformed payload; silent on
+  internal exception (mocked).
+- CLAUDE.md: Edit/Write/NotebookEdit denied with the §3.1 reason; Bash `>>`/
+  `tee` forms denied; Read of CLAUDE.md untouched; other files untouched.
+- Matt exception: allowed only when M1 and M2 both hold; denied when the actor
+  is present but the edit touches another section; denied when the shape is
+  right but no Matt invocation exists in the segment; denied when the
+  invocation is before a later `/clear` boundary.
+- History: Read/Grep/Glob/Bash forms targeting `session-history` denied with
+  the §3.2 reason; allowed after `/rice:history` in the segment (both the
+  `Skill` tool_use form and the typed command form); closed again after a
+  genuine `/clear`; repo-wide Grep not matched.
+- Regression: `RICE_DENY_ENTRIES` still 28 and byte-identical; `GATE_A` /
+  `GATE_B` unchanged; `OWNED_FILES` unchanged; `hooks.json` existing entries
+  unchanged and the new entry present; export allowlist includes the two new
+  files; adapters still carry no lifecycle details (existing scan test).
+- `rice.md` text contains the convergence steps in order and the three policy
+  lines; uninstall round-trip still `RICE-UNINSTALLED` on a rice repo.
+
+---
+
+## 11. Fresh repo E2E acceptance criteria
+
+A new repo, new Cloud Environment with rice installed at user scope:
+
+1. `/rice:bootstrap` → `RICE-VERIFIED`, Matt hand-off; `CLAUDE.md` holds only the
+   import line.
+2. OWNER runs Matt setup → `## Agent skills` block written; guard allowed it
+   (M1+M2); Stop hook finishes → `FINAL-VERIFIED`, pushed to the session branch.
+3. During work the agent tries to append a status line to `CLAUDE.md` → denied;
+   no OWNER prompt; the agent writes the status into an ordinary project file it
+   chose; `CLAUDE.md` unchanged.
+4. The agent greps the repo → a history line may appear; the agent tries to
+   `Read` the archive file → denied with the history reason; no prompt.
+5. `/clear` → archive file + INDEX row + local commit on the session branch;
+   next `SessionStart(clear)` syncs only archive commits.
+6. OWNER invokes `/rice:history` and asks a question that needs the archive →
+   the agent reads under `session-history/` freely; no per-read prompt.
+7. `/clear` → the agent's next attempt to read the archive is denied again.
+8. OWNER says 「合併回主枝」 → steps 2–7 of §2 run in order; `origin/main`
+   contains the session commits (ancestor proof); the remote session branch is
+   gone (GitHub auto-delete or helper); local branch untouched.
+9. A second convergence request on the now-default branch is reported as a
+   no-op; nothing deleted.
+10. `/rice:rice-uninstall` → `RICE-UNINSTALLED`; the repo carries nothing from
+    this spec.
+
+None of the above may produce: a permission prompt caused by rice, an
+always-loaded file growing, a dirty working tree left by rice, a deleted branch
+without ancestor proof, a lost archive commit, or an uninstall residue.
+
+---
+
+## 12. Out of Scope
+
+- Any change to the 28 deny rules, the verifier rubric, the archive lifecycle,
+  the Stop continuation, the release model, or the install model.
+- Local branch / worktree deletion by rice (native lifecycle only).
+- A `finish_branch` helper, merge automation, PR creation, or any convergence
+  trigger other than the OWNER's words.
+- `permissions.ask` / `permissions.deny` rules for `CLAUDE.md` or
+  `session-history`; `updatedInput` redirects; a fixed status file.
+- Filtering repo-wide search results; sandbox or OS-level read denies.
+- Any Auto Memory integration; any memory generation, compression, summary or
+  database; `.claude/rules` content shipped by rice.
+- Retroactive cleanup of existing `CLAUDE.md` content.
+- Archiving on `SessionEnd` reasons other than `clear`.
+- Changing Matt Pocock's skills or where they write.
+
+## 13. Further Notes
+
+- Evidence behind the frozen decisions: PreToolUse deny+reason redirects the
+  model with no prompt (probe); `updatedInput` on Edit copies the source file
+  into the target (probe, rejected); `Read(...)` deny rules are bypassed by
+  RTK's `cat → rtk read` rewrite and never filter repo-wide Grep/Glob (probes),
+  which is why the gate is a command-text hook and not a permission rule;
+  `/clear` in the OWNER's Cloud environment fires `SessionEnd(clear)` and the
+  archive (transcript evidence); a Cloud session can `git switch main` (probe).
+- Enabling GitHub's *Automatically delete head branches* on the OWNER's repos is
+  a one-click repo setting outside rice; it is the preferred PR-path cleanup.
