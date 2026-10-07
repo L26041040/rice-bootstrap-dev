@@ -1,0 +1,97 @@
+"""Tests for the OWNER's working rules shipped in resources/rice.md
+(RICE-SPEC-001 §2, §9): OWNER-triggered convergence in its fixed order, no
+invented branches, CLAUDE.md routing-only, session-history cold behind the
+History Skill key -- each stated once.
+
+Run: python3 -m unittest tests.test_working_rules -v
+"""
+import re
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import reconcile  # noqa: E402
+import release  # noqa: E402
+
+REPO = Path(__file__).resolve().parents[1]
+RULES = reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8")
+
+
+def _section(text: str, heading: str) -> str:
+    start = text.index(heading)
+    nxt = text.find("\n## ", start + len(heading))
+    return text[start:] if nxt < 0 else text[start:nxt]
+
+
+class TestConvergence(unittest.TestCase):
+    SECTION = _section(RULES, "## Merging back to the default branch")
+
+    def test_only_the_owners_explicit_request_triggers_it(self):
+        s = self.SECTION
+        self.assertIn("合併回主枝", s)
+        self.assertIn("only", s.lower())
+        self.assertRegex(s, r"(?i)never .*(on your own|infer|guess)")
+
+    def test_the_seven_steps_appear_numbered_in_the_frozen_order(self):
+        steps = re.findall(r"(?m)^(\d+)\. (.+)$", self.SECTION)
+        self.assertEqual([int(n) for n, _ in steps], list(range(1, 8)))
+        markers = ("ExitWorktree", "git switch", "git fetch", "merge --ff-only",
+                   "git push origin", "merge-base --is-ancestor", "remote")
+        for (_, line), marker in zip(steps, markers):
+            self.assertIn(marker, line)
+
+    def test_preconditions_and_stop_without_deleting(self):
+        s = self.SECTION
+        for precondition in ("clean", "default branch", "origin"):
+            self.assertIn(precondition, s)
+        self.assertRegex(s, r"(?i)stop.*delet(e|ing) nothing|nothing is deleted")
+        self.assertIn("delete_branch_on_merge", s.replace("Automatically delete head branches", "delete_branch_on_merge"))
+        self.assertRegex(s, r"(?i)never .*local branch")
+        for forbidden in ("--force", "rebase", "git branch -D"):
+            self.assertIn(forbidden, s)  # named only as things never to do
+
+    def test_the_cleanup_uses_the_existing_helper_by_the_path_the_session_names(self):
+        self.assertIn("delete_remote_branch.py", self.SECTION)
+        self.assertNotIn("/root/", self.SECTION)  # no guessed plugin path in a repo file
+
+
+class TestPolicyLines(unittest.TestCase):
+    def test_platform_branches_are_workspaces_and_none_is_invented(self):
+        s = _section(RULES, "## Branches")
+        self.assertIn("workspace", s)
+        self.assertRegex(s, r"(?i)never (create|invent)")
+
+    def test_claude_md_is_routing_only(self):
+        s = _section(RULES, "## CLAUDE.md")
+        self.assertIn("routing", s)
+        for always_loaded in ("@import", ".claude/rules", "paths:", "MEMORY.md", "AGENTS.md"):
+            self.assertIn(always_loaded, s)
+
+    def test_session_history_is_cold_behind_the_key(self):
+        s = _section(RULES, "## Session history")
+        self.assertIn("/rice:history", s)
+        self.assertIn("/clear", s)
+        self.assertRegex(s, r"(?i)do not read")
+
+    def test_each_rule_is_stated_once_and_carries_no_ticket_archaeology(self):
+        for heading in ("## Merging back to the default branch", "## Branches", "## CLAUDE.md",
+                        "## Session history"):
+            self.assertEqual(RULES.count(heading), 1, heading)
+        self.assertNotRegex(RULES, r"RICE-[A-Z]+-\d+")
+        for kept in ("## Control hierarchy", "## Conversation numbering", "## Questions to the OWNER"):
+            self.assertIn(kept, RULES)
+
+
+class TestReadme(unittest.TestCase):
+    def test_one_line_each_and_still_short(self):
+        readme = (REPO / "README.md").read_text(encoding="utf-8")
+        self.assertEqual(readme.count("/rice:history"), 1)
+        self.assertEqual(readme.count("合併回主枝"), 1)
+        self.assertLessEqual(len(readme.splitlines()), 80)
+        self.assertEqual(release.gate_readme(REPO).state, "PASS")
+
+
+if __name__ == "__main__":
+    unittest.main()

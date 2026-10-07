@@ -34,6 +34,11 @@ to `/mattpocock-skills:setup-matt-pocock-skills`; after that setup, rice
 finishes on its own and reports `FINAL-VERIFIED <version>`, recorded in
 `.claude/rice-version`. Re-running is safe and never required.
 
+Work happens on the session's branch; when you say 「合併回主枝」 the agent
+fast-forwards it onto the default branch, proves it landed, then removes
+the remote branch. Past sessions in `session-history/` stay closed until
+you invoke `/rice:history`.
+
 ## Uninstall from a repo
 
 ```

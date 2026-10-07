@@ -15,6 +15,48 @@ Setting → Permission → Skill/Script → Hook → DELETE-or-Policy
 - If a requirement is not worth enough on its own, delete it. Do not add a
   framework for the sake of completeness.
 
+## Branches
+
+A branch or worktree the platform created for this session is a workspace,
+not repo state. Work on it as given. Never create or invent another branch.
+
+## Merging back to the default branch
+
+A session branch is finished only when the OWNER explicitly asks to merge it
+back (e.g. 「合併回主枝」). Never merge, or decide the work is done, on your own.
+
+Before starting, check: the working tree is clean, the current branch is not
+the default branch, and `origin` and its default branch are readable. If not,
+report it and stop. Then, in this order, each step only after the previous
+one succeeded:
+
+1. Inside a worktree Claude Code created: leave it with `ExitWorktree` first.
+2. `git switch <default branch>`
+3. `git fetch origin`
+4. `git merge --ff-only <session branch>`
+5. `git push origin <default branch>`
+6. `git merge-base --is-ancestor <session branch> origin/<default branch>`
+7. Only now remove the remote session branch: on a PR merge with GitHub's
+   "Automatically delete head branches" on, confirm it is gone; otherwise run
+   rice's `delete_remote_branch.py` at the path the session-start context names.
+
+If any step fails, stop, delete nothing, and report the failing command and
+its output. Never use `--force`, rebase or `git branch -D`; never delete a local branch or a worktree yourself.
+
+## CLAUDE.md
+
+CLAUDE.md holds routing only (rice's import line, Matt's `## Agent skills`
+block). Status, progress, reports, decisions, hand-off notes and working
+memory go into an ordinary project file that is not loaded automatically --
+pick it from the content. Never into CLAUDE.md, an @import, .claude/rules
+files without `paths:`, MEMORY.md or AGENTS.md.
+
+## Session history
+
+`session-history/` is cold evidence: do not read it unless the OWNER invoked
+`/rice:history` since the last `/clear`. Then search and read it as the task
+needs.
+
 ## Subagent model
 
 Subagents default to Sonnet: it is the right trade for search, review and
