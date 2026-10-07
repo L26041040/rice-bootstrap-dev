@@ -35,9 +35,12 @@ import settings_template
 # Three ownership shapes, and the shape decides what "safe on an existing
 # repo" means for that artifact:
 #
-#   whole-file   `.claude/rice.md` -- rice wrote the file, so rice may
-#                replace it wholesale on an update. Hand-edited at the same
-#                version is a collision: reported, never overwritten.
+#   whole-file   `.claude/rice.md` -- rice wrote the file, so rice replaces
+#                it wholesale. An ordinary reconcile reports a copy that
+#                differs from this build's as a conflict and leaves it; the
+#                repair every bootstrap runs on that FAIL restores it, so an
+#                update -- or any re-run -- brings it back to this build's.
+#                The OWNER's own rules belong in their own files, not here.
 #   additive     the `@.claude/rice.md` line in CLAUDE.md, the marker block
 #                in AGENTS.md, rice's own `permissions.deny` entries -- rice
 #                owns exactly what it added and nothing around it. Install
@@ -66,11 +69,15 @@ _MARKER_CONTENT = (
 
 # Files rice creates in a target repo. The verified-version file is NOT one
 # of them: verify.py owns that, and only verify.py writes it.
-# Leaves rice used to write and no longer does. They are still rice's to
-# take back on uninstall (an already-bootstrapped repo carries them), but
-# nothing re-creates or reasserts them. RICE-BOOTSTRAP-046 retired the
-# subagent pin: which model a subagent uses is the OWNER's call per repo, so
-# it became a working rule in `.claude/rice.md` instead of a setting.
+# Leaves rice used to write and no longer does, each with the exact value it
+# wrote. Nothing re-creates or reasserts them; wherever one is found with
+# that value it is rice's, and it is taken back -- by an update (re-running
+# bootstrap, RICE-UPGRADE-MATRIX-001) and by uninstall alike. A different
+# value at the same path is the project's and stays. RICE-BOOTSTRAP-046
+# retired the subagent pin, written by the rice 0.1.1 builds public `main`
+# shipped before release branches existed: which model a subagent uses is
+# the OWNER's call per repo, so it became a working rule in `.claude/rice.md`
+# instead of a setting.
 RETIRED_LEAVES = {"env.CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"}
 
 OWNED_FILES = {
@@ -205,9 +212,15 @@ def _is_rice_legacy_marketplace(entry) -> bool:
 
 
 def _legacy_project_scope_present(d: dict) -> tuple[bool, bool]:
+    """(rice's marketplace entry present, rice's enablement present). Every
+    build that declared itself at project scope wrote the enablement as
+    exactly `true` beside its own marketplace entry, so only that shape is
+    rice's: a `false` (the project switching rice off), or the enablement of
+    a same-named marketplace that is not rice's, is the project's."""
     mp = _get_path(d, LEGACY_MARKETPLACE_PATH)
     has_mp = mp is not _MISSING and _is_rice_legacy_marketplace(mp)
-    has_plugin = _get_path(d, LEGACY_ENABLED_PLUGIN_PATH) is not _MISSING
+    has_plugin = (_get_path(d, LEGACY_ENABLED_PLUGIN_PATH) is True
+                  and (mp is _MISSING or has_mp))
     return has_mp, has_plugin
 
 
@@ -215,13 +228,56 @@ def _strip_legacy_project_scope(d: dict) -> bool:
     """Remove a 0.1.3-era project-scope Rice declaration in place. Returns
     whether anything was removed. Unconditional and always safe: the
     identity check above is narrow enough that nothing project-owned is
-    ever at risk."""
+    ever at risk.
+
+    0.1.2/0.1.3 created `extraKnownMarketplaces` and `enabledPlugins` to hold
+    that declaration, so a container this removal empties goes with it
+    (RICE-UPGRADE-MATRIX-001)."""
     has_mp, has_plugin = _legacy_project_scope_present(d)
-    if has_mp:
-        _del_path(d, LEGACY_MARKETPLACE_PATH)
-    if has_plugin:
-        _del_path(d, LEGACY_ENABLED_PLUGIN_PATH)
+    for present, path in ((has_mp, LEGACY_MARKETPLACE_PATH), (has_plugin, LEGACY_ENABLED_PLUGIN_PATH)):
+        if present:
+            _take_back(d, path)
     return has_mp or has_plugin
+
+
+def _take_back(d: dict, dotted: str) -> None:
+    """Delete one rice leaf and every container that deletion emptied --
+    the rule uninstall's projection applies (`_prune_emptied`): a container
+    rice emptied is rice's, one still holding a project entry stays."""
+    parts = dotted.split(".")
+    chain, cur = [d], d
+    for part in parts[:-1]:
+        cur = cur.get(part) if isinstance(cur, dict) else None
+        if not isinstance(cur, dict):
+            return
+        chain.append(cur)
+    chain[-1].pop(parts[-1], None)
+    for depth in range(len(parts) - 1, 0, -1):
+        if chain[depth]:
+            break
+        chain[depth - 1].pop(parts[depth - 1], None)
+
+
+def _retired_present(d: dict) -> list[str]:
+    return [key for key, value in RETIRED_LEAVES.items() if _get_path(d, key) == value]
+
+
+def _retired_leaves_item(current: dict, *, write: bool) -> ItemResult:
+    """Every retired leaf still carrying the exact value rice wrote is
+    rice's to take back -- on an update as on uninstall (RICE-UPGRADE-MATRIX-001).
+    Until then the repo is not in this build's state, so the verifier cannot
+    say final while one remains."""
+    name = "settings:retired-leaves"
+    present = _retired_present(current)
+    if not present:
+        return ItemResult(name, "noop" if write else "PASS", kind=EXISTS, owned=True)
+    found = ", ".join(f"{k}={RETIRED_LEAVES[k]!r}" for k in present)
+    if not write:
+        return ItemResult(name, "FAIL", f"a setting rice no longer writes is still present ({found}) -- run "
+                          "bootstrap again to take it back", kind=EXISTS, owned=True)
+    for key in present:
+        _take_back(current, key)
+    return ItemResult(name, "removed", f"took back {found}, which rice no longer writes", kind=EXISTS, owned=True)
 
 
 def _legacy_project_scope_item(current: dict, *, write: bool) -> ItemResult:
@@ -248,6 +304,7 @@ def _settings_items(repo_root: Path, current: dict, *, write: bool, converge_dri
     # read before anything below is written: it is the marker itself
     fresh = _is_fresh_install(repo_root)
     items = [_legacy_project_scope_item(current, write=write)]
+    items.append(_retired_leaves_item(current, write=write))
     items.append(_deny_item(current, write=write, fresh=fresh))
 
     for key in _OWNER_LEAF_KEYS:

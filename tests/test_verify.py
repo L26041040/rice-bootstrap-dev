@@ -322,10 +322,12 @@ class TestVersionNotNewer(VerifierRunBase):
         with mock.patch.object(evidence, "build_version", lambda: build):
             return verify.run(self.root, rtk_probe=_ok_rtk, plugin_probe=_installed).item(self.ITEM)
 
-    def test_it_is_one_more_gate_a_item_and_nothing_else_changed(self):
-        before = (  # Gate A as rice 0.1.6 shipped it
+    def test_gate_a_is_016s_plus_exactly_the_two_update_safety_items(self):
+        """0.1.6's Gate A, plus `settings:retired-leaves`
+        (RICE-UPGRADE-MATRIX-001) and this item (RICE-SPEC-001 I17)."""
+        before = (  # Gate A as rice 0.1.6 shipped it, with the retired-leaves item in its place
             "plugin:installed", "plugin:build", "plugin:scope", "output-style:bundled",
-            "output-style:choice", "settings:legacy-project-scope",
+            "output-style:choice", "settings:legacy-project-scope", "settings:retired-leaves",
             f"settings:{settings_template.DENY_PATH}",
             *sorted(f"settings:{k}" for k in settings_template.OWNER_DEFINED_KEYS),
             "rice.md", "CLAUDE.md:import-line", "AGENTS.md:rice-pointer", "archive-hook:exists",

@@ -337,24 +337,44 @@ class TestMultisetSafetyUnderDrift(OwnershipBase):
         uninstall.uninstall(self.root)
         self.assertEqual(_tree(self.root), after)
 
-    def test_a_retired_setting_is_still_taken_back_on_uninstall(self):
-        """A repo bootstrapped before RICE-BOOTSTRAP-046 still carries the
-        subagent pin rice used to write; nothing re-creates it, and uninstall
-        still removes rice's own value."""
+    def _retired_state(self):
+        return {i.name: i.state for i in reconcile.check_owned(self.root)}.get("settings:retired-leaves")
+
+    def _plant_retired(self, value):
+        s = self.settings(); s.setdefault("env", {})["CLAUDE_CODE_SUBAGENT_MODEL"] = value
+        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
+
+    def test_a_retired_setting_is_taken_back_by_an_update_and_never_re_created(self):
+        """A repo bootstrapped by the rice 0.1.1 builds public `main` shipped
+        before RICE-BOOTSTRAP-046 (ec66f54 / 07c4891, `settings_template.py`
+        `"CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"`) still carries the subagent
+        pin. Re-running bootstrap -- the update path -- takes rice's own value
+        back, exactly as uninstall does (RICE-UPGRADE-MATRIX-001); nothing
+        writes it again."""
         self.existing_repo()
         self.install()
-        s = self.settings(); s.setdefault("env", {})["CLAUDE_CODE_SUBAGENT_MODEL"] = "sonnet"
-        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
-        self.install()  # an update never reasserts it
-        self.assertEqual(self.settings()["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "sonnet")
+        self._plant_retired("sonnet")
+        self.assertEqual(self._retired_state(), "FAIL")
+        self.install()
+        self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", self.settings().get("env", {}))
+        self.assertEqual(self._retired_state(), "PASS")
+        self.install()
+        self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", self.settings().get("env", {}))
+
+    def test_a_retired_setting_is_still_taken_back_on_uninstall(self):
+        self.existing_repo()
+        self.install()
+        self._plant_retired("sonnet")
         uninstall.uninstall(self.root)
         self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", self.settings().get("env", {}))
 
-    def test_a_project_value_at_the_retired_path_is_kept(self):
+    def test_a_project_value_at_the_retired_path_is_kept_by_update_and_uninstall(self):
         self.existing_repo()
         self.install()
-        s = self.settings(); s.setdefault("env", {})["CLAUDE_CODE_SUBAGENT_MODEL"] = "opus"
-        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
+        self._plant_retired("opus")
+        self.install()
+        self.assertEqual(self.settings()["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "opus")
+        self.assertEqual(self._retired_state(), "PASS")
         uninstall.uninstall(self.root)
         self.assertEqual(self.settings()["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "opus")
 

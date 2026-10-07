@@ -130,6 +130,57 @@ class TestLegacyProjectScopeMigration(ReconcileTestBase):
         self.assertEqual(_states(reconcile.apply(self.repo_root))[LEGACY_ITEM], "noop")
         self.assertEqual(_states(_rubric(self.repo_root, rtk_probe=_ok_rtk_probe))[LEGACY_ITEM], "PASS")
 
+    def test_the_containers_rice_created_go_with_its_declaration(self):
+        """RICE-UPGRADE-MATRIX-001: 0.1.2/0.1.3 created `extraKnownMarketplaces`
+        and `enabledPlugins` to hold its declaration. Migrating the
+        declaration away must not leave the two `{}` husks behind -- a fresh
+        install has neither, and uninstall would read a husk as the
+        project's own empty container and keep it forever."""
+        _make_correct_repo(self.repo_root)  # an already-bootstrapped repo
+        settings = _read_settings(self.repo_root)
+        _plant_legacy(settings)
+        _write_settings(self.repo_root, settings)
+        reconcile.apply(self.repo_root)
+        after = _read_settings(self.repo_root)
+        self.assertNotIn("extraKnownMarketplaces", after)
+        self.assertNotIn("enabledPlugins", after)
+        self.assertEqual(after, _fully_correct_settings())
+
+    def test_a_container_still_holding_project_entries_stays(self):
+        _make_correct_repo(self.repo_root)
+        settings = _read_settings(self.repo_root)
+        settings["enabledPlugins"] = {"other-plugin@other-marketplace": True}
+        _plant_legacy(settings)
+        _write_settings(self.repo_root, settings)
+        reconcile.apply(self.repo_root)
+        after = _read_settings(self.repo_root)
+        self.assertEqual(after["enabledPlugins"], {"other-plugin@other-marketplace": True})
+        self.assertNotIn("extraKnownMarketplaces", after)
+
+    def test_a_projects_own_false_enablement_is_never_read_as_rices(self):
+        """Every build that declared itself at project scope wrote `true`;
+        `false` is the project switching rice off, and stays."""
+        _make_correct_repo(self.repo_root)
+        settings = _read_settings(self.repo_root)
+        settings["enabledPlugins"] = {settings_template.PLUGIN_KEY: False}
+        _write_settings(self.repo_root, settings)
+        self.assertEqual(_states(_rubric(self.repo_root, rtk_probe=_ok_rtk_probe))[LEGACY_ITEM], "PASS")
+        reconcile.apply(self.repo_root)
+        self.assertIs(_read_settings(self.repo_root)["enabledPlugins"][settings_template.PLUGIN_KEY], False)
+
+    def test_the_enablement_of_a_same_named_marketplace_that_is_not_rices_stays(self):
+        _make_correct_repo(self.repo_root)
+        settings = _read_settings(self.repo_root)
+        fork = {"source": {"source": "github", "repo": "someone/rice-fork"}}
+        settings["extraKnownMarketplaces"] = {settings_template.MARKETPLACE_NAME: fork}
+        settings["enabledPlugins"] = {settings_template.PLUGIN_KEY: True}
+        _write_settings(self.repo_root, settings)
+        self.assertEqual(_states(_rubric(self.repo_root, rtk_probe=_ok_rtk_probe))[LEGACY_ITEM], "PASS")
+        reconcile.apply(self.repo_root)
+        after = _read_settings(self.repo_root)
+        self.assertEqual(after["extraKnownMarketplaces"][settings_template.MARKETPLACE_NAME], fork)
+        self.assertIs(after["enabledPlugins"][settings_template.PLUGIN_KEY], True)
+
     def test_a_projects_own_marketplace_or_plugin_at_another_name_is_untouched(self):
         settings = _fully_correct_settings()
         settings["extraKnownMarketplaces"] = {"other-marketplace": {"source": {"source": "github", "repo": "someone/else"}}}
