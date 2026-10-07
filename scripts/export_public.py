@@ -35,6 +35,7 @@ ALLOWLIST = (
     "scripts/output_styles.py",
     "scripts/delete_remote_branch.py",
     "scripts/session_context.py",
+    "scripts/guard.py",
     "output-styles/laodi.md",
     "resources/rice.md",
     "README.md",

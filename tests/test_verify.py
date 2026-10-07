@@ -284,7 +284,7 @@ class TestSoleAuthority(unittest.TestCase):
                 continue
             src = py.read_text(encoding="utf-8")
             self.assertNotIn("rice-version", src, f"{py.name} names rice-version")
-            if py.name == "uninstall.py":  # may unlink it, via verify's constant only, never write it
+            if py.name in ("uninstall.py", "guard.py"):  # may unlink / read it, via verify's constant only, never write it
                 self.assertIn("from verify import VERSION_FILE", src)
                 self.assertNotRegex(src, r"VERSION_FILE[^\n]*write")
 
