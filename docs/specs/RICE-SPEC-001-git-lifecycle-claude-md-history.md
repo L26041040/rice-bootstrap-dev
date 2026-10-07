@@ -326,10 +326,16 @@ that check.
   from the original task what to search and read in `session-history/`; use
   what you find for that task; do not summarize the archive unless asked.
 - S2 Key detection (in the guard): the current `/clear` segment contains a
-  `Skill` tool_use whose `skill` is `rice:history` (or the unqualified
-  `history` when the plugin loader records it that way), or a user message
-  carrying the `/rice:history` command. Detection reads the transcript at
+  user message that starts with the typed command and carries
+  `<command-name>/rice:history</command-name>` (compaction summaries and
+  meta records excluded). The skill sets `disable-model-invocation: true`, so
+  the model cannot invoke it; a `Skill` tool_use naming it can only be a
+  refused model attempt that still lands in the transcript, and MUST NOT
+  count as a key. Unqualified names (`/history`, `history`) MUST NOT count:
+  another skill may own them. Detection reads the transcript at
   `transcript_path` only; it MUST NOT read or write any marker file.
+  (Clarified in implementation from probe evidence: an OWNER invocation is
+  recorded as the command message, never as a Skill tool_use.)
 - S3 Scope: from the invocation to the next genuine `/clear` boundary. A new
   session, a `/clear`, or a transcript without the invocation ⇒ closed. Cloud
   `/clear` starts a new transcript and therefore closes the key by

@@ -103,7 +103,14 @@ class TestClaudeMdGuard(GuardBase):
                         f"echo x >> {self.root}/CLAUDE.md",
                         "echo x | tee -a CLAUDE.md",
                         "echo x | rtk tee CLAUDE.md",
-                        'cat notes.txt >> "CLAUDE.md"'):
+                        'cat notes.txt >> "CLAUDE.md"',
+                        "echo x >| CLAUDE.md",
+                        "echo x >& CLAUDE.md",
+                        "sed -i 's/a/b/' CLAUDE.md",
+                        "perl -pi -e 's/a/b/' CLAUDE.md",
+                        "cp notes.md CLAUDE.md",
+                        "mv /tmp/new.md ./CLAUDE.md",
+                        "install -m 644 notes.md CLAUDE.md"):
             decision = self.call("Bash", {"command": command})
             self.assertIsNotNone(decision, command)
             self.assertEqual(decision[0], "deny", command)
@@ -116,7 +123,10 @@ class TestClaudeMdGuard(GuardBase):
                 ("Bash", {"command": "grep -n Agent CLAUDE.md > /tmp/x.txt"}),
                 ("Write", {"file_path": str(self.root / "docs" / "notes.md"), "content": "Status"}),
                 ("Edit", {"file_path": str(self.root / "sub" / "CLAUDE.md"), "old_string": "a", "new_string": "b"}),
-                ("Bash", {"command": "echo x >> NOTES.md"})):
+                ("Bash", {"command": "echo x >> NOTES.md"}),
+                ("Bash", {"command": "cp CLAUDE.md /tmp/backup.md"}),
+                ("Bash", {"command": "sed -n 1p CLAUDE.md"}),
+                ("Bash", {"command": "mv CLAUDE.md.orig /tmp/x"})):
             self.assertIsNone(self.call(tool, tool_input), (tool, tool_input))
 
     def test_before_bootstrap_completion_claude_md_writes_pass(self):
@@ -138,6 +148,39 @@ class TestClaudeMdGuard(GuardBase):
         (self.root / ".claude").mkdir()
         (self.root / verify.VERSION_FILE).write_text("0.1.7\n")  # stray file, no rice artifacts
         self.assertIsNone(self.call("Write", {"file_path": str(self.root / "CLAUDE.md"), "content": "x"}))
+
+    def test_the_target_path_decides_the_repo_not_just_cwd(self):
+        """cwd elsewhere (another repo, /tmp) must not switch the rule off for
+        an absolute path into a rice repo."""
+        _rice_repo(self.root, finalized=True)
+        elsewhere = Path(tempfile.mkdtemp())
+        try:
+            self.assertEqual(self.call("Write", {"file_path": str(self.root / "CLAUDE.md"), "content": "x"},
+                                       cwd=elsewhere)[0], "deny")
+            self.assertEqual(self.call("Read", {"file_path": str(self.root / "session-history" / "a.md")},
+                                       cwd=elsewhere)[0], "deny")
+        finally:
+            elsewhere.rmdir()
+
+    def test_an_alias_of_claude_md_is_still_claude_md(self):
+        _rice_repo(self.root, finalized=True)
+        import os
+        os.link(self.root / "CLAUDE.md", self.root / "ALIAS.md")  # same inode
+        self.assertEqual(self.call("Edit", {"file_path": str(self.root / "ALIAS.md"), "old_string": "a",
+                                            "new_string": "b"})[0], "deny")
+
+    def test_one_rule_failing_never_switches_the_other_off(self):
+        _rice_repo(self.root, finalized=True)
+        with mock.patch.object(guard, "_claude_md_write", side_effect=RuntimeError("boom")):
+            decision = self.call("Bash", {"command": "cat session-history/a.md > ~nosuchuser_x/out"})
+        self.assertEqual(decision[0], "deny")
+        self.assertIn("/rice:history", decision[1])
+
+    def test_an_undecodable_claude_md_above_the_repo_does_not_disable_the_guard(self):
+        _rice_repo(self.root, finalized=True)
+        sub = self.root / "pkg"; sub.mkdir()
+        (sub / "CLAUDE.md").write_bytes(b"\xff\xfe not utf-8")
+        self.assertEqual(self.call("Bash", {"command": "echo x >> ../CLAUDE.md"}, cwd=sub)[0], "deny")
 
     def test_a_subdirectory_cwd_still_resolves_the_repo(self):
         _rice_repo(self.root, finalized=True)
@@ -229,11 +272,27 @@ class TestHistoryGate(GuardBase):
 
     def test_the_owners_command_opens_the_archive_for_the_segment(self):
         _rice_repo(self.root, finalized=True)
-        for key in (HISTORY_CMD, _skill_call("rice:history"), _skill_call("history"),
-                    _user("<command-name>/history</command-name>")):
+        for key in (HISTORY_CMD, _user("<command-message>rice:history</command-message>\n"
+                                       "<command-name>/rice:history</command-name>")):
             t = self.transcript(_user("old work"), CLEAR, _user("hi"), key, _user("why X?"))
             for tool, tool_input in self.targeted_calls():
                 self.assertIsNone(self.call(tool, tool_input, transcript=t), (key, tool, tool_input))
+
+    def test_only_the_owners_typed_command_is_a_key(self):
+        """The skill sets disable-model-invocation, so a Skill call can only be
+        the model trying -- and a refused attempt still lands in the
+        transcript. Neither it, an unqualified name that another skill may
+        own, nor a compaction summary quoting the command opens anything."""
+        _rice_repo(self.root, finalized=True)
+        compact = _user("This session is being continued from a previous conversation ...\n"
+                        "<command-name>/rice:history</command-name>")
+        compact_flagged = dict(_user("<command-name>/rice:history</command-name>"), isCompactSummary=True)
+        for not_a_key in (_skill_call("rice:history"), _skill_call("history"),
+                          _user("<command-name>/history</command-name>"), compact, compact_flagged,
+                          _user("please run <command-name>/rice:history</command-name> later")):
+            t = self.transcript(not_a_key, _user("why X?"))
+            decision = self.call("Read", {"file_path": str(self.root / "session-history" / "a.md")}, transcript=t)
+            self.assertEqual(decision[0], "deny", not_a_key)
 
     def test_the_next_clear_closes_the_key_again(self):
         _rice_repo(self.root, finalized=True)

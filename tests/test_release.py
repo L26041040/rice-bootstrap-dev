@@ -167,21 +167,17 @@ class TestReleaseGates(unittest.TestCase):
             gates, verdict, _ = release.check(dest=self.dest)
         self.assertTrue(verdict.startswith("RELEASE BLOCKED"))
 
-    def test_manifests_are_validated_on_the_export_that_ships(self):
+    def test_the_plugin_is_validated_once_on_the_export_never_on_the_dev_root(self):
         """The private dev root carries files the export excludes (a root
         CLAUDE.md among them) that newer `claude plugin validate` builds warn
-        about; the gate must judge the plugin as published."""
-        seen = []
-        def spy(root):
-            seen.append(Path(root))
-            self.assertTrue((Path(root) / ".claude-plugin" / "plugin.json").exists())
-            self.assertFalse((Path(root) / "CLAUDE.md").exists())
-            return release.Gate("manifests:valid", "PASS")
-        with mock.patch.object(release, "gate_tests", _pass_tests), \
-             mock.patch.object(release, "gate_manifests", spy), \
-             mock.patch.object(release, "gate_standalone", _pass_standalone):
-            release.check(dest=self.dest)
-        self.assertEqual(seen, [self.dest])
+        about. Validation belongs to gate_standalone, on the export, before
+        the audit; gate_manifests only checks the names."""
+        with mock.patch.object(release, "_run", side_effect=AssertionError("no shell-out")):
+            self.assertEqual(release.gate_manifests(ROOT).state, "PASS")
+        src = Path(release.__file__).read_text(encoding="utf-8")
+        start = src.index("def gate_standalone")
+        standalone = src[start:src.index("\ndef ", start + 1)]
+        self.assertIn('"claude", "plugin", "validate", str(dest)', standalone)
 
     def test_audit_sees_the_tree_after_standalone_ran(self):
         # standalone executes inside the export; anything it leaves behind

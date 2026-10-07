@@ -122,12 +122,11 @@ def gate_manifests(root: Path) -> Gate:
         return Gate("manifests:valid", "FAIL", f"manifest unreadable: {exc}")
     if pj.get("name") != "rice" or mp.get("name") != "rice-bootstrap":
         return Gate("manifests:valid", "FAIL", "plugin/marketplace names are not rice / rice-bootstrap")
-    rc, out = _run(["claude", "plugin", "validate", str(root)])
-    if rc != 0:
-        return Gate("manifests:valid", "FAIL", f"claude plugin validate failed (rc={rc}): {out.strip()[-300:]}")
-    if "warning" in out.lower():
-        return Gate("manifests:valid", "FAIL", f"claude plugin validate reported warnings: {out.strip()[-300:]}")
-    return Gate("manifests:valid", "PASS", "claude plugin validate clean")
+    # `claude plugin validate` runs once, in gate_standalone, on the export --
+    # what ships -- and before the audit. The private dev root carries files
+    # the export excludes (a root CLAUDE.md among them) that newer validate
+    # builds warn about.
+    return Gate("manifests:valid", "PASS", "names match; the export is validated in export:standalone")
 
 
 def gate_version(root: Path, requested: str | None) -> Gate:
@@ -244,14 +243,10 @@ def check(root: Path = ROOT, *, requested_version: str | None = None, dest: Path
     dest = Path(dest) if dest else Path(tempfile.mkdtemp(prefix="rice-export-"))
     gates = []
     gates.extend(gate_tests(root, run_tests))
-    export_gates = gate_export(root, dest)
-    # validate what ships: the private dev root carries files the export
-    # excludes (a root CLAUDE.md, tests/, session-history/) that newer
-    # `claude plugin validate` builds warn about
-    gates.append(gate_manifests(dest))
+    gates.append(gate_manifests(root))
     gates.append(gate_version(root, requested_version))
     gates.append(gate_readme(root))
-    gates.extend(export_gates)
+    gates.extend(gate_export(root, dest))
     failed = [g for g in gates if g.state != "PASS"]
     version = plugin_version(root)
     if failed:
