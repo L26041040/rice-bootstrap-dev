@@ -1,7 +1,8 @@
 # RICE-SPEC-001 — Git convergence, CLAUDE.md governance, session-history gate
 
 Status: canonical, frozen. Source: RICE-ARCH-REVIEW-001/-002/-003 and the OWNER's
-final decisions. This document freezes an approved design; it does not reopen it.
+final decisions (amended by RICE-TO-TICKET-002: the CLAUDE.md guard activates on
+bootstrap completion instead of carrying a Matt exception). This document freezes an approved design; it does not reopen it.
 Base: rice 0.1.6 (private main `4e7f210`).
 
 Keywords MUST / MUST NOT / MAY are normative.
@@ -36,8 +37,9 @@ From the OWNER's point of view:
 2. `CLAUDE.md` stays routing-only forever. An agent that tries to write anything
    else there is mechanically refused and told to put the content in an
    ordinary project file that is not loaded automatically. The OWNER is never
-   prompted. Rice's one import line and Matt Pocock's fixed `## Agent skills`
-   block remain legal.
+   prompted. The guard switches on only once a repo's bootstrap has fully
+   completed (`FINAL-VERIFIED`), so Rice's import line and Matt Pocock's
+   `## Agent skills` block — both written during bootstrap — need no exception.
 3. `session-history/` is closed to the agent by default. The OWNER invokes the
    **History Skill** (`/rice:history`) to hand the agent the key for the current
    `/clear` segment; the agent then decides for itself what to search and read.
@@ -68,8 +70,8 @@ behaviour up the moment a session loads the new build.
 14. As the OWNER, I want never to be prompted about `CLAUDE.md` writes, so that the guard costs me nothing.
 15. As the OWNER, I want the agent to choose the destination file itself, so that there is no single permanent dumping-ground file.
 16. As the OWNER, I want the agent never to be steered toward an always-loaded destination, so that the bloat does not simply move.
-17. As the OWNER, I want Matt Pocock's setup to keep writing its routing block, so that my workflow is untouched.
-18. As the OWNER, I want that exception to be narrow, so that "has a heading" is not a loophole.
+17. As the OWNER, I want Matt Pocock's setup to keep writing its routing block during bootstrap, so that my workflow is untouched.
+18. As the OWNER, I want the guard to switch on only after bootstrap has fully completed, so that no exception parser is ever needed and no new state is added.
 19. As the OWNER, I want rice to leave Claude's Auto Memory entirely alone, so that there is one memory system, Anthropic's.
 20. As the OWNER, I want the `/clear` archive to keep working exactly as today, so that nothing I rely on changes.
 21. As the OWNER, I want the agent not to read `session-history/` on its own, so that cold evidence stays out of live context.
@@ -98,6 +100,11 @@ behaviour up the moment a session loads the new build.
   default branch and removes its remote ref. Triggered by the OWNER only.
 - **routing content** — in `CLAUDE.md`: rice's `@.claude/rice.md` import line
   and Matt's `## Agent skills` block. Nothing else.
+- **bootstrap completion** — `.claude/rice-version` exists in the repo. Only
+  `verify.py` writes it, only on a Gate B pass (`FINAL-VERIFIED`, which requires
+  Matt's artifacts); only `/rice:rice-uninstall` removes it. It is the existing,
+  sole evidence that a repo's initialisation — including Matt's write to
+  `CLAUDE.md` — is over.
 - **working state** — status, progress, reports, decisions, hand-off notes,
   working memory. Never routing content.
 - **always-loaded destination** — any file Claude Code loads into every
@@ -126,12 +133,14 @@ behaviour up the moment a session loads the new build.
   branch scanner or background cleanup of any kind.
 - I4 The 28 existing `permissions.deny` entries MUST stay byte-identical. The
   verifier's `git-deny:behaves` probe (`git branch --show-current`) MUST stay.
-- I5 `CLAUDE.md` in a rice repo MUST contain only routing content from the day
-  the guard is active. Pre-existing project content is project-owned and MUST
-  NOT be rewritten by rice.
-- I6 Any Edit / Write / NotebookEdit targeting a rice repo's `CLAUDE.md` that is
-  not covered by the Matt exception (§4) MUST be denied by the guard with a
-  reason. Rice MUST NOT ask the OWNER, MUST NOT use `updatedInput`, and MUST
+- I5 `CLAUDE.md` in a rice repo MUST receive only routing content from bootstrap
+  completion on. Pre-existing project content is project-owned and MUST NOT be
+  rewritten by rice.
+- I6 After bootstrap completion, any Edit / Write / NotebookEdit targeting a
+  rice repo's `CLAUDE.md` MUST be denied by the guard with a reason. Before
+  completion the guard MUST stay silent on `CLAUDE.md`, so bootstrap and Matt's
+  setup write it exactly as today. There is no actor- or content-based
+  exception. Rice MUST NOT ask the OWNER, MUST NOT use `updatedInput`, and MUST
   NOT add a `permissions.ask` or `permissions.deny` rule for this.
 - I7 The deny reason MUST tell the model to put working state in an ordinary
   project file that is not loaded automatically, MUST list the always-loaded
@@ -240,7 +249,10 @@ Applies when the tool is Edit, Write or NotebookEdit and `file_path` targets
 `CLAUDE.md` as the target of a write (a redirection `>`/`>>` or `tee` whose
 operand resolves to `<repo>/CLAUDE.md`; `rtk`-rewritten forms count the same).
 
-- C1 Deny, unless the Matt exception (§4) holds.
+- C1 Deny — if and only if bootstrap completion holds (`.claude/rice-version`
+  present under `cwd`'s repo). Before that the rule is inert: Rice's own
+  import line and Matt's `## Agent skills` block are written during bootstrap,
+  before the file exists.
 - C2 Reason text (normative content, wording MAY vary):
   "rice: CLAUDE.md is routing only. Do not write status, progress, reports,
   decisions, hand-off or working memory here. Put the content in an ordinary
@@ -250,8 +262,12 @@ operand resolves to `<repo>/CLAUDE.md`; `rtk`-rewritten forms count the same).
   CLAUDE.md itself changed, the OWNER edits it directly."
 - C3 Reads of `CLAUDE.md` are never affected.
 - C4 Rice's own writes to `CLAUDE.md` (reconcile.apply, repair) are Python
-  subprocesses, not tool calls; the guard never sees them. No Rice exception is
-  needed and none MUST be added.
+  subprocesses, not tool calls; the guard never sees them either way.
+- C5 Known consequence, accepted by the OWNER: re-running Matt's setup on a
+  completed repo (e.g. switching issue trackers) is an agent write to
+  `CLAUDE.md` and is denied like any other. The OWNER edits the block directly,
+  or runs `/rice:rice-uninstall` and bootstraps again. Rice MUST NOT add a
+  bypass for this.
 
 ### 3.2 session-history gate
 
@@ -277,29 +293,23 @@ text contains the path segment `session-history` (any form: `cat`, `head`,
 
 ---
 
-## 4. Matt exception boundary
+## 4. Activation boundary (replaces the former Matt exception)
 
-The Matt exception lets the official `setup-matt-pocock-skills` skill write its
-routing block. It is the only exception to §3.1 and it is two conditions, both
-required:
+The CLAUDE.md rule (§3.1) is active exactly when bootstrap completion holds.
 
-- M1 **Actor.** The current `/clear` segment of the transcript contains an
-  invocation of the Matt setup skill: a `Skill` tool_use whose `skill` is
-  `mattpocock-skills:setup-matt-pocock-skills`, or a user message carrying the
-  `/mattpocock-skills:setup-matt-pocock-skills` command.
-- M2 **Shape.** Applying the edit in memory (old_string → new_string for Edit;
-  whole content for Write) changes the file only inside one `## Agent skills`
-  section: every added, removed or changed line lies between the `## Agent
-  skills` heading and the next heading of level 2 or higher (or end of file),
-  and every non-blank line of the resulting section is one of: the `## Agent
-  skills` heading; a `### ` sub-heading; or a one-line pointer containing
-  `docs/agents/`. Lines outside that section MUST be byte-identical before and
-  after.
-
-If either condition fails, the write is denied with the §3.1 reason. A heading
-string alone MUST NOT open the exception (M2 bounds the content; M1 bounds the
-actor). The exception MUST NOT be widened to other sections, other skills or
-other files.
+- A1 Evidence: `<repo>/.claude/rice-version` exists. The guard reads existence
+  only; it MUST NOT parse or compare the version, MUST NOT consult any other
+  file, and MUST NOT create, touch or remove anything.
+- A2 Sequence this yields on a fresh repo: `/rice:bootstrap` writes the import
+  line (Python) → Matt's setup writes `## Agent skills` (Edit tool; guard
+  inert, file absent) → Stop continuation passes Gate B → verifier writes
+  `.claude/rice-version` → guard active from the next tool call on.
+- A3 `/rice:rice-uninstall` removes `.claude/rice-version` → guard inert again.
+- A4 The history rule (§3.2) is NOT tied to A1; it applies in every rice repo
+  (`rice_installed_here`), before and after completion.
+- A5 No new marker, state file, settings key or Gate item MAY be introduced for
+  this. `.claude/rice-version` keeps its existing single writer and single
+  remover.
 
 Rice's verifier keeps requiring the `## Agent skills` heading in `CLAUDE.md`
 (`evidence.MATT_HEADING`); nothing in this spec changes Matt's workflow or
@@ -354,8 +364,8 @@ gains exactly the guard script and the skill file.
   without the OWNER asking again.
 - Guard: a denied write/read returns the reason to the model as a tool error;
   the model proceeds under that instruction. A guard crash is silent (G4). An
-  unreadable transcript ⇒ treat the key as absent and the Matt actor condition
-  as false (fail closed on the privilege, fail open on the session).
+  unreadable transcript ⇒ treat the history key as absent (fail closed on the
+  privilege, fail open on the session).
 - Archive: unchanged — report to stderr, never block.
 
 ---
@@ -364,8 +374,10 @@ gains exactly the guard script and the skill file.
 
 - `/rice:bootstrap`: unchanged. `reconcile.apply` writes the updated `rice.md`
   on a fresh repo; on an already-bootstrapped repo the old `rice.md` is a Gate A
-  drift that `repair` converges when bootstrap is re-run. The guard and the skill
-  are active regardless, from the moment the new build is loaded.
+  drift that `repair` converges when bootstrap is re-run. The history gate is
+  active from the moment the new build is loaded; the CLAUDE.md rule is active
+  in every repo that already carries `.claude/rice-version` (i.e. every
+  finalized repo) from that same moment, with nothing to migrate.
 - `repair`: unchanged (converges `rice.md` as any whole-file drift).
 - `verify`: unchanged rubric; no new items (the rubric invariant that every
   produced item is gated stays trivially true).
@@ -374,7 +386,7 @@ gains exactly the guard script and the skill file.
 - Stop continuation, SessionStart context, archive hooks: unchanged; the new
   hook is an additional entry in `hooks.json`, not a modification of existing
   entries.
-- Matt setup: unchanged; passes the guard via §4.
+- Matt setup: unchanged; it runs before completion, when the CLAUDE.md rule is inert (§4).
 
 ---
 
@@ -382,9 +394,10 @@ gains exactly the guard script and the skill file.
 
 - One new hook script implements both §3.1 and §3.2 as pure decision functions
   over the parsed payload plus a transcript reader; the CLI entry only does I/O.
-  It imports `reconcile.rice_installed_here` and reuses
+  It imports `reconcile.rice_installed_here`, reads completion through the
+  verifier's existing `VERSION_FILE` constant, and reuses
   `archive_hook.clear_boundary_ends` for segmenting; it MUST NOT re-implement
-  either.
+  any of them and MUST NOT parse CLAUDE.md content.
 - The History Skill is prose only.
 - `rice.md` gains: the convergence procedure (§2, numbered); "platform session
   branches/worktrees are workspaces, never invent a branch"; "CLAUDE.md is
@@ -423,12 +436,11 @@ Coverage the ticket MUST include:
 
 - Guard silent in a non-rice repo; silent on malformed payload; silent on
   internal exception (mocked).
-- CLAUDE.md: Edit/Write/NotebookEdit denied with the §3.1 reason; Bash `>>`/
-  `tee` forms denied; Read of CLAUDE.md untouched; other files untouched.
-- Matt exception: allowed only when M1 and M2 both hold; denied when the actor
-  is present but the edit touches another section; denied when the shape is
-  right but no Matt invocation exists in the segment; denied when the
-  invocation is before a later `/clear` boundary.
+- CLAUDE.md: with `.claude/rice-version` present — Edit/Write/NotebookEdit
+  denied with the §3.1 reason; Bash `>>`/`tee`/`rtk` forms denied; Read of
+  CLAUDE.md untouched; other files untouched. Without it — every one of those
+  writes passes silently (bootstrap-phase behaviour, Matt's block included).
+  After `uninstall.uninstall` — silent again.
 - History: Read/Grep/Glob/Bash forms targeting `session-history` denied with
   the §3.2 reason; allowed after `/rice:history` in the segment (both the
   `Skill` tool_use form and the typed command form); closed again after a
@@ -448,8 +460,10 @@ A new repo, new Cloud Environment with rice installed at user scope:
 
 1. `/rice:bootstrap` → `RICE-VERIFIED`, Matt hand-off; `CLAUDE.md` holds only the
    import line.
-2. OWNER runs Matt setup → `## Agent skills` block written; guard allowed it
-   (M1+M2); Stop hook finishes → `FINAL-VERIFIED`, pushed to the session branch.
+2. OWNER runs Matt setup → `## Agent skills` block written (guard inert: no
+   `.claude/rice-version` yet); Stop hook finishes → `FINAL-VERIFIED` writes
+   `.claude/rice-version`, pushed to the session branch; the CLAUDE.md rule is
+   active from here.
 3. During work the agent tries to append a status line to `CLAUDE.md` → denied;
    no OWNER prompt; the agent writes the status into an ordinary project file it
    chose; `CLAUDE.md` unchanged.
@@ -487,6 +501,7 @@ without ancestor proof, a lost archive commit, or an uninstall residue.
 - Any Auto Memory integration; any memory generation, compression, summary or
   database; `.claude/rules` content shipped by rice.
 - Retroactive cleanup of existing `CLAUDE.md` content.
+- Any actor- or content-based exception to the CLAUDE.md rule (Matt or otherwise).
 - Archiving on `SessionEnd` reasons other than `clear`.
 - Changing Matt Pocock's skills or where they write.
 
