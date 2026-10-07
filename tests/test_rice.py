@@ -254,6 +254,79 @@ def _entries(*pairs):
     return probe
 
 
+class TestBuildPreconditions(LifecycleBase):
+    """RICE-SPEC-001 I16: neither entry point writes anything to a repo
+    unless this session runs the installed build and is not older than the
+    build that finalized the repo."""
+
+    def _finalized(self):
+        _matt_artifacts(self.root)
+        self.assertTrue(self.bootstrap().ok)
+
+    def _blocked_without_a_write(self, outcome, before, item):
+        self.assertEqual(outcome.stage, "blocked")
+        self.assertFalse(outcome.ok)
+        self.assertIsNone(outcome.repaired)
+        self.assertTrue(any(r.startswith(item) for r in outcome.report.reasons), outcome.report.reasons)
+        directive = "\n".join(outcome.directive)
+        self.assertIn("nothing was written", directive)
+        self.assertIn(outcome.report.item(item).detail, directive)
+        self.assertEqual(_tree(self.root), before, "a blocked entry point wrote to the repo")
+
+    def test_an_updated_but_not_reloaded_session_writes_nothing_to_a_fresh_repo(self):
+        before = _tree(self.root)
+        outcome = rice.bootstrap(self.root, archive=True, output_style=None, rtk_probe=_ok_rtk,
+                                 plugin_probe=_entries(("user", "9.9.9")))
+        self._blocked_without_a_write(outcome, before, "plugin:build")
+
+    def test_an_updated_but_not_reloaded_session_writes_nothing_to_a_finalized_repo(self):
+        self._finalized()
+        (self.root / ".claude" / "rice.md").write_text("an older build's rules\n", encoding="utf-8")
+        before = _tree(self.root)
+        outcome = rice.bootstrap(self.root, rtk_probe=_ok_rtk, plugin_probe=_entries(("user", "9.9.9")))
+        self._blocked_without_a_write(outcome, before, "plugin:build")
+
+    def test_an_older_build_never_touches_a_repo_a_newer_build_finalized(self):
+        self._finalized()
+        self.version_file.write_text("9.9.9\n", encoding="utf-8")
+        (self.root / ".claude" / "rice.md").write_text("a newer build's rules\n", encoding="utf-8")
+        before = _tree(self.root)
+        outcome = self.bootstrap()
+        self._blocked_without_a_write(outcome, before, "rice-version:not-newer")
+        self.assertIn("9.9.9", "\n".join(outcome.directive))
+
+    def _continuation_blocked(self, probe, item, recorded=None):
+        self.bootstrap()
+        _matt_artifacts(self.root)
+        (self.root / ".claude" / "rice.md").write_text("drifted\n", encoding="utf-8")
+        if recorded:
+            self.version_file.write_text(recorded + "\n", encoding="utf-8")
+        before = _tree(self.root)
+        outcome = rice.continue_after_matt(self.root, rtk_probe=_ok_rtk, plugin_probe=probe)
+        self._blocked_without_a_write(outcome, before, item)
+        self.assertTrue(reconcile.is_waiting_for_matt(self.root))
+        msg = rice.continuation_message(self.root, outcome)
+        self.assertIn("nothing was written", msg)
+        self.assertNotIn("repair ran", msg)
+
+    def test_the_stop_continuation_never_repairs_with_the_wrong_build(self):
+        self._continuation_blocked(_entries(("user", "9.9.9")), "plugin:build")
+
+    def test_the_stop_continuation_never_touches_a_newer_repo(self):
+        self._continuation_blocked(_installed, "rice-version:not-newer", recorded="9.9.9")
+
+    def test_an_older_finalized_repo_is_brought_up_to_date_asking_nothing(self):
+        self._finalized()
+        (self.root / ".claude" / "rice.md").write_text("an older build's rules\n", encoding="utf-8")
+        self.version_file.write_text("0.0.1\n", encoding="utf-8")
+        outcome = rice.bootstrap(self.root, **PROBES)  # no OWNER answers passed
+        self.assertTrue(outcome.ok, outcome.lines)
+        self.assertEqual(outcome.stage, "finalized")
+        self.assertEqual(self.version_file.read_text().strip(), evidence.build_version())
+        self.assertEqual((self.root / ".claude" / "rice.md").read_text(encoding="utf-8"),
+                         reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
+
+
 class TestCanonicalInstallPolicy(LifecycleBase):
     """RICE-BOOTSTRAP-044C: rice's canonical install is user scope, and only
     user scope -- like Matt's plugin. Anything else is a definite stop with

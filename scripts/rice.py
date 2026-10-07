@@ -129,14 +129,35 @@ class Outcome:
         return out
 
 
+# RICE-SPEC-001 I16: what must hold before rice writes ANYTHING to a repo.
+# Both are verifier items and read no repo state rice writes, so asking them
+# first can never depend on what apply or repair would produce.
+PRECONDITIONS = ("plugin:build", verify.VERSION_ITEM)
+
+
+def _precondition_stop(report: verify.Report) -> Outcome | None:
+    """A blocked outcome when this session must not change the repo at all:
+    it is not running the installed build (an update not yet loaded), or the
+    repo was finalized by a newer build. None when both hold."""
+    failing = [i for i in (report.item(n) for n in PRECONDITIONS) if i is None or i.state != "PASS"]
+    if not failing:
+        return None
+    return Outcome(report=report, stage="blocked", blocked=True, directive=_precondition_directive(failing))
+
+
 def _pipeline(repo_root, *, final: bool, carried: repair.RepairResult | None = None, **probes) -> Outcome:
     """The canonical flow, in the only place it exists as code. `carried` is
     what an earlier half of the same lifecycle already restored -- a Gate A
     repair stays in the report even when Gate B then runs cleanly, so the
-    output never claims repair was "not needed" after it rewrote files."""
+    output never claims repair was "not needed" after it rewrote files.
+    Repair never runs while a precondition fails: the wrong build must not
+    rewrite the repo in the name of fixing it."""
     report = verify.run(repo_root, final=final, **probes)
     if report.ok:
         return Outcome(report=report, repaired=carried)
+    stop = _precondition_stop(report)
+    if stop is not None:
+        return stop
     repaired = repair.repair(repo_root, report, **probes)
     if carried is not None:
         repaired = repair.RepairResult(applied=carried.applied + repaired.applied,
@@ -213,6 +234,10 @@ def bootstrap(repo_root, *, archive=None, output_style=UNSET, **probes) -> Outco
     _, install_directive = _canonical_install(**probes)
     if install_directive:
         return Outcome(report=loaded, stage="blocked", blocked=True, directive=install_directive)
+    # ... and this session must be the build that may change this repo (I16)
+    stop = _precondition_stop(loaded)
+    if stop is not None:
+        return stop
 
     reconcile.write_owner_choices(repo_root, archive=archive, output_style=output_style)
     reconcile.apply(repo_root)
@@ -308,6 +333,16 @@ def _blockers_directive(report) -> list[str]:
     ]
 
 
+def _precondition_directive(items) -> list[str]:
+    return [
+        "This session's rice must not change this repo, so nothing was written:",
+        *[f"  - {i.name}: {i.state} -- {i.detail}" for i in items],
+        "",
+        "Report this to the OWNER and stop. Do not install, update or reload rice"
+        " yourself; once the OWNER has fixed it, this same command runs normally.",
+    ]
+
+
 def _unknown_install_directive(item) -> list[str]:
     return [
         "Whether rice is loaded here could not be determined, so nothing was written:",
@@ -352,6 +387,8 @@ def continuation_message(repo_root, outcome: Outcome) -> str:
     and reasons, verbatim, plus the one instruction that belongs to this
     lifecycle: finish the job in this same turn, and never write Matt's
     content or send the OWNER back to rice."""
+    if outcome.blocked and outcome.directive:
+        return "rice: " + "\n".join(outcome.directive)
     if outcome.ok:
         repaired = ""
         if outcome.repaired and outcome.repaired.applied:

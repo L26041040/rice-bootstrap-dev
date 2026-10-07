@@ -44,6 +44,7 @@ import settings_template  # noqa: E402
 from reconcile import MARKER_NAME  # noqa: E402
 
 VERSION_FILE = ".claude/rice-version"
+VERSION_ITEM = "rice-version:not-newer"  # RICE-SPEC-001 I17; produced here only
 
 GATE_A = (
     "plugin:installed",
@@ -61,7 +62,7 @@ GATE_A = (
     "archive-sync-hook:exists",
     "continuation-hook:exists",
     "git-deny:behaves",
-    "rice-version:not-newer",
+    VERSION_ITEM,
 )
 
 GATE_B_EXTRA = (
@@ -163,7 +164,7 @@ def version_not_newer_item(repo_root):
     finalized by a newer rice must never be restamped -- or rewritten -- by
     an older one, so this item fails closed before any mutation path can
     act on it, this module's own Gate B stamp included."""
-    name = "rice-version:not-newer"
+    name = VERSION_ITEM
     recorded, build, order = version_order(repo_root)
     if recorded is None:
         return reconcile.ItemResult(name, "PASS", "nothing to compare: this repo has no verified version yet")
