@@ -448,9 +448,9 @@ Coverage the ticket MUST include:
   writes passes silently (bootstrap-phase behaviour, Matt's block included).
   After `uninstall.uninstall` — silent again.
 - History: Read/Grep/Glob/Bash forms targeting `session-history` denied with
-  the §3.2 reason; allowed after `/rice:history` in the segment (both the
-  `Skill` tool_use form and the typed command form); closed again after a
-  genuine `/clear`; repo-wide Grep not matched.
+  the §3.2 reason; allowed after the OWNER's typed `/rice:history` in the
+  segment, never on a (refused) `Skill` tool_use or an unqualified `history`
+  (§5 S2); closed again after a genuine `/clear`; repo-wide Grep not matched.
 - Regression: `RICE_DENY_ENTRIES` still 28 and byte-identical; `GATE_A` /
   `GATE_B` unchanged; `OWNED_FILES` unchanged; `hooks.json` existing entries
   unchanged and the new entry present; export allowlist includes the two new
