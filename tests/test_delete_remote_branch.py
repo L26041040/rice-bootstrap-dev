@@ -22,6 +22,8 @@ import export_public  # noqa: E402
 import reconcile  # noqa: E402
 import session_context  # noqa: E402
 import settings_template  # noqa: E402
+import uninstall  # noqa: E402
+import verify  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -174,6 +176,72 @@ class TestSessionContext(unittest.TestCase):
         self.assertEqual(evidence._archive_sync_hook_item().state, "PASS")
         for rel in ("scripts/delete_remote_branch.py", "scripts/session_context.py"):
             self.assertIn(rel, export_public.ALLOWLIST)
+
+
+class TestStalenessLine(unittest.TestCase):
+    """RICE-SPEC-001 I18 / §14.4: one more line only when the running rice is
+    newer than the version this repo was finalized at; otherwise nothing."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(); self.root = Path(self._tmp.name)
+        (self.root / ".claude").mkdir(); (self.root / ".claude" / "rice.md").write_text("rules\n")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _lines(self, recorded=None, build="0.1.7") -> list[str]:
+        if recorded is not None:
+            (self.root / verify.VERSION_FILE).write_text(recorded + "\n", encoding="utf-8")
+        out = io.StringIO()
+        with mock.patch.object(evidence, "build_version", lambda: build), \
+                mock.patch.object(sys, "stdin", io.StringIO(json.dumps({"cwd": str(self.root)}))), \
+                redirect_stdout(out):
+            self.assertEqual(session_context.main(), 0)
+        return out.getvalue().splitlines()
+
+    def test_an_older_repo_gets_the_helper_line_then_one_actionable_line(self):
+        lines = self._lines("0.1.6")
+        self.assertEqual(len(lines), 2, lines)
+        self.assertIn(str(session_context.HELPER), lines[0])
+        for word in ("0.1.6", "0.1.7", "/rice:bootstrap"):
+            self.assertIn(word, lines[1])
+        self.assertEqual(len(self._lines("0.1.9", build="0.1.10")), 2)  # numeric, not lexical
+
+    def test_every_other_case_adds_nothing(self):
+        cases = {"equal": ("0.1.7", "0.1.7"), "repo newer": ("0.1.8", "0.1.7"),
+                 "no version": (None, "0.1.7"), "malformed": ("0.1", "0.1.7"),
+                 "prerelease": ("0.1.6-rc1", "0.1.7"), "build unreadable": ("0.1.6", "?")}
+        for label, (recorded, build) in cases.items():
+            with self.subTest(label):
+                vf = self.root / verify.VERSION_FILE
+                if vf.exists():
+                    vf.unlink()
+                self.assertEqual(len(self._lines(recorded, build)), 1, label)
+
+    def test_silent_while_a_bootstrap_waits_for_matt(self):
+        reconcile.enter_waiting_for_matt(self.root)
+        self.assertEqual(len(self._lines("0.1.6")), 1)
+
+    def test_silent_outside_rice_and_after_uninstall(self):
+        (self.root / verify.VERSION_FILE).write_text("0.1.6\n", encoding="utf-8")
+        uninstall.uninstall(self.root)
+        self.assertEqual(self._lines(), [])
+        with tempfile.TemporaryDirectory() as other:
+            (Path(other) / "x").write_text("")
+            out = io.StringIO()
+            with mock.patch.object(sys, "stdin", io.StringIO(json.dumps({"cwd": other}))), redirect_stdout(out):
+                session_context.main()
+            self.assertEqual(out.getvalue(), "")
+
+    def test_an_error_in_the_comparison_never_costs_the_helper_line(self):
+        with mock.patch.object(verify, "version_order", side_effect=RuntimeError("boom")):
+            lines = self._lines("0.1.6")
+        self.assertEqual(len(lines), 1)
+        self.assertIn(str(session_context.HELPER), lines[0])
+
+    def test_no_hook_wiring_was_added(self):
+        hooks = json.loads((Path(__file__).resolve().parents[1] / "hooks" / "hooks.json").read_text())
+        self.assertEqual(sum(len(e["hooks"]) for e in hooks["hooks"]["SessionStart"]), 2)
 
 
 if __name__ == "__main__":

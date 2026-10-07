@@ -5,6 +5,13 @@ deletion lives -- as the path of THIS loaded build, so an already
 bootstrapped repo needs nothing re-run and the agent guesses no plugin path.
 Silent in every other repo, and silent on any error: a context hook must
 never disturb a session.
+
+One more line exists only when this repo is behind the rice now running
+(RICE-SPEC-001 I18): finalized at an older version than this build, and not
+mid-bootstrap. It names both versions and the one command that brings the
+repo up to date. Every other case -- equal, repo newer, nothing verified,
+anything not MAJOR.MINOR.PATCH, a waiting bootstrap -- adds nothing, and the
+line keeps no state: it is a pure function of the two versions.
 """
 import json
 import sys
@@ -13,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import reconcile  # noqa: E402
+import verify  # noqa: E402
 
 HELPER = Path(__file__).resolve().parent / "delete_remote_branch.py"
 
@@ -23,6 +31,17 @@ def context(repo_root) -> str:
         "`git branch` / `git push --delete`; run rice's privileged helper instead: "
         f'python3 "{HELPER}" "{Path(repo_root).resolve()}" <branch> -- only the branch the OWNER named.'
     )
+
+
+def staleness(repo_root) -> str | None:
+    """The update line, or None. The comparison is the verifier's own."""
+    if reconcile.is_waiting_for_matt(repo_root):
+        return None  # the hand-off and the Stop continuation are already speaking
+    recorded, build, order = verify.version_order(repo_root)
+    if order != -1:
+        return None
+    return (f"rice: this repo was finalized by rice {recorded}; this session runs rice {build}. "
+            "Run /rice:bootstrap once to bring it up to date.")
 
 
 def _cwd() -> Path:
@@ -39,6 +58,12 @@ def main() -> int:
         repo_root = _cwd()
         if HELPER.exists() and reconcile.rice_installed_here(repo_root):
             print(context(repo_root))
+            try:
+                line = staleness(repo_root)
+            except Exception:  # noqa: BLE001 - never cost the helper line
+                line = None
+            if line:
+                print(line)
     except Exception:  # noqa: BLE001 - never disturb a session
         pass
     return 0
