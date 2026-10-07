@@ -390,11 +390,12 @@ class TestThereIsNoUpdateSystem(unittest.TestCase):
     def test_the_update_skill_does_not_exist(self):
         self.assertFalse((REPO / "skills" / "rice-update").exists())
         manifest = json.loads((REPO / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["skills"], ["./skills/bootstrap", "./skills/rice-uninstall"])
+        # two lifecycles plus the History Skill key (RICE-SPEC-001); never an update skill
+        self.assertEqual(manifest["skills"], ["./skills/bootstrap", "./skills/rice-uninstall", "./skills/history"])
         allowlist = (REPO / "scripts" / "export_public.py").read_text(encoding="utf-8")
         self.assertNotIn("rice-update", allowlist)
         self.assertEqual(sorted(p.name for p in (REPO / "skills").iterdir()),
-                         ["bootstrap", "rice-uninstall"])
+                         ["bootstrap", "history", "rice-uninstall"])
 
     def test_the_engine_has_no_update_verb(self):
         self.assertFalse(hasattr(rice, "update"))

@@ -15,6 +15,7 @@
   ],
   "skills": [
     "./skills/bootstrap",
-    "./skills/rice-uninstall"
+    "./skills/rice-uninstall",
+    "./skills/history"
   ]
 }

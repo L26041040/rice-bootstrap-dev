@@ -22,6 +22,7 @@ ALLOWLIST = (
     ".claude-plugin/plugin.json",
     "skills/bootstrap/SKILL.md",
     "skills/rice-uninstall/SKILL.md",
+    "skills/history/SKILL.md",
     "hooks/hooks.json",
     "scripts/settings_template.py",
     "scripts/uninstall.py",
