@@ -7,7 +7,10 @@ either must leave nothing but the project.
 Private release tooling, like release.py: never exported, never shipped.
 It only ever READS other builds' verdicts, so -- as in release.py -- the
 verifier's and uninstall's words are assembled at runtime here, keeping the
-"only verify.py / uninstall.py say these" greps honest.
+"only verify.py / uninstall.py say these" greps honest. Every path and
+value another module owns (the verified-version file, the marker, the deny
+path, the release branch prefix, SemVer, Matt's artifacts) is read from
+that module.
 
 Rows. One per public `release/<semver>` branch -- enumerated from the
 public repository at run time, never kept as a list here -- plus `fresh`.
@@ -45,40 +48,41 @@ Verdict per row, worst first:
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evidence  # noqa: E402
 import export_public  # noqa: E402
+import reconcile  # noqa: E402
+import settings_template  # noqa: E402
+from verify import VERSION_FILE  # noqa: E402  -- read only, to see what another build stamped
 
 ROOT = Path(__file__).resolve().parent.parent
 PUBLIC_REPO = f"https://github.com/{export_public.MARKETPLACE_REPO}.git"
-SEMVER = re.compile(r"\d+\.\d+\.\d+")
 VERDICTS = ("PROJECT DATA CHANGED", "LEGACY RESIDUE", "BLOCKED", "CLEAN")  # worst first
 DATA, RESIDUE, BLOCKED, CLEAN = VERDICTS
 
-GIT_DENY_PROBE = "git branch --show-current"  # what every build's verifier asks the harness to deny
-VERSION_FILE = ".claude/rice-" + "version"
-MARKER = ".claude/WAITING_FOR_MATT"
+MARKER = f".claude/{reconcile.MARKER_NAME}"
+SETTINGS = ".claude/settings.json"
+SHARED = ("CLAUDE.md", "AGENTS.md")  # files rice and the project both write into
 FINAL = "FINAL-" + "VERIFIED"
 UNINSTALLED = "RICE-" + "UNINSTALLED"
 
 MATT_BLOCK = (
-    "## Agent skills\n"
+    f"{evidence.MATT_HEADING}\n"
     "\n"
     "### Issue tracker\n"
     "\n"
     "Issues live in GitHub Issues. See `docs/agents/issue-tracker.md`.\n"
     "\n"
-    "### Triage labels\n"
+    f"{evidence.MATT_TRIAGE_HEADING}\n"
     "\n"
     "Default vocabulary. See `docs/agents/triage-labels.md`.\n"
     "\n"
@@ -86,18 +90,14 @@ MATT_BLOCK = (
     "\n"
     "Single-context. See `docs/agents/domain.md`.\n"
 )
-MATT_DOCS = {
-    "docs/agents/issue-tracker.md": "# Issue tracker: GitHub\n",
-    "docs/agents/triage-labels.md": "# Triage labels\n",
-    "docs/agents/domain.md": "# Domain docs\n",
-}
+MATT_DOCS = {rel: f"# {Path(rel).stem}\n" for rel in (*evidence.MATT_REQUIRED_DOCS, evidence.MATT_TRIAGE_DOC)}
 
-# The two project shapes. `files` are project-owned bytes; `answers` are the
-# OWNER's two bootstrap choices for that repo.
+# The two project shapes. `files` are what the project has before rice;
+# `answers` are the OWNER's two bootstrap choices for that repo.
 PROJECTS = {
     "bare": {
         "files": {"README.md": "# demo\n", "src/app.py": "print('hello')\n"},
-        "answers": ["--archive", "1", "--output-style", "rice:老弟"],
+        "answers": ["--archive", "1", "--output-style", settings_template.RICE_STYLE],
     },
     "rich": {
         "files": {
@@ -105,7 +105,7 @@ PROJECTS = {
             "src/app.py": "print('hello')\n",
             "CLAUDE.md": "# Project notes\n\nRun the tests with `make test`.\n",
             "AGENTS.md": "# Agents\n\nNever commit generated files.\n",
-            ".claude/settings.json": json.dumps({
+            SETTINGS: json.dumps({
                 "permissions": {"allow": ["Bash(make test)"], "deny": ["Bash(rm -rf *)", "Bash(git rebase*)"]},
                 "env": {"PROJECT_FLAG": "1"},
                 "outputStyle": "Explanatory",
@@ -161,33 +161,27 @@ def _run(cmd, *, cwd=None, env=None, stdin=None, timeout=600) -> tuple[int, str]
         return 124, f"timed out: {' '.join(map(str, cmd))}"
 
 
-def _semver_key(v: str) -> tuple[int, ...]:
-    return tuple(int(p) for p in v.split("."))
-
-
 def releases(public_repo: str) -> tuple[list[str], str | None]:
     """(every `release/<semver>` on the public repository, oldest first,
     error). Read from the remote each time: the supported set is whatever
     has been published, never a list somebody keeps."""
-    rc, out = _run(["git", "ls-remote", "--heads", public_repo, "refs/heads/release/*"], timeout=120)
+    prefix = f"refs/heads/{settings_template.RELEASE_BRANCH_PREFIX}"
+    rc, out = _run(["git", "ls-remote", "--heads", public_repo, f"{prefix}*"], timeout=120)
     if rc != 0:
         return [], f"cannot list release branches of {public_repo}: {out.strip()[-300:]}"
-    found = []
-    for line in out.splitlines():
-        ref = line.split()[-1] if line.split() else ""
-        version = ref.removeprefix("refs/heads/release/")
-        if ref.startswith("refs/heads/release/") and SEMVER.fullmatch(version):
-            found.append(version)
-    return sorted(found, key=_semver_key), None
+    refs = [line.split()[-1] for line in out.splitlines() if line.split()]
+    versions = [ref[len(prefix):] for ref in refs if ref.startswith(prefix)]
+    return sorted((v for v in versions if settings_template.semver(v)), key=settings_template.semver), None
 
 
 def fetch_release(public_repo: str, version: str, dest: Path) -> str | None:
-    """Check out exactly `release/<version>`'s tree into `dest` (which must
+    """Check out exactly that release branch's tree into `dest` (which must
     not exist). None on success, else why not."""
-    rc, out = _run(["git", "clone", "-q", "--depth", "1", "--single-branch", "--branch", f"release/{version}",
+    branch = settings_template.release_ref(version)
+    rc, out = _run(["git", "clone", "-q", "--depth", "1", "--single-branch", "--branch", branch,
                     public_repo, str(dest)], timeout=300)
     if rc != 0:
-        return f"cannot fetch release/{version}: {out.strip()[-300:]}"
+        return f"cannot fetch {branch}: {out.strip()[-300:]}"
     shutil.rmtree(dest / ".git", ignore_errors=True)
     return None
 
@@ -202,7 +196,6 @@ class Sandbox:
     probe stand-ins first on PATH."""
 
     def __init__(self, base: Path, tools: Path):
-        self.base = base
         self.work = base / "work"
         self.cfg = base / "cfg"
         self.home = base / "home"
@@ -236,41 +229,48 @@ class Sandbox:
         this repo's transcript directory, after the latest settings change."""
         tdir = self.cfg / "projects" / str(self.work.resolve()).replace("/", "-")
         tdir.mkdir(parents=True, exist_ok=True)
-        settings = self.work / ".claude" / "settings.json"
+        settings = self.work / SETTINGS
         when = max(time.time(), settings.stat().st_mtime if settings.exists() else 0.0) + 1.0
         ts = datetime.fromtimestamp(when, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         self._probes += 1
         tid = f"matrix-probe-{self._probes}"
         records = [
             {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [
-                {"type": "tool_use", "id": tid, "name": "Bash", "input": {"command": GIT_DENY_PROBE}}]}},
+                {"type": "tool_use", "id": tid, "name": "Bash", "input": {"command": evidence.GIT_DENY_PROBE}}]}},
             {"type": "user", "timestamp": ts, "message": {"role": "user", "content": [
                 {"type": "tool_result", "tool_use_id": tid, "content": "Permission to use Bash has been denied."}]}},
         ]
         (tdir / f"{tid}.jsonl").write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
 
-    def bootstrap(self, build: Build, answers: list[str]) -> tuple[int, str]:
+    def bootstrap(self, build: Build, answers: list[str]) -> str:
         """`/rice:bootstrap` as the skill runs it, including the one loop the
         lifecycle itself asks for: run the git probe when the verifier says
-        it has no denial on record, then run the same command again."""
-        rc, out = 1, ""
+        it has no denial on record, then run the same command again. Returns
+        the last run's output."""
+        out = ""
         for _ in range(3):
-            rc, out = _run([sys.executable, "-I", "-B", str(build.root / "scripts" / "rice.py"), "bootstrap",
-                            str(self.work), *answers], cwd=self.work, env=self.env(build))
+            _, out = _run([sys.executable, "-I", "-B", str(build.root / "scripts" / "rice.py"), "bootstrap",
+                           str(self.work), *answers], cwd=self.work, env=self.env(build))
             if "git-deny:behaves: NOT_VERIFIED" not in out:
                 break
             self.deny_git_probe()
-        return rc, out
+        return out
 
-    def stop_hook(self, build: Build) -> tuple[int, str]:
+    def stop_hook(self, build: Build) -> str:
         payload = json.dumps({"cwd": str(self.work), "hook_event_name": "Stop", "stop_hook_active": False,
                               "session_id": "upgrade-matrix"})
         return _run([sys.executable, "-I", "-B", str(build.root / "scripts" / "bootstrap_continue.py")],
-                    cwd=self.work, env=self.env(build), stdin=payload)
+                    cwd=self.work, env=self.env(build), stdin=payload)[1]
 
-    def uninstall(self, build: Build) -> tuple[int, str]:
+    def uninstall(self, build: Build) -> str:
         return _run([sys.executable, "-I", "-B", str(build.root / "scripts" / "uninstall.py"), str(self.work)],
-                    cwd=self.work, env=self.env(build))
+                    cwd=self.work, env=self.env(build))[1]
+
+    def final(self, build: Build) -> bool:
+        """Did `build` finish this repo: its version stamped, no bootstrap waiting."""
+        stamped = self.work / VERSION_FILE
+        return (stamped.exists() and stamped.read_text(encoding="utf-8").strip() == build.version
+                and not (self.work / MARKER).exists())
 
     def snapshot(self) -> dict[str, bytes]:
         return {str(p.relative_to(self.work)): p.read_bytes() for p in sorted(self.work.rglob("*"))
@@ -280,8 +280,6 @@ class Sandbox:
         twin = Sandbox(base, self.tools)
         shutil.rmtree(twin.work)
         shutil.copytree(self.work, twin.work, symlinks=True)
-        shutil.rmtree(twin.cfg)
-        shutil.copytree(self.cfg, twin.cfg, symlinks=True)
         return twin
 
 
@@ -314,11 +312,11 @@ def _seed(sb: Sandbox, shape: str) -> None:
 
 
 def _matt_setup(sb: Sandbox) -> None:
-    """Matt's official setup, as it writes: its `## Agent skills` block
-    appended to the CLAUDE.md that already exists, plus its docs."""
+    """Matt's official setup, as it writes: its block appended to the
+    CLAUDE.md that already exists, plus its docs."""
     claude_md = sb.work / "CLAUDE.md"
     text = claude_md.read_text(encoding="utf-8") if claude_md.exists() else ""
-    if "## Agent skills" not in text:
+    if evidence.MATT_HEADING not in text:
         sep = "" if (not text or text.endswith("\n")) else "\n"
         claude_md.write_text(f"{text}{sep}\n{MATT_BLOCK}" if text else MATT_BLOCK, encoding="utf-8")
     for rel, body in MATT_DOCS.items():
@@ -327,40 +325,16 @@ def _matt_setup(sb: Sandbox) -> None:
         p.write_text(body, encoding="utf-8")
 
 
-# --------------------------------------------------------------------------
-# the lifecycle, end to end, for one build
-# --------------------------------------------------------------------------
-
-@dataclass
-class Finding:
-    kind: str  # DATA / RESIDUE / BLOCKED
-    text: str
-
-
-@dataclass
-class Row:
-    source: str                  # "release/0.1.2" or "fresh"
-    verdict: str = CLEAN
-    findings: list = field(default_factory=list)
-    shapes: dict = field(default_factory=dict)  # shape -> one-line summary
-
-    def add(self, kind: str, text: str) -> None:
-        self.findings.append(Finding(kind, text))
-        if VERDICTS.index(kind) < VERDICTS.index(self.verdict):
-            self.verdict = kind
-
-
 def _install(build: Build, sb: Sandbox, shape: str) -> tuple[bool, str]:
     """A fresh install of `build` on the seeded project, Matt included,
     finished by that build's own Stop continuation. (ok, what happened)."""
-    rc, out = sb.bootstrap(build, PROJECTS[shape]["answers"])
-    if not (sb.work / MARKER).exists() and f"{FINAL} {build.version}" not in out:
+    out = sb.bootstrap(build, PROJECTS[shape]["answers"])
+    if not (sb.work / MARKER).exists():
         return False, f"rice {build.version} bootstrap did not reach the Matt hand-off: {_last(out)}"
     _matt_setup(sb)
-    rc, out = sb.stop_hook(build)
-    stamped = (sb.work / VERSION_FILE).read_text(encoding="utf-8").strip() if (sb.work / VERSION_FILE).exists() else None
-    if stamped != build.version or (sb.work / MARKER).exists():
-        return False, f"rice {build.version} Stop continuation did not finalize (rc={rc}): {_last(out)}"
+    out = sb.stop_hook(build)
+    if not sb.final(build):
+        return False, f"rice {build.version} Stop continuation did not finalize: {_last(out)}"
     sb.git("add", "-A")
     sb.git("commit", "-q", "-m", f"rice {build.version} bootstrap + Matt")
     return True, f"{FINAL} {build.version}"
@@ -372,13 +346,39 @@ def _last(out: str) -> str:
 
 
 # --------------------------------------------------------------------------
-# comparison: what the project owns, and what a fresh install looks like
+# what the project owns, and how a repo is compared with it
 # --------------------------------------------------------------------------
 
-def _settings(snap: dict) -> dict | None:
-    raw = snap.get(".claude/settings.json")
+@dataclass(frozen=True)
+class Project:
+    """What the project owns once Matt has run."""
+    files: dict     # rel -> bytes: the project's own files and Matt's docs
+    settings: dict  # the project's own settings.json ({} when it has none)
+    lines: dict     # SHARED file -> its project-owned non-blank lines, in order
+
+    @classmethod
+    def of(cls, shape: str) -> "Project":
+        files = dict(PROJECTS[shape]["files"])
+        settings = json.loads(files.pop(SETTINGS)) if SETTINGS in files else {}
+        shared = {rel: _nonblank(files.pop(rel, None)) for rel in SHARED}
+        shared["CLAUDE.md"] += _nonblank(MATT_BLOCK)
+        files.update(MATT_DOCS)
+        return cls({k: v.encode("utf-8") for k, v in files.items()}, settings, shared)
+
+
+@dataclass
+class Finding:
+    kind: str  # DATA / RESIDUE / BLOCKED
+    text: str
+
+
+_ABSENT = object()
+
+
+def _settings(snap: dict) -> dict:
+    raw = snap.get(SETTINGS)
     if raw is None:
-        return None
+        return {}
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
@@ -397,119 +397,123 @@ def _leaves(d, prefix: str = "") -> dict:
     return {prefix: d}
 
 
-_ABSENT = object()
-
-
 def _nonblank(text: str | None) -> list[str]:
     return [l for l in (text or "").splitlines() if l.strip()]
 
 
-def _is_subsequence(needle: list, hay: list) -> bool:
+def _lines(snap: dict, rel: str) -> list[str]:
+    return _nonblank(snap.get(rel, b"").decode("utf-8", "replace"))
+
+
+def _in_order(needle: list, hay: list) -> bool:
+    """Every item of `needle`, each matched by its own later item of `hay`."""
     it = iter(hay)
     return all(any(x == y for y in it) for x in needle)
 
 
-def _project(shape: str) -> dict:
-    """What the project owns once Matt has run: its own files, Matt's docs,
-    its settings, and the lines of CLAUDE.md / AGENTS.md that are not rice's."""
-    files = dict(PROJECTS[shape]["files"])
-    settings = json.loads(files.pop(".claude/settings.json")) if ".claude/settings.json" in files else None
-    claude = files.pop("CLAUDE.md", None)
-    agents = files.pop("AGENTS.md", None)
-    files.update(MATT_DOCS)
-    return {"files": {k: v.encode("utf-8") for k, v in files.items()}, "settings": settings,
-            "claude_md": _nonblank(claude) + _nonblank(MATT_BLOCK), "agents_md": _nonblank(agents)}
+def _differences(a: dict, b: dict):
+    """(key, a's value, b's value) wherever they disagree; _ABSENT when missing."""
+    for key in sorted(set(a) | set(b), key=str):
+        x, y = a.get(key, _ABSENT), b.get(key, _ABSENT)
+        if x != y:
+            yield key, x, y
 
 
-def _project_survived(snap: dict, project: dict, row: Row, where: str) -> None:
-    for rel, data in project["files"].items():
-        if snap.get(rel) != data:
-            row.add(DATA, f"{where}: project file {rel} changed or missing")
-    have = _leaves(_settings(snap) or {})
-    for path, value in _leaves(project["settings"] or {}).items():
-        if path == "permissions.deny":
-            got = have.get(path)
-            got = got if isinstance(got, list) else []
-            if Counter(value) - Counter(got) or not _is_subsequence(value, got):
-                row.add(DATA, f"{where}: project deny rules not all kept in order ({value} vs {got})")
-        elif have.get(path, _ABSENT) != value:
-            row.add(DATA, f"{where}: project setting {path}={value!r} changed or missing")
-    for rel, key in (("CLAUDE.md", "claude_md"), ("AGENTS.md", "agents_md")):
-        lines = _nonblank(snap.get(rel, b"").decode("utf-8", "replace"))
-        if not _is_subsequence(project[key], lines):
-            row.add(DATA, f"{where}: project lines of {rel} not all kept in order")
+def _project_survived(snap: dict, project: Project, where: str) -> list[Finding]:
+    found = [Finding(DATA, f"{where}: project file {rel} changed or missing")
+             for rel, data in project.files.items() if snap.get(rel) != data]
+    have = _leaves(_settings(snap))
+    for path, value in _leaves(project.settings).items():
+        got = have.get(path, _ABSENT)
+        if path == settings_template.DENY_PATH:
+            if not (isinstance(got, list) and _in_order(value, got)):
+                found.append(Finding(DATA, f"{where}: project deny rules not all kept in order ({value} vs {got})"))
+        elif got != value:
+            found.append(Finding(DATA, f"{where}: project setting {path}={value!r} changed or missing"))
+    found += [Finding(DATA, f"{where}: project lines of {rel} not all kept in order")
+              for rel in SHARED if not _in_order(project.lines[rel], _lines(snap, rel))]
+    return found
 
 
-def _converged(up: dict, fresh: dict, row: Row, where: str) -> None:
+def _converged(up: dict, fresh: dict, where: str) -> list[Finding]:
     """The upgraded repo must BE a fresh install: same files, same bytes,
     same settings (compared as JSON -- rice writes it, key order is not
     meaning). Anything else is state an older rice left that the candidate
     did not take back, or state the candidate failed to bring."""
-    for rel in sorted(set(up) | set(fresh)):
-        a, b = up.get(rel), fresh.get(rel)
-        if a == b:
-            continue
-        if rel == ".claude/settings.json":
-            ua, fb = _leaves(_settings(up) or {}), _leaves(_settings(fresh) or {})
-            for path in sorted(set(ua) | set(fb)):
-                if path not in fb:
-                    row.add(RESIDUE, f"{where}: settings {path}={ua[path]!r} left behind (a fresh install has no such key)")
-                elif path not in ua:
-                    row.add(RESIDUE, f"{where}: settings {path} missing (a fresh install has {fb[path]!r})")
-                elif ua[path] != fb[path]:
-                    row.add(RESIDUE, f"{where}: settings {path} is {ua[path]!r}, a fresh install has {fb[path]!r}")
-        elif b is None:
-            row.add(RESIDUE, f"{where}: {rel} left behind (a fresh install has no such file)")
-        elif a is None:
-            row.add(RESIDUE, f"{where}: {rel} missing (a fresh install has it)")
-        else:
-            row.add(RESIDUE, f"{where}: {rel} differs from a fresh install")
+    found = []
+    for rel, a, b in _differences({k: v for k, v in up.items() if k != SETTINGS},
+                                  {k: v for k, v in fresh.items() if k != SETTINGS}):
+        found.append(Finding(RESIDUE, f"{where}: {rel} " + (
+            "left behind (a fresh install has no such file)" if b is _ABSENT else
+            "missing (a fresh install has it)" if a is _ABSENT else "differs from a fresh install")))
+    for path, a, b in _differences(_leaves(_settings(up)), _leaves(_settings(fresh))):
+        found.append(Finding(RESIDUE, f"{where}: settings {path}" + (
+            f"={a!r} left behind (a fresh install has no such key)" if b is _ABSENT else
+            f" missing (a fresh install has {b!r})" if a is _ABSENT else
+            f" is {a!r}, a fresh install has {b!r}")))
+    return found
 
 
-def _only_the_project(snap: dict, project: dict, row: Row, where: str) -> None:
+def _only_the_project(snap: dict, project: Project, where: str) -> list[Finding]:
     """After uninstall, exactly the project and nothing of rice's."""
-    for rel in sorted(set(snap) - set(project["files"]) - {"CLAUDE.md", "AGENTS.md", ".claude/settings.json"}):
-        row.add(RESIDUE, f"{where}: {rel} is still there")
-    mine = _leaves(project["settings"] or {})
-    left = {p: v for p, v in _leaves(_settings(snap) or {}).items() if mine.get(p, _ABSENT) != v}
+    found = [Finding(RESIDUE, f"{where}: {rel} is still there")
+             for rel in sorted(set(snap) - set(project.files) - set(SHARED) - {SETTINGS})]
+    left = {path: a for path, a, _ in _differences(_leaves(_settings(snap)), _leaves(project.settings))
+            if a is not _ABSENT}
     if left:
-        row.add(RESIDUE, f"{where}: settings not back to the project's own: {left}")
-    for rel, key in (("CLAUDE.md", "claude_md"), ("AGENTS.md", "agents_md")):
-        lines = _nonblank(snap.get(rel, b"").decode("utf-8", "replace"))
-        if lines != project[key]:
-            extra = [l for l in lines if l not in project[key]]
-            if extra:
-                row.add(RESIDUE, f"{where}: {rel} still carries {extra}")
+        found.append(Finding(RESIDUE, f"{where}: settings not back to the project's own: {left}"))
+    for rel in SHARED:
+        extra = [l for l in _lines(snap, rel) if l not in project.lines[rel]]
+        if extra:
+            found.append(Finding(RESIDUE, f"{where}: {rel} still carries {extra}"))
+    return found
+
+
+def _check(candidate: Build, shape: str, subject: Sandbox, fresh: Sandbox | None, base: Path) -> list[Finding]:
+    """Everything wrong with `subject` once the candidate is done with it.
+    `fresh` is the fresh candidate install to compare an upgraded repo
+    with; None when `subject` is that fresh install."""
+    project = Project.of(shape)
+    found = []
+    final = subject.final(candidate)
+    if not final:
+        found.append(Finding(BLOCKED, f"{shape}: the candidate did not reach {FINAL} {candidate.version}"))
+    snap = subject.snapshot()
+    found += _project_survived(snap, project, shape)
+    if fresh is not None:
+        drift = _converged(snap, fresh.snapshot(), shape)
+        found += drift
+        if final and drift:
+            found.append(Finding(RESIDUE, f"{shape}: the candidate said {FINAL} with this residue present "
+                                          "-- a verifier/migration defect"))
+    gone = subject.copy(base / "uninstalled")
+    out = gone.uninstall(candidate)
+    if _last(out) != UNINSTALLED:
+        found.append(Finding(RESIDUE, f"{shape}: uninstall: {_last(out)}"))
+    after = gone.snapshot()
+    found += _project_survived(after, project, f"{shape} after uninstall")
+    found += _only_the_project(after, project, f"{shape} after uninstall")
+    return found
 
 
 # --------------------------------------------------------------------------
 # the matrix
 # --------------------------------------------------------------------------
 
-def _fresh(candidate: Build, base: Path, tools: Path, shape: str) -> tuple[Sandbox | None, str]:
-    sb = Sandbox(base, tools)
-    _seed(sb, shape)
-    ok, what = _install(candidate, sb, shape)
-    return (sb if ok else None), what
+@dataclass
+class Row:
+    source: str                                     # "release/0.1.2" or "fresh"
+    findings: list = field(default_factory=list)
+    lifecycle: dict = field(default_factory=dict)   # shape -> what each build's lifecycle reached
+
+    @property
+    def verdict(self) -> str:
+        return min((f.kind for f in self.findings), key=VERDICTS.index, default=CLEAN)
 
 
-def _check_row(row: Row, candidate: Build, shape: str, subject: Sandbox, fresh: Sandbox, base: Path,
-               upgraded: bool) -> None:
-    project = _project(shape)
-    snap = subject.snapshot()
-    stamped = snap.get(VERSION_FILE, b"").decode().strip()
-    if stamped != candidate.version or MARKER in snap:
-        row.add(BLOCKED, f"{shape}: not {FINAL} {candidate.version} (verified version {stamped or 'absent'})")
-    _project_survived(snap, project, row, f"{shape}")
-    if upgraded:
-        _converged(snap, fresh.snapshot(), row, f"{shape}")
-    gone = subject.copy(base / "uninstalled")
-    rc, out = gone.uninstall(candidate)
-    if _last(out) != UNINSTALLED:
-        row.add(RESIDUE, f"{shape}: uninstall: {_last(out)}")
-    after = gone.snapshot()
-    _project_survived(after, project, row, f"{shape} after uninstall")
-    _only_the_project(after, project, row, f"{shape} after uninstall")
+def clean(rows: list[Row]) -> bool:
+    """The matrix's one word: there are rows, and every one is CLEAN."""
+    return bool(rows) and all(r.verdict == CLEAN for r in rows)
 
 
 def run(candidate_root: Path, public_repo: str = PUBLIC_REPO, workdir: Path | None = None) -> tuple[list[Row], str | None]:
@@ -526,25 +530,26 @@ def run(candidate_root: Path, public_repo: str = PUBLIC_REPO, workdir: Path | No
     if err:
         return [], err
 
-    rows: list[Row] = []
-    fresh_row = Row("fresh")
-    fresh: dict[str, Sandbox] = {}
+    fresh_row, fresh = Row("fresh"), {}
     for shape in PROJECTS:
-        sb, what = _fresh(candidate, workdir / f"fresh-{shape}", tools, shape)
-        fresh_row.shapes[shape] = what
-        if sb is None:
-            fresh_row.add(BLOCKED, f"{shape}: {what}")
+        sb = Sandbox(workdir / f"fresh-{shape}", tools)
+        _seed(sb, shape)
+        ok, what = _install(candidate, sb, shape)
+        fresh_row.lifecycle[shape] = what
+        if not ok:
+            fresh_row.findings.append(Finding(BLOCKED, f"{shape}: {what}"))
             continue
         fresh[shape] = sb
-        _check_row(fresh_row, candidate, shape, sb, sb, workdir / f"fresh-{shape}-check", upgraded=False)
+        fresh_row.findings += _check(candidate, shape, sb, None, workdir / f"fresh-{shape}-check")
 
+    rows = [fresh_row]
     for version in versions:
-        row = Row(f"release/{version}")
+        row = Row(settings_template.release_ref(version))
         rows.append(row)
         old_root = workdir / "releases" / version
         problem = fetch_release(public_repo, version, old_root)
         if problem:
-            row.add(BLOCKED, problem)
+            row.findings.append(Finding(BLOCKED, problem))
             continue
         old = Build.at(old_root)
         for shape in PROJECTS:
@@ -553,20 +558,17 @@ def run(candidate_root: Path, public_repo: str = PUBLIC_REPO, workdir: Path | No
             _seed(sb, shape)
             ok, what = _install(old, sb, shape)
             if not ok:
-                row.add(BLOCKED, f"{shape}: {what}")
+                row.lifecycle[shape] = what
+                row.findings.append(Finding(BLOCKED, f"{shape}: {what}"))
                 continue
-            rc, out = sb.bootstrap(candidate, [])
-            final = f"{FINAL} {candidate.version}" in out
-            row.shapes[shape] = f"{what} -> {f'{FINAL} {candidate.version}' if final else _last(out)}"
+            out = sb.bootstrap(candidate, [])
+            row.lifecycle[shape] = f"{what} -> " + (f"{FINAL} {candidate.version}" if sb.final(candidate)
+                                                    else _last(out))
             if shape not in fresh:
-                row.add(BLOCKED, f"{shape}: no fresh candidate install to compare with")
+                row.findings.append(Finding(BLOCKED, f"{shape}: no fresh candidate install to compare with"))
                 continue
-            before = len([f for f in row.findings if f.kind == RESIDUE])
-            _check_row(row, candidate, shape, sb, fresh[shape], base / "check", upgraded=True)
-            if final and any(f.kind == RESIDUE for f in row.findings[before:]):
-                row.add(RESIDUE, f"{shape}: the candidate said {FINAL} with this residue present "
-                                 "-- a verifier/migration defect")
-    return [fresh_row] + rows, None
+            row.findings += _check(candidate, shape, sb, fresh[shape], base / "check")
+    return rows, None
 
 
 def render(rows: list[Row], error: str | None = None) -> str:
@@ -574,11 +576,11 @@ def render(rows: list[Row], error: str | None = None) -> str:
         return f"UPGRADE-MATRIX NOT CLEAN -- {error}"
     lines = [f"{'source':<16} {'verdict':<22} lifecycle"]
     for r in rows:
-        lines.append(f"{r.source:<16} {r.verdict:<22} " + "; ".join(f"{s}: {w}" for s, w in r.shapes.items()))
+        lines.append(f"{r.source:<16} {r.verdict:<22} " + "; ".join(f"{s}: {w}" for s, w in r.lifecycle.items()))
         lines.extend(f"    - [{f.kind}] {f.text}" for f in r.findings)
     bad = [r for r in rows if r.verdict != CLEAN]
-    lines.append(f"UPGRADE-MATRIX NOT CLEAN ({len(bad)} of {len(rows)} rows)" if bad or not rows
-                 else f"UPGRADE-MATRIX CLEAN ({len(rows)} rows)")
+    lines.append(f"UPGRADE-MATRIX CLEAN ({len(rows)} rows)" if clean(rows)
+                 else f"UPGRADE-MATRIX NOT CLEAN ({len(bad)} of {len(rows)} rows)")
     return "\n".join(lines)
 
 
@@ -590,7 +592,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     rows, err = run(Path(args.candidate), args.public_repo, Path(args.workdir) if args.workdir else None)
     print(render(rows, err))
-    return 0 if not err and rows and all(r.verdict == CLEAN for r in rows) else 1
+    return 0 if not err and clean(rows) else 1
 
 
 if __name__ == "__main__":

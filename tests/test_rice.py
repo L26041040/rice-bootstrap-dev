@@ -15,6 +15,7 @@ Run: python3 -m unittest tests.test_rice -v
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import evidence  # noqa: E402
+import export_public  # noqa: E402
 import reconcile  # noqa: E402
 import repair  # noqa: E402
 import rice  # noqa: E402
@@ -504,7 +506,7 @@ class TestThereIsNoUpdateSystem(unittest.TestCase):
 
     def test_no_shipped_script_carries_a_self_update_path(self):
         for py in self.SHIPPED:
-            if py.name in ("release.py", "export_public.py", "upgrade_matrix.py"):
+            if any(re.match(p, f"scripts/{py.name}") for p in export_public.FORBIDDEN_PATTERNS):
                 continue  # private release tooling, never shipped to a repo
             if py.name == "delete_remote_branch.py":
                 continue  # reads whether ONE named branch exists on origin; nothing about "latest"

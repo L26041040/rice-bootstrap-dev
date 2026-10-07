@@ -251,11 +251,10 @@ def gate_upgrade_matrix(dest: Path, public_repo: str) -> Gate:
     if err:
         return Gate("upgrade:matrix", "FAIL", err)
     summary = "; ".join(f"{r.source} {r.verdict}" for r in rows)
-    bad = [r for r in rows if r.verdict != upgrade_matrix.CLEAN]
-    if bad:
-        first = "; ".join(f"{r.source}: {f.text}" for r in bad for f in r.findings[:2])
-        return Gate("upgrade:matrix", "FAIL", f"{summary} -- {first}"[:800])
-    return Gate("upgrade:matrix", "PASS", summary)
+    if upgrade_matrix.clean(rows):
+        return Gate("upgrade:matrix", "PASS", summary)
+    first = "; ".join(f"{r.source}: {f.text}" for r in rows for f in r.findings[:2])
+    return Gate("upgrade:matrix", "FAIL", f"{summary} -- {first or 'no rows'}"[:800])
 
 
 def check(root: Path = ROOT, *, requested_version: str | None = None, dest: Path | None = None,

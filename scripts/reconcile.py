@@ -48,8 +48,8 @@ import settings_template
 #                project-owned bytes are never read as drift.
 #   leaf         one settings value at one dotted path -- today only the
 #                owner-defined `env.RICE_SESSION_ARCHIVE`, written once and
-#                never reasserted, and the retired leaves uninstall still
-#                takes back.
+#                never reasserted, and the retired leaves an update or an
+#                uninstall takes back wherever they still hold rice's value.
 #
 # The pending marker is rice-created repo state too, so it lives here with
 # the rest of what rice puts in a repo (RICE-BOOTSTRAP-045 folded the old
@@ -224,6 +224,13 @@ def _legacy_project_scope_present(d: dict) -> tuple[bool, bool]:
     return has_mp, has_plugin
 
 
+def _legacy_project_scope_paths(d: dict) -> list[str]:
+    """The paths of a 0.1.3-era declaration present in `d`, marketplace first."""
+    has_mp, has_plugin = _legacy_project_scope_present(d)
+    return [path for path, present in ((LEGACY_MARKETPLACE_PATH, has_mp), (LEGACY_ENABLED_PLUGIN_PATH, has_plugin))
+            if present]
+
+
 def _strip_legacy_project_scope(d: dict) -> bool:
     """Remove a 0.1.3-era project-scope Rice declaration in place. Returns
     whether anything was removed. Unconditional and always safe: the
@@ -233,11 +240,10 @@ def _strip_legacy_project_scope(d: dict) -> bool:
     0.1.2/0.1.3 created `extraKnownMarketplaces` and `enabledPlugins` to hold
     that declaration, so a container this removal empties goes with it
     (RICE-UPGRADE-MATRIX-001)."""
-    has_mp, has_plugin = _legacy_project_scope_present(d)
-    for present, path in ((has_mp, LEGACY_MARKETPLACE_PATH), (has_plugin, LEGACY_ENABLED_PLUGIN_PATH)):
-        if present:
-            _take_back(d, path)
-    return has_mp or has_plugin
+    paths = _legacy_project_scope_paths(d)
+    for path in paths:
+        _take_back(d, path)
+    return bool(paths)
 
 
 def _take_back(d: dict, dotted: str) -> None:
@@ -282,12 +288,11 @@ def _retired_leaves_item(current: dict, *, write: bool) -> ItemResult:
 
 def _legacy_project_scope_item(current: dict, *, write: bool) -> ItemResult:
     name = "settings:legacy-project-scope"
-    has_mp, has_plugin = _legacy_project_scope_present(current)
-    if not has_mp and not has_plugin:
+    paths = _legacy_project_scope_paths(current)
+    if not paths:
         return ItemResult(name, "noop" if write else "PASS", kind=EXISTS, owned=True)
     if not write:
-        found = ", ".join(p for p, present in
-                          ((LEGACY_MARKETPLACE_PATH, has_mp), (LEGACY_ENABLED_PLUGIN_PATH, has_plugin)) if present)
+        found = ", ".join(paths)
         return ItemResult(
             name, "FAIL",
             f"0.1.3-era project-scope Rice plugin declaration still present ({found}) -- rice is "
@@ -578,9 +583,8 @@ def project_settings(repo_root, current: dict) -> dict:
     _strip_legacy_project_scope(out)
     for key in _OWNER_LEAF_KEYS:
         _del_path(out, key)
-    for key, value in RETIRED_LEAVES.items():
-        if _get_path(out, key) == value:
-            _del_path(out, key)
+    for key in _retired_present(out):
+        _del_path(out, key)
     cur, usable = _deny_entries(out)
     if usable and cur and was_installed:
         kept = _subtract_rice_deny(cur)

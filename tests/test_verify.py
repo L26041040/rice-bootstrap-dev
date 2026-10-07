@@ -286,7 +286,7 @@ class TestSoleAuthority(unittest.TestCase):
                 continue
             src = py.read_text(encoding="utf-8")
             self.assertNotIn("rice-version", src, f"{py.name} names rice-version")
-            if py.name in ("uninstall.py", "guard.py"):  # may unlink / read it, via verify's constant only, never write it
+            if py.name in ("uninstall.py", "guard.py", "upgrade_matrix.py"):  # may unlink / read it, via verify's constant only, never write it
                 self.assertIn("from verify import VERSION_FILE", src)
                 self.assertNotRegex(src, r"VERSION_FILE[^\n]*write")
 
@@ -323,16 +323,19 @@ class TestVersionNotNewer(VerifierRunBase):
             return verify.run(self.root, rtk_probe=_ok_rtk, plugin_probe=_installed).item(self.ITEM)
 
     def test_gate_a_is_016s_plus_exactly_the_two_update_safety_items(self):
-        """0.1.6's Gate A, plus `settings:retired-leaves`
-        (RICE-UPGRADE-MATRIX-001) and this item (RICE-SPEC-001 I17)."""
-        before = (  # Gate A as rice 0.1.6 shipped it, with the retired-leaves item in its place
+        """0.1.6's Gate A, plus `settings:retired-leaves` beside the other
+        legacy item (RICE-UPGRADE-MATRIX-001) and this item, last
+        (RICE-SPEC-001 I17)."""
+        shipped_016 = (
             "plugin:installed", "plugin:build", "plugin:scope", "output-style:bundled",
-            "output-style:choice", "settings:legacy-project-scope", "settings:retired-leaves",
+            "output-style:choice", "settings:legacy-project-scope",
             f"settings:{settings_template.DENY_PATH}",
             *sorted(f"settings:{k}" for k in settings_template.OWNER_DEFINED_KEYS),
             "rice.md", "CLAUDE.md:import-line", "AGENTS.md:rice-pointer", "archive-hook:exists",
             "archive-sync-hook:exists", "continuation-hook:exists", "git-deny:behaves")
-        self.assertEqual(verify.GATE_A, before + (self.ITEM,))
+        legacy = shipped_016.index("settings:legacy-project-scope") + 1
+        expected = shipped_016[:legacy] + ("settings:retired-leaves",) + shipped_016[legacy:] + (self.ITEM,)
+        self.assertEqual(verify.GATE_A, expected)
         self.assertEqual(verify.GATE_B_EXTRA, ("matt:artifacts", "rtk"))
         self.assertEqual(len(settings_template.RICE_DENY_ENTRIES), 28)
         self.assertEqual(set(reconcile.OWNED_FILES), {".claude/rice.md", f".claude/{reconcile.MARKER_NAME}"})
