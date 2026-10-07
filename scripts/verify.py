@@ -61,6 +61,7 @@ GATE_A = (
     "archive-sync-hook:exists",
     "continuation-hook:exists",
     "git-deny:behaves",
+    "rice-version:not-newer",
 )
 
 GATE_B_EXTRA = (
@@ -125,14 +126,17 @@ def gate_passes(items, required) -> tuple[bool, list[str]]:
 
 
 def _collect(repo_root, **probes):
-    """The rubric, from its two collectors: what rice owns in this repo
-    (`reconcile`) and what is true about the environment (`evidence`).
-    Neither has a verdict; this module is the only thing that does.
+    """The rubric, from its collectors: what rice owns in this repo
+    (`reconcile`), what is true about the environment (`evidence`), and how
+    the version this module recorded compares with the running build (here,
+    because only this module may touch that file). None of them has a
+    verdict; this module is the only thing that does.
 
     Every exception inside collection becomes an ERROR item rather than a
     crash -- and ERROR is not PASS, so the gate fails closed."""
     try:
-        return reconcile.check_owned(repo_root) + evidence.collect(repo_root, **probes)
+        return (reconcile.check_owned(repo_root) + evidence.collect(repo_root, **probes)
+                + [version_not_newer_item(repo_root)])
     except Exception as exc:  # noqa: BLE001 - fail closed on anything
         return [reconcile.ItemResult("verifier", "ERROR", f"{type(exc).__name__}: {exc}", kind="ERROR")]
 
@@ -140,6 +144,39 @@ def _collect(repo_root, **probes):
 def read_version(repo_root) -> str | None:
     p = Path(repo_root) / VERSION_FILE
     return p.read_text(encoding="utf-8").strip() if p.exists() else None
+
+
+def version_order(repo_root) -> tuple[str | None, str, int | None]:
+    """(recorded, build, order): the version this repo was last verified at,
+    the running build's, and how they compare -- -1 recorded older, 0 equal,
+    1 recorded newer, None when either side is not `MAJOR.MINOR.PATCH`
+    (recorded is None when nothing was ever verified here). The one place
+    that compares them; the anti-downgrade item and the SessionStart
+    staleness line both ask this."""
+    recorded, build = read_version(repo_root), evidence.build_version()
+    r, b = settings_template.semver(recorded), settings_template.semver(build)
+    return recorded, build, (None if r is None or b is None else (r > b) - (r < b))
+
+
+def version_not_newer_item(repo_root):
+    """rice-version:not-newer (MATCHES, Gate A; RICE-SPEC-001 I17). A repo
+    finalized by a newer rice must never be restamped -- or rewritten -- by
+    an older one, so this item fails closed before any mutation path can
+    act on it, this module's own Gate B stamp included."""
+    name = "rice-version:not-newer"
+    recorded, build, order = version_order(repo_root)
+    if recorded is None:
+        return reconcile.ItemResult(name, "PASS", "nothing to compare: this repo has no verified version yet")
+    if order is None:
+        return reconcile.ItemResult(name, "NOT_VERIFIED",
+                                    f"cannot compare recorded {recorded!r} with this build {build!r}: both must be "
+                                    "MAJOR.MINOR.PATCH; rice never rewrites the file -- fix it by hand or uninstall")
+    if order > 0:
+        return reconcile.ItemResult(name, "FAIL",
+                                    f"this repo was finalized by rice {recorded}, newer than this session's rice "
+                                    f"{build}; nothing was changed. Start a session that loads rice {recorded} or "
+                                    "newer, or change the Environment's release pin")
+    return reconcile.ItemResult(name, "PASS", f"recorded {recorded} <= build {build}")
 
 
 def run(repo_root, *, final: bool = False, **probes) -> Report:

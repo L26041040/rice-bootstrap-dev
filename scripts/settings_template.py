@@ -63,6 +63,12 @@ def build_version() -> str:
         return "?"
 
 
+def semver(version) -> tuple[int, int, int] | None:
+    """`MAJOR.MINOR.PATCH` as a comparable tuple, or None when the text is not
+    exactly that -- the only version shape a release ever carries."""
+    return tuple(int(p) for p in version.split(".")) if isinstance(version, str) and _SEMVER.fullmatch(version) else None
+
+
 def release_ref(version: str | None = None) -> str | None:
     """The public branch that carries exactly this version, or None when the
     version is not readable SemVer -- rice never pins a ref it made up."""

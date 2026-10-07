@@ -27,9 +27,11 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def _rubric(repo_root, **probes):
-    """The full rubric the verifier evaluates: rice-owned state plus
-    environment evidence (RICE-BOOTSTRAP-046 split them)."""
-    return reconcile.check_owned(repo_root) + evidence.collect(repo_root, **probes)
+    """The full rubric the verifier evaluates: rice-owned state, environment
+    evidence (RICE-BOOTSTRAP-046 split them), and the verifier's own version
+    comparison (RICE-SPEC-001 I17)."""
+    return (reconcile.check_owned(repo_root) + evidence.collect(repo_root, **probes)
+            + [verify.version_not_newer_item(repo_root)])
 
 
 class _R:
@@ -305,6 +307,63 @@ class TestSoleAuthority(unittest.TestCase):
                     rc = verify.main([str(root)])
                 self.assertEqual(rc, 0)
                 self.assertIn("RICE-VERIFIED", buf.getvalue())
+
+
+class TestVersionNotNewer(VerifierRunBase):
+    """RICE-SPEC-001 I17 / §14.3: a repo finalized by a newer rice is never
+    restamped backwards -- by any path, the verifier's own --final included."""
+
+    ITEM = "rice-version:not-newer"
+
+    def _item(self, recorded, build="0.1.7"):
+        if recorded is not None:
+            (self.root / ".claude").mkdir(parents=True, exist_ok=True)
+            (self.root / verify.VERSION_FILE).write_text(recorded + "\n", encoding="utf-8")
+        with mock.patch.object(evidence, "build_version", lambda: build):
+            return verify.run(self.root, rtk_probe=_ok_rtk, plugin_probe=_installed).item(self.ITEM)
+
+    def test_it_is_one_more_gate_a_item_and_nothing_else_changed(self):
+        self.assertIn(self.ITEM, verify.GATE_A)
+        self.assertIn(self.ITEM, verify.GATE_B)
+        self.assertEqual(len(verify.GATE_A), len(set(verify.GATE_A)))
+
+    def test_no_recorded_version_is_nothing_to_compare(self):
+        item = self._item(None)
+        self.assertEqual(item.state, "PASS")
+        self.assertIn("nothing to compare", item.detail)
+
+    def test_equal_and_older_recorded_versions_pass(self):
+        for recorded in ("0.1.7", "0.1.6", "0.0.9", "0.1.0"):
+            self.assertEqual(self._item(recorded).state, "PASS", recorded)
+        self.assertEqual(self._item("0.1.9", build="0.1.10").state, "PASS")  # numeric, not lexical
+
+    def test_a_newer_recorded_version_fails_naming_both_and_the_remedy(self):
+        item = self._item("0.1.8")
+        self.assertEqual(item.state, "FAIL")
+        for word in ("0.1.8", "0.1.7", "pin", "session"):
+            self.assertIn(word, item.detail)
+        self.assertEqual(self._item("0.1.10", build="0.1.9").state, "FAIL")
+
+    def test_an_unreadable_version_on_either_side_is_not_verified(self):
+        for recorded, build in (("0.1", "0.1.7"), ("v0.1.7", "0.1.7"), ("0.1.7-rc1", "0.1.7"),
+                                ("", "0.1.7"), ("0.1.7", "?"), ("0.1.7", "1.0")):
+            item = self._item(recorded, build=build)
+            self.assertEqual(item.state, "NOT_VERIFIED", (recorded, build))
+        self.assertIn("v0.1.7", self._item("v0.1.7").detail)
+
+    def test_final_never_restamps_a_newer_repo_and_keeps_the_marker(self):
+        _make_correct_repo(self.root, matt=True)
+        _write_transcript(self.root)
+        enter_waiting_for_matt(self.root)
+        vf = self.root / verify.VERSION_FILE
+        vf.write_text("9.9.9\n", encoding="utf-8")
+        before = vf.read_bytes()
+        rep = self.run_verify(final=True)
+        self.assertFalse(rep.gate_b)
+        self.assertIsNone(rep.version_written)
+        self.assertEqual(vf.read_bytes(), before)
+        self.assertTrue(is_waiting_for_matt(self.root))
+        self.assertTrue(any(r.startswith(self.ITEM) for r in rep.reasons), rep.reasons)
 
 
 if __name__ == "__main__":

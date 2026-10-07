@@ -179,6 +179,18 @@ class TestRepairActsOnlyOnNamedFailures(RepairBase):
         self.assertEqual(done.applied, [])
         self.assertTrue(any(u.startswith("git-deny:behaves") for u in done.unresolved))
 
+    def test_a_newer_recorded_version_is_unresolved_and_nothing_is_written(self):
+        """RICE-SPEC-001 I17: an older build never 'repairs' a repo a newer
+        build finalized -- the version item passes through untouched."""
+        _correct_rice_state(self.root)
+        _git_denied_transcript(self.root)
+        self.version_file.write_text("9.9.9\n", encoding="utf-8")
+        before = _tree(self.root)
+        done = repair.repair(self.root, self.verify(), **PROBES)
+        self.assertEqual(done.applied, [])
+        self.assertTrue(any(u.startswith("rice-version:not-newer: FAIL") for u in done.unresolved), done.unresolved)
+        self.assertEqual(_tree(self.root), before)
+
 
 class TestRepairHasNoVerdict(RepairBase):
     def test_source_carries_no_verdict_and_no_version_write(self):

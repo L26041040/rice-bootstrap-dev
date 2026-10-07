@@ -326,14 +326,18 @@ class TestTheSplitHolds(unittest.TestCase):
                           "rice-version", "write_text", "unlink", "mkdir", "import verify"):
             self.assertNotIn(forbidden, src, f"evidence is doing more than collecting: {forbidden}")
 
-    def test_the_rubric_is_exactly_the_two_collectors(self):
+    def test_the_rubric_is_the_two_collectors_plus_the_verifiers_version_item(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(root / "cfg")}):
                 owned = reconcile.check_owned(root)
                 env = evidence.collect(root, rtk_probe=_ok_rtk_probe, plugin_probe=_installed_plugin_probe)
                 report = verify.run(root, rtk_probe=_ok_rtk_probe, plugin_probe=_installed_plugin_probe)
-        self.assertEqual([i.name for i in report.items], [i.name for i in owned + env])
+        # the third source is the verifier's own version comparison
+        # (RICE-SPEC-001 I17): only verify may touch the version file
+        self.assertEqual([i.name for i in report.items],
+                         [i.name for i in owned + env] + ["rice-version:not-newer"])
+        self.assertFalse(report.item("rice-version:not-newer").owned)
         # only reconcile produces owned artifacts; evidence produces facts.
         # (reconcile also reports the OWNER-defined keys it must never write:
         # produced there, but not owned by rice either.)
