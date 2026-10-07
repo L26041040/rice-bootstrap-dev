@@ -75,6 +75,12 @@ def _hook(fn, payload: dict) -> int:
         return fn()
 
 
+def _installed_at(version: str):
+    """A `claude plugin list --json` probe: rice installed at user scope, at `version`."""
+    return lambda cmd: _R(0, json.dumps([{"id": "rice@rice-bootstrap", "version": version,
+                                          "scope": "user", "enabled": True}]))
+
+
 def _context(work: Path) -> list[str]:
     out = io.StringIO()
     with mock.patch.object(sys, "stdin", io.StringIO(json.dumps({"cwd": str(work)}))), \
@@ -215,16 +221,13 @@ class TestFreshRepoEndToEnd(unittest.TestCase):
         #     refused before any write, and the context stays silent.
         before = _tree(w)
         with mock.patch.object(evidence, "build_version", lambda: older):
-            old_probes = dict(PROBES, plugin_probe=lambda cmd: _R(0, json.dumps([{
-                "id": "rice@rice-bootstrap", "version": older, "scope": "user", "enabled": True}])))
-            refused = rice.bootstrap(w, **old_probes)
+            refused = rice.bootstrap(w, **dict(PROBES, plugin_probe=_installed_at(older)))
             self.assertEqual(refused.stage, "blocked")
             self.assertIn("rice-version:not-newer", "\n".join(refused.directive))
             self.assertEqual(len(_context(w)), 1)
         self.assertEqual(_tree(w), before, "an older rice wrote to a newer repo")
         #     A session that installed an update but did not reload: refused too.
-        stale = rice.bootstrap(w, **dict(PROBES, plugin_probe=lambda cmd: _R(0, json.dumps([{
-            "id": "rice@rice-bootstrap", "version": newer, "scope": "user", "enabled": True}]))))
+        stale = rice.bootstrap(w, **dict(PROBES, plugin_probe=_installed_at(newer)))
         self.assertEqual(stale.stage, "blocked")
         self.assertEqual(_tree(w), before)
         #     A newer build: one context line, then one re-run converges the
@@ -232,12 +235,10 @@ class TestFreshRepoEndToEnd(unittest.TestCase):
         (w / ".claude" / "rice.md").write_text("the rules an older rice shipped\n", encoding="utf-8")
         settings, routing_now = (w / ".claude" / "settings.json").read_bytes(), claude_md.read_bytes()
         with mock.patch.object(evidence, "build_version", lambda: newer):
-            new_probes = dict(PROBES, plugin_probe=lambda cmd: _R(0, json.dumps([{
-                "id": "rice@rice-bootstrap", "version": newer, "scope": "user", "enabled": True}])))
             lines = _context(w)
             self.assertEqual(len(lines), 2)
             self.assertIn(newer, lines[1]); self.assertIn("/rice:bootstrap", lines[1])
-            updated = rice.bootstrap(w, **new_probes)  # no OWNER answers
+            updated = rice.bootstrap(w, **dict(PROBES, plugin_probe=_installed_at(newer)))  # no answers
             self.assertEqual(updated.stage, "finalized", updated.lines)
             self.assertEqual(verify.read_version(w), newer)
             self.assertEqual(len(_context(w)), 1)

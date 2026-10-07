@@ -323,9 +323,17 @@ class TestVersionNotNewer(VerifierRunBase):
             return verify.run(self.root, rtk_probe=_ok_rtk, plugin_probe=_installed).item(self.ITEM)
 
     def test_it_is_one_more_gate_a_item_and_nothing_else_changed(self):
-        self.assertIn(self.ITEM, verify.GATE_A)
-        self.assertIn(self.ITEM, verify.GATE_B)
-        self.assertEqual(len(verify.GATE_A), len(set(verify.GATE_A)))
+        before = (  # Gate A as rice 0.1.6 shipped it
+            "plugin:installed", "plugin:build", "plugin:scope", "output-style:bundled",
+            "output-style:choice", "settings:legacy-project-scope",
+            f"settings:{settings_template.DENY_PATH}",
+            *sorted(f"settings:{k}" for k in settings_template.OWNER_DEFINED_KEYS),
+            "rice.md", "CLAUDE.md:import-line", "AGENTS.md:rice-pointer", "archive-hook:exists",
+            "archive-sync-hook:exists", "continuation-hook:exists", "git-deny:behaves")
+        self.assertEqual(verify.GATE_A, before + (self.ITEM,))
+        self.assertEqual(verify.GATE_B_EXTRA, ("matt:artifacts", "rtk"))
+        self.assertEqual(len(settings_template.RICE_DENY_ENTRIES), 28)
+        self.assertEqual(set(reconcile.OWNED_FILES), {".claude/rice.md", f".claude/{reconcile.MARKER_NAME}"})
 
     def test_no_recorded_version_is_nothing_to_compare(self):
         item = self._item(None)

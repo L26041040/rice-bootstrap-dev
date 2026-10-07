@@ -11,7 +11,8 @@ One more line exists only when this repo is behind the rice now running
 mid-bootstrap. It names both versions and the one command that brings the
 repo up to date. Every other case -- equal, repo newer, nothing verified,
 anything not MAJOR.MINOR.PATCH, a waiting bootstrap -- adds nothing, and the
-line keeps no state: it is a pure function of the two versions.
+line keeps no state: it is a pure function of the two versions and the
+existing waiting marker.
 """
 import json
 import sys

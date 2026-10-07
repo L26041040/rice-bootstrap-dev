@@ -599,9 +599,13 @@ are consumed from the first verifier report, before the first write:
 
 The Stop continuation keeps its two silent guards (not waiting; Matt not
 started) and then applies 4–5 to its own first verifier report: not PASS ⇒
-a blocked outcome with the verifier's detail, and repair MUST NOT run. The
-OWNER-visible behaviour is unchanged (that case already reported blocked
-every turn); only the mutation disappears.
+a blocked outcome with the verifier's detail, and repair MUST NOT run. That
+case already reported blocked every turn; the mutation disappears, and the
+message the Stop hook relays becomes the blocked directive (what blocks,
+"nothing was written", report to the OWNER) instead of the repair report
+and the instruction to re-run final verification. Whether 4–5 hold is the
+verifier's judgement (its report names every precondition item not PASS,
+a missing item included); the lifecycle engine only reads it.
 
 Neither precondition reads anything apply or repair produce, so there is no
 circular dependency. Fresh repo, re-run on a finalized repo, repair path and

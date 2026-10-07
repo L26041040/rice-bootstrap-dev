@@ -66,7 +66,9 @@ def build_version() -> str:
 def semver(version) -> tuple[int, int, int] | None:
     """`MAJOR.MINOR.PATCH` as a comparable tuple, or None when the text is not
     exactly that -- the only version shape a release ever carries."""
-    return tuple(int(p) for p in version.split(".")) if isinstance(version, str) and _SEMVER.fullmatch(version) else None
+    if not isinstance(version, str) or not _SEMVER.fullmatch(version):
+        return None
+    return tuple(int(p) for p in version.split("."))
 
 
 def release_ref(version: str | None = None) -> str | None:

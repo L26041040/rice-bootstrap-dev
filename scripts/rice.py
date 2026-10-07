@@ -129,20 +129,15 @@ class Outcome:
         return out
 
 
-# RICE-SPEC-001 I16: what must hold before rice writes ANYTHING to a repo.
-# Both are verifier items and read no repo state rice writes, so asking them
-# first can never depend on what apply or repair would produce.
-PRECONDITIONS = ("plugin:build", verify.VERSION_ITEM)
-
-
 def _precondition_stop(report: verify.Report) -> Outcome | None:
-    """A blocked outcome when this session must not change the repo at all:
-    it is not running the installed build (an update not yet loaded), or the
-    repo was finalized by a newer build. None when both hold."""
-    failing = [i for i in (report.item(n) for n in PRECONDITIONS) if i is None or i.state != "PASS"]
-    if not failing:
+    """A blocked outcome when the verifier says this session must not change
+    the repo at all (RICE-SPEC-001 I16): it is not running the installed
+    build (an update not yet loaded), or the repo was finalized by a newer
+    build. None when nothing blocks."""
+    if not report.blocking:
         return None
-    return Outcome(report=report, stage="blocked", blocked=True, directive=_precondition_directive(failing))
+    return Outcome(report=report, stage="blocked", blocked=True,
+                   directive=_precondition_directive(report.blocking))
 
 
 def _pipeline(repo_root, *, final: bool, carried: repair.RepairResult | None = None, **probes) -> Outcome:
@@ -333,10 +328,10 @@ def _blockers_directive(report) -> list[str]:
     ]
 
 
-def _precondition_directive(items) -> list[str]:
+def _precondition_directive(reasons) -> list[str]:
     return [
         "This session's rice must not change this repo, so nothing was written:",
-        *[f"  - {i.name}: {i.state} -- {i.detail}" for i in items],
+        *[f"  - {r}" for r in reasons],
         "",
         "Report this to the OWNER and stop. Do not install, update or reload rice"
         " yourself; once the OWNER has fixed it, this same command runs normally.",
@@ -388,7 +383,7 @@ def continuation_message(repo_root, outcome: Outcome) -> str:
     lifecycle: finish the job in this same turn, and never write Matt's
     content or send the OWNER back to rice."""
     if outcome.blocked and outcome.directive:
-        return "rice: " + "\n".join(outcome.directive)
+        return "rice: " + "\n".join(outcome.directive) + "\nThis hook stays quiet for the rest of this turn."
     if outcome.ok:
         repaired = ""
         if outcome.repaired and outcome.repaired.applied:

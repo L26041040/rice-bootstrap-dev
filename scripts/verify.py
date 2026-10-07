@@ -65,6 +65,12 @@ GATE_A = (
     VERSION_ITEM,
 )
 
+# RICE-SPEC-001 I16: what must hold before rice writes ANYTHING to a repo --
+# this session runs the installed build, and the repo was not finalized by a
+# newer one. Neither reads repo state rice writes, so the lifecycle engine
+# can ask them first. Judged here, like every gate.
+PRECONDITIONS = ("plugin:build", VERSION_ITEM)
+
 GATE_B_EXTRA = (
     "matt:artifacts",
     "rtk",
@@ -87,6 +93,7 @@ class Report:
     lines: list = field(default_factory=list)
     required: tuple = ()           # the gate that was evaluated
     reasons: list = field(default_factory=list)   # every required item not PASS
+    blocking: list = field(default_factory=list)  # every PRECONDITIONS item not PASS: no repo write may happen
     verdict: str = ""              # the single line that decides this run
 
     @property
@@ -164,20 +171,19 @@ def version_not_newer_item(repo_root):
     finalized by a newer rice must never be restamped -- or rewritten -- by
     an older one, so this item fails closed before any mutation path can
     act on it, this module's own Gate B stamp included."""
-    name = VERSION_ITEM
     recorded, build, order = version_order(repo_root)
     if recorded is None:
-        return reconcile.ItemResult(name, "PASS", "nothing to compare: this repo has no verified version yet")
+        return reconcile.ItemResult(VERSION_ITEM, "PASS", "nothing to compare: this repo has no verified version yet")
     if order is None:
-        return reconcile.ItemResult(name, "NOT_VERIFIED",
+        return reconcile.ItemResult(VERSION_ITEM, "NOT_VERIFIED",
                                     f"cannot compare recorded {recorded!r} with this build {build!r}: both must be "
                                     "MAJOR.MINOR.PATCH; rice never rewrites the file -- fix it by hand or uninstall")
     if order > 0:
-        return reconcile.ItemResult(name, "FAIL",
+        return reconcile.ItemResult(VERSION_ITEM, "FAIL",
                                     f"this repo was finalized by rice {recorded}, newer than this session's rice "
                                     f"{build}; nothing was changed. Start a session that loads rice {recorded} or "
                                     "newer, or change the Environment's release pin")
-    return reconcile.ItemResult(name, "PASS", f"recorded {recorded} <= build {build}")
+    return reconcile.ItemResult(VERSION_ITEM, "PASS", f"recorded {recorded} <= build {build}")
 
 
 def run(repo_root, *, final: bool = False, **probes) -> Report:
@@ -207,8 +213,9 @@ def run(repo_root, *, final: bool = False, **probes) -> Report:
             verdict = f"FINAL FAIL ({len(b_reasons)} required item(s) not PASS); rice-version untouched"
             lines.append(verdict)
             lines.extend(f"  - {r}" for r in b_reasons)
+    _, blocking = gate_passes(items, PRECONDITIONS)
     return Report(build=build, items=items, gate_a=a_ok, gate_b=b_ok, version_written=written,
-                  lines=lines, required=required, reasons=reasons, verdict=verdict)
+                  lines=lines, required=required, reasons=reasons, verdict=verdict, blocking=blocking)
 
 
 def _stamp(repo_root: Path, build: str) -> str:

@@ -315,6 +315,31 @@ class TestBuildPreconditions(LifecycleBase):
     def test_the_stop_continuation_never_touches_a_newer_repo(self):
         self._continuation_blocked(_installed, "rice-version:not-newer", recorded="9.9.9")
 
+    def test_a_malformed_recorded_version_blocks_both_entry_points_without_a_write(self):
+        self._finalized()
+        self.version_file.write_text("v0.1\n", encoding="utf-8")
+        before = _tree(self.root)
+        self._blocked_without_a_write(self.bootstrap(), before, "rice-version:not-newer")
+        reconcile.enter_waiting_for_matt(self.root)
+        before = _tree(self.root)
+        self._blocked_without_a_write(rice.continue_after_matt(self.root, **PROBES), before,
+                                      "rice-version:not-newer")
+
+    def test_a_verifier_that_could_not_collect_still_blocks_the_continuation_cleanly(self):
+        """Missing precondition items are a block with the verifier's words,
+        never a crash that silences the Stop hook."""
+        self.bootstrap()
+        _matt_artifacts(self.root)
+        before = _tree(self.root)
+        with mock.patch.object(evidence, "collect", side_effect=RuntimeError("probe exploded")):
+            outcome = rice.continue_after_matt(self.root, **PROBES)
+        self.assertEqual(outcome.stage, "blocked")
+        self.assertIsNone(outcome.repaired)
+        msg = rice.continuation_message(self.root, outcome)
+        self.assertIn("plugin:build: MISSING", msg)
+        self.assertIn("nothing was written", msg)
+        self.assertEqual(_tree(self.root), before)
+
     def test_an_older_finalized_repo_is_brought_up_to_date_asking_nothing(self):
         self._finalized()
         (self.root / ".claude" / "rice.md").write_text("an older build's rules\n", encoding="utf-8")
