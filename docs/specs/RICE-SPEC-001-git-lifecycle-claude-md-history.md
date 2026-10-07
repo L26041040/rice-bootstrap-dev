@@ -2,7 +2,9 @@
 
 Status: canonical, frozen. Source: RICE-ARCH-REVIEW-001/-002/-003 and the OWNER's
 final decisions (amended by RICE-TO-TICKET-002: the CLAUDE.md guard activates on
-bootstrap completion instead of carrying a Matt exception). This document freezes an approved design; it does not reopen it.
+bootstrap completion instead of carrying a Matt exception; patched by
+RICE-UPDATE-SPEC-001: update safety, §14, I15–I19, from RICE-UPDATE-RESEARCH-001
+and RICE-UPDATE-GRILL-001). This document freezes an approved design; it does not reopen it.
 Base: rice 0.1.6 (private main `4e7f210`).
 
 Keywords MUST / MUST NOT / MAY are normative.
@@ -155,11 +157,41 @@ behaviour up the moment a session loads the new build.
   targeted history reads for the rest of the segment without any further OWNER
   approval. The key MUST close at the next `/clear`.
 - I12 Rice MUST NOT add repo-level state for any of this: no new settings keys,
-  no marker files, no Gate A/B items. Everything lives in the plugin.
+  no marker files, no Gate A/B items. Everything lives in the plugin. (§14
+  adds exactly one verifier item, `rice-version:not-newer`, and no state.)
 - I13 The guard MUST stay silent (no decision) outside rice repos, and MUST stay
   silent on its own internal error so that a rice bug never blocks a session.
 - I14 Existing bootstrap / repair / verify / uninstall behaviour MUST be
-  unchanged, bit for bit, by this spec.
+  unchanged, bit for bit, by this spec. (§14 narrows this: two read-only
+  preconditions move ahead of the first repo write; nothing else changes.)
+- I15 Update model. Rice MUST NOT update, reinstall or reload itself, and
+  MUST NOT carry an `/rice:update` verb. An update is: the platform installs
+  the new plugin build (`claude plugin update rice@rice-bootstrap`, or a new
+  Cloud session from an unpinned Environment) → a session boundary (a new
+  session, or the OWNER's own `/reload-plugins`) → the OWNER re-runs
+  `/rice:bootstrap` in each repo. That re-run is the whole repo update.
+- I16 Build precondition. Both lifecycle entry points (`/rice:bootstrap` and
+  the Stop continuation) MUST confirm `plugin:build` is PASS before the first
+  repo mutation (OWNER choices, apply, repair, the waiting marker, the version
+  stamp). Not PASS ⇒ blocked with the verifier's own detail, zero writes.
+- I17 Anti-downgrade. When `.claude/rice-version` holds a SemVer higher than
+  the running build's version, every mutation path MUST fail closed before
+  writing — including the stamp of a standalone final verification. Missing
+  ⇒ not compared, never blocks. Malformed (not `MAJOR.MINOR.PATCH`, the
+  running build's version included) ⇒ NOT_VERIFIED ⇒ blocked. Equal or lower
+  ⇒ normal. The comparison is the existing SemVer shape and a three-integer
+  tuple; no state, file, migration table or version history is added.
+- I18 Staleness context. The SessionStart context MUST add exactly one
+  actionable line when, and only when, rice is installed here, both versions
+  are SemVer, the running build is newer than `.claude/rice-version`, and the
+  waiting marker is absent. In every other case — not a rice repo, after
+  uninstall, missing or malformed version, equal versions, a repo newer than
+  the build, any error — it MUST add nothing. No marker, dismiss state,
+  recurrence logic or polling MAY exist for it.
+- I19 Pin semantics (documentation). The README MUST state that an
+  Environment pinned to `@release/<x.y.z>` stays on that release until the
+  OWNER changes the pin, that unpinned is the default and follows the latest
+  release, and how a repo is brought up to date (I15).
 
 ---
 
@@ -357,8 +389,9 @@ that check.
 | `rice.md` policy lines | `reconcile.apply` (whole-file, existing) | `repair` (existing drift convergence) | Gate A `rice.md` (existing) | `/rice:rice-uninstall` (existing) |
 
 Nothing new is written into a target repo. `OWNED_FILES`, `RICE_DENY_ENTRIES`,
-`OWNER_DEFINED_KEYS`, `GATE_A`, `GATE_B` MUST NOT change. The export allowlist
-gains exactly the guard script and the skill file.
+`OWNER_DEFINED_KEYS` MUST NOT change. `GATE_A` (and therefore `GATE_B`) gains
+exactly the one item §14 names; nothing else. The export allowlist gains
+exactly the guard script and the skill file.
 
 ---
 
@@ -409,8 +442,9 @@ gains exactly the guard script and the skill file.
   branches/worktrees are workspaces, never invent a branch"; "CLAUDE.md is
   routing only; working state goes to ordinary project files"; "session-history
   is cold; do not read it unless /rice:history was invoked".
-- `session_context.py`'s one-line SessionStart context stays as is (it already
-  points at the remote-branch helper); it MUST NOT grow.
+- `session_context.py`'s SessionStart context keeps its helper line as is and
+  MAY add the single staleness line of I18, under exactly its conditions;
+  nothing else.
 - Version: one plugin release carries all of the above. CHANGELOG entry
   required. README MAY gain one line each for `/rice:history` and 「合併回主枝」;
   it MUST stay short.
@@ -452,7 +486,7 @@ Coverage the ticket MUST include:
   segment, never on a (refused) `Skill` tool_use or an unqualified `history`
   (§5 S2); closed again after a genuine `/clear`; repo-wide Grep not matched.
 - Regression: `RICE_DENY_ENTRIES` still 28 and byte-identical; `GATE_A` /
-  `GATE_B` unchanged; `OWNED_FILES` unchanged; `hooks.json` existing entries
+  `GATE_B` unchanged except for §14's one item; `OWNED_FILES` unchanged; `hooks.json` existing entries
   unchanged and the new entry present; export allowlist includes the two new
   files; adapters still carry no lifecycle details (existing scan test).
 - `rice.md` text contains the convergence steps in order and the three policy
@@ -522,3 +556,117 @@ without ancestor proof, a lost archive commit, or an uninstall residue.
   archive (transcript evidence); a Cloud session can `git switch main` (probe).
 - Enabling GitHub's *Automatically delete head branches* on the OWNER's repos is
   a one-click repo setting outside rice; it is the preferred PR-path cleanup.
+
+---
+
+## 14. Update safety (patch RICE-UPDATE-SPEC-001)
+
+Source: RICE-UPDATE-RESEARCH-001 (`docs/research/`), RICE-UPDATE-GRILL-001.
+Normative: I15–I19. This section says how they land; it adds no state.
+
+### 14.1 Facts the design rests on
+
+- Official Claude Code: `claude plugin update` loads the new build only in
+  the next session or after the OWNER's `/reload-plugins`; a plugin's
+  manifest `version` is the version, so nothing moves until it is bumped;
+  a marketplace added with `@ref` updates to that ref only; the old cache
+  directory is kept 14 days, so a running session keeps its build. Install
+  or update lifecycle hooks do not exist. Whether a plugin may update itself
+  from inside a session is undocumented.
+- Rice: `plugin:build` compares the installed version with the running
+  build and depends on no repo state. `verify.run` is read-only except the
+  Gate B stamp. The verified version is always `build_version()`, which the
+  release gates force to equal `plugin.json` = CHANGELOG = `release/<v>`;
+  therefore every stamped `.claude/rice-version` is a three-integer SemVer.
+- Probe (research round): re-running bootstrap with a newer build on a
+  finalized repo asks nothing, converges `rice.md` through repair, and
+  restamps the version; settings and `CLAUDE.md` are untouched. With an
+  installed build that differs from the running one, bootstrap blocks on
+  `plugin:build` — but only after the OWNER-choice and apply writes.
+
+### 14.2 Bootstrap order (I16)
+
+The lifecycle engine keeps its canonical flow. Two read-only preconditions
+are consumed from the first verifier report, before the first write:
+
+1. verifier report (read-only)
+2. stop: `plugin:installed` not PASS (existing)
+3. stop: install is not the canonical user-scope one (existing)
+4. stop: `plugin:build` not PASS (new consumption of an existing item)
+5. stop: `rice-version:not-newer` not PASS (new item, §14.3)
+6. OWNER choices → apply → Gate A with repair → waiting marker → Gate B
+   with stamp (unchanged)
+
+The Stop continuation keeps its two silent guards (not waiting; Matt not
+started) and then applies 4–5 to its own first verifier report: not PASS ⇒
+a blocked outcome with the verifier's detail, and repair MUST NOT run. The
+OWNER-visible behaviour is unchanged (that case already reported blocked
+every turn); only the mutation disappears.
+
+Neither precondition reads anything apply or repair produce, so there is no
+circular dependency. Fresh repo, re-run on a finalized repo, repair path and
+the waiting-for-Matt path all pass both preconditions as today.
+
+### 14.3 The anti-downgrade item (I17)
+
+One verifier item, kind MATCHES, in Gate A (hence Gate B):
+`rice-version:not-newer`.
+
+- No `.claude/rice-version` ⇒ PASS "nothing to compare".
+- Both versions `MAJOR.MINOR.PATCH` and repo ≤ build ⇒ PASS.
+- Both SemVer and repo > build ⇒ FAIL, detail naming both versions and the
+  remedy: start a session that loads rice ≥ the repo's version, or change the
+  Environment's pin; the repo is left untouched.
+- Either side not SemVer ⇒ NOT_VERIFIED, detail naming the unreadable value.
+  The OWNER repairs the file by hand or uninstalls; rice never rewrites it.
+
+Repair treats the item as unresolved (it is not owned). Because the item is
+in Gate B, a standalone `verify --final` cannot restamp a newer repo either.
+The comparison reuses the existing SemVer shape; no new parser is written.
+
+### 14.4 The staleness line (I18)
+
+Lives in the existing SessionStart context hook, as a second line after the
+helper line, printed only when all of: rice installed here (the existing
+reconcile question), `.claude/rice-version` present and SemVer, running build
+SemVer, build > repo, waiting marker absent. Text (wording MAY vary):
+`rice: this repo was finalized by rice <repo>; this session runs rice <build>.
+Run /rice:bootstrap once to bring it up to date.` Any exception ⇒ silence.
+
+Why the marker silences it: a repo mid-bootstrap is already being driven by
+the hand-off directive and the Stop continuation; two voices would conflict.
+Why a repo newer than the build is silent: bootstrap's blocked directive
+(§14.3) says what to do at the moment it matters; a per-session line would
+nag every session of a deliberately pinned Environment.
+
+### 14.5 Documentation (I19)
+
+README: the pin sentence gains "stays on that release until you change the
+pin"; one sentence under *Bootstrap a repo* says how an update reaches a
+repo (new session, re-run `/rice:bootstrap`). CHANGELOG entry for the
+release carrying this. The README release-contract gate is unaffected (it
+only requires that the sole release branch named is the build's own).
+
+### 14.6 Failure modes, as they land
+
+| Case | Outcome |
+| --- | --- |
+| old plugin, newer repo | blocked before any write (14.3); context silent |
+| new plugin, older repo | context line; re-run bootstrap ⇒ FINAL-VERIFIED new |
+| same version | idempotent re-run, no questions, silent |
+| no rice-version | not compared; silent (fresh or waiting repo) |
+| malformed rice-version | NOT_VERIFIED ⇒ blocked before any write; silent |
+| plugin updated, not reloaded | old hooks run; `plugin:build` FAIL ⇒ both entry points block before any write |
+| repair fails midway | unchanged: partial owned state, converged by the next run; 14.2–14.4 add no writes |
+| Gate B incomplete | unchanged: marker stays, Stop continuation retries; context silent while the marker exists |
+| after uninstall | not a rice repo ⇒ silent; version file already removed |
+| Cloud unpinned / pinned | unpinned: every new container is the latest; pinned: stays until the pin changes (README says so) |
+
+### 14.7 Out of scope for this patch
+
+An `/rice:update` verb; rice running `claude plugin update` or
+`/reload-plugins`; migration scripts, version history, downgrade or rollback
+tooling; an uninstall by an older build of a repo finalized by a newer one
+(no repo file was added since 0.1.6, so there is nothing newer to subtract
+yet); prerelease or build-metadata version formats; any change to the
+release model.
