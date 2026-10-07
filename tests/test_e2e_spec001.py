@@ -30,6 +30,7 @@ import evidence  # noqa: E402
 import guard  # noqa: E402
 import reconcile  # noqa: E402
 import rice  # noqa: E402
+import session_context  # noqa: E402
 import uninstall  # noqa: E402
 import verify  # noqa: E402
 
@@ -72,6 +73,19 @@ def _hook(fn, payload: dict) -> int:
     with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
             contextlib.redirect_stderr(io.StringIO()):
         return fn()
+
+
+def _context(work: Path) -> list[str]:
+    out = io.StringIO()
+    with mock.patch.object(sys, "stdin", io.StringIO(json.dumps({"cwd": str(work)}))), \
+            contextlib.redirect_stdout(out):
+        session_context.main()
+    return out.getvalue().splitlines()
+
+
+def _tree(root: Path) -> dict[str, bytes]:
+    return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*"))
+            if p.is_file() and ".git" not in p.relative_to(root).parts}
 
 
 def _transcript(path: Path, *user_texts: str) -> Path:
@@ -191,6 +205,47 @@ class TestFreshRepoEndToEnd(unittest.TestCase):
         heads_before = _git(w, "ls-remote", "--heads", "origin")
         self.assertEqual(_git(w, "ls-remote", "--heads", "origin"), heads_before)
 
+        # 9b. update safety (RICE-SPEC-001 §14.6), driven with simulated builds.
+        #     Same version: the context adds nothing beyond the helper line.
+        self.assertEqual(len(_context(w)), 1)
+        build = evidence.build_version()
+        newer = ".".join(str(int(p) + (i == 2)) for i, p in enumerate(build.split(".")))
+        older = "0.0.1"
+        #     An older session (installed == running == older) meets this repo:
+        #     refused before any write, and the context stays silent.
+        before = _tree(w)
+        with mock.patch.object(evidence, "build_version", lambda: older):
+            old_probes = dict(PROBES, plugin_probe=lambda cmd: _R(0, json.dumps([{
+                "id": "rice@rice-bootstrap", "version": older, "scope": "user", "enabled": True}])))
+            refused = rice.bootstrap(w, **old_probes)
+            self.assertEqual(refused.stage, "blocked")
+            self.assertIn("rice-version:not-newer", "\n".join(refused.directive))
+            self.assertEqual(len(_context(w)), 1)
+        self.assertEqual(_tree(w), before, "an older rice wrote to a newer repo")
+        #     A session that installed an update but did not reload: refused too.
+        stale = rice.bootstrap(w, **dict(PROBES, plugin_probe=lambda cmd: _R(0, json.dumps([{
+            "id": "rice@rice-bootstrap", "version": newer, "scope": "user", "enabled": True}]))))
+        self.assertEqual(stale.stage, "blocked")
+        self.assertEqual(_tree(w), before)
+        #     A newer build: one context line, then one re-run converges the
+        #     repo, restamps, asks nothing, leaves settings and CLAUDE.md alone.
+        (w / ".claude" / "rice.md").write_text("the rules an older rice shipped\n", encoding="utf-8")
+        settings, routing_now = (w / ".claude" / "settings.json").read_bytes(), claude_md.read_bytes()
+        with mock.patch.object(evidence, "build_version", lambda: newer):
+            new_probes = dict(PROBES, plugin_probe=lambda cmd: _R(0, json.dumps([{
+                "id": "rice@rice-bootstrap", "version": newer, "scope": "user", "enabled": True}])))
+            lines = _context(w)
+            self.assertEqual(len(lines), 2)
+            self.assertIn(newer, lines[1]); self.assertIn("/rice:bootstrap", lines[1])
+            updated = rice.bootstrap(w, **new_probes)  # no OWNER answers
+            self.assertEqual(updated.stage, "finalized", updated.lines)
+            self.assertEqual(verify.read_version(w), newer)
+            self.assertEqual(len(_context(w)), 1)
+        self.assertEqual((w / ".claude" / "rice.md").read_text(encoding="utf-8"),
+                         reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
+        self.assertEqual((w / ".claude" / "settings.json").read_bytes(), settings)
+        self.assertEqual(claude_md.read_bytes(), routing_now)
+
         # 10. uninstall: clean subtraction, nothing left from this spec
         expected = uninstall.expected_after(w)
         uninstall.uninstall(w)
@@ -198,6 +253,7 @@ class TestFreshRepoEndToEnd(unittest.TestCase):
         self.assertEqual(verdict, "RICE-UNINSTALLED", "\n".join(f"{i.name} {i.state} {i.detail}" for i in items))
         self.assertIsNone(_guard(w, "Write", {"file_path": str(claude_md), "content": "x"}))
         self.assertIsNone(_guard(w, "Read", {"file_path": str(archived)}, no_key))
+        self.assertEqual(_context(w), [])  # not a rice repo any more: no context at all
 
 
 if __name__ == "__main__":

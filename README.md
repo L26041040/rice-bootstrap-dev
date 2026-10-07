@@ -22,6 +22,8 @@ User scope, one time per machine. On Claude Code on the web, put these two
 lines in the Cloud Environment's setup script (an OWNER-only step in the web
 UI); every new session from that Environment then has the latest release.
 To pin a version instead: `claude plugin marketplace add L26041040/rice-bootstrap@release/0.1.6`.
+A pinned Environment stays on that release until you change the pin; unpinned
+is the default and follows the latest release.
 
 ## Bootstrap a repo
 
@@ -32,7 +34,9 @@ To pin a version instead: `claude plugin marketplace add L26041040/rice-bootstra
 Run it once per repo. It ends with `RICE-VERIFIED <version>` and a hand-off
 to `/mattpocock-skills:setup-matt-pocock-skills`; after that setup, rice
 finishes on its own and reports `FINAL-VERIFIED <version>`, recorded in
-`.claude/rice-version`. Re-running is safe and never required.
+`.claude/rice-version`. Re-running is safe. When rice itself has been
+updated, start a new session and run `/rice:bootstrap` once in each repo: it
+asks nothing and brings the repo up to date.
 
 Work happens on the session's branch; when you say 「合併回主枝」 the agent
 fast-forwards it onto the default branch, proves it landed, then removes

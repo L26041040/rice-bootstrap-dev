@@ -3,6 +3,26 @@
 All notable changes to the `rice` plugin. The top entry's version must equal
 `.claude-plugin/plugin.json`'s `version` (a release check).
 
+## [Unreleased]
+
+Update safety (RICE-UPDATE-SPEC-001; the RICE-SPEC-001 entries for this
+release are added when it is cut, #40). Rice still has no update verb: the
+platform updates the plugin, and re-running `/rice:bootstrap` in a new
+session brings a repo up to date.
+
+- **Build precondition.** `/rice:bootstrap` and the Stop continuation check
+  `plugin:build` before their first repo write. A session that has not loaded
+  the installed build (updated but not reloaded) stops, and nothing is written.
+- **Anti-downgrade.** A new verifier item, `rice-version:not-newer` (Gate A),
+  refuses a repo finalized by a newer rice: nothing is written and the version
+  is never restamped backwards. A version that is not `MAJOR.MINOR.PATCH`
+  blocks rather than being guessed at.
+- **Staleness line.** When a repo was finalized by an older rice than the one
+  running, the SessionStart context adds one line naming both versions and
+  `/rice:bootstrap`. Otherwise nothing is added.
+- **README.** Says how an update reaches a repo, and that a pinned Environment
+  stays on its release until the pin is changed.
+
 ## [0.1.6] - 2026-09-13
 
 A privileged channel for the one git write rice denies the agent.

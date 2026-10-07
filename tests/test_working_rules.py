@@ -92,6 +92,28 @@ class TestReadme(unittest.TestCase):
         self.assertLessEqual(len(readme.splitlines()), 80)
         self.assertEqual(release.gate_readme(REPO).state, "PASS")
 
+    def test_it_says_how_an_update_reaches_a_repo_and_what_a_pin_means(self):
+        """RICE-SPEC-001 I15 / I19: platform update, new session, re-run
+        bootstrap; a pin never moves on its own; there is no update verb."""
+        readme = (REPO / "README.md").read_text(encoding="utf-8")
+        bootstrap = _section(readme, "## Bootstrap a repo")
+        self.assertRegex(bootstrap, r"(?is)updated.*new session.*/rice:bootstrap")
+        self.assertIn("asks nothing", bootstrap)
+        install = _section(readme, "## Install once")
+        self.assertRegex(install, r"(?is)pinned.*stays on that release until you change the pin")
+        self.assertRegex(install, r"(?is)unpinned.*latest")
+        self.assertNotIn("rice:update", readme)
+        self.assertNotIn("rice-update", readme)
+
+
+class TestChangelogDraft(unittest.TestCase):
+    def test_the_update_safety_lines_wait_unreleased_without_moving_the_version(self):
+        log = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+        draft = _section(log, "## [Unreleased]")
+        for behaviour in ("rice-version:not-newer", "nothing is written", "/rice:bootstrap"):
+            self.assertIn(behaviour, draft)
+        self.assertEqual(release.changelog_top_version(REPO), release.plugin_version(REPO))
+
 
 if __name__ == "__main__":
     unittest.main()
