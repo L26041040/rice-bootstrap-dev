@@ -167,6 +167,22 @@ class TestReleaseGates(unittest.TestCase):
             gates, verdict, _ = release.check(dest=self.dest)
         self.assertTrue(verdict.startswith("RELEASE BLOCKED"))
 
+    def test_manifests_are_validated_on_the_export_that_ships(self):
+        """The private dev root carries files the export excludes (a root
+        CLAUDE.md among them) that newer `claude plugin validate` builds warn
+        about; the gate must judge the plugin as published."""
+        seen = []
+        def spy(root):
+            seen.append(Path(root))
+            self.assertTrue((Path(root) / ".claude-plugin" / "plugin.json").exists())
+            self.assertFalse((Path(root) / "CLAUDE.md").exists())
+            return release.Gate("manifests:valid", "PASS")
+        with mock.patch.object(release, "gate_tests", _pass_tests), \
+             mock.patch.object(release, "gate_manifests", spy), \
+             mock.patch.object(release, "gate_standalone", _pass_standalone):
+            release.check(dest=self.dest)
+        self.assertEqual(seen, [self.dest])
+
     def test_audit_sees_the_tree_after_standalone_ran(self):
         # standalone executes inside the export; anything it leaves behind
         # (e.g. __pycache__) must be caught by the audit, so audit runs after it.

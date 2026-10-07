@@ -244,10 +244,14 @@ def check(root: Path = ROOT, *, requested_version: str | None = None, dest: Path
     dest = Path(dest) if dest else Path(tempfile.mkdtemp(prefix="rice-export-"))
     gates = []
     gates.extend(gate_tests(root, run_tests))
-    gates.append(gate_manifests(root))
+    export_gates = gate_export(root, dest)
+    # validate what ships: the private dev root carries files the export
+    # excludes (a root CLAUDE.md, tests/, session-history/) that newer
+    # `claude plugin validate` builds warn about
+    gates.append(gate_manifests(dest))
     gates.append(gate_version(root, requested_version))
     gates.append(gate_readme(root))
-    gates.extend(gate_export(root, dest))
+    gates.extend(export_gates)
     failed = [g for g in gates if g.state != "PASS"]
     version = plugin_version(root)
     if failed:
