@@ -62,7 +62,23 @@ Environment (or a machine) at the new branch themselves.
    standalone plugin proven entirely from the private side against the
    staging tree (manifests validate from the export, hook/skill paths
    resolve inside it, every shipped runtime script import-smoke-tests
-   clean) rather than by shipping tests to prove it.
+   clean) rather than by shipping tests to prove it, and the **upgrade
+   matrix** (`upgrade:matrix`, `scripts/upgrade_matrix.py`): every
+   `release/<semver>` branch already on the public repository — enumerated
+   from it on every run, never a list kept anywhere — plus a fresh repo,
+   each bootstrapped by that release's own shipped CLI and Stop hook, then
+   upgraded to this export by re-running `/rice:bootstrap`, must be
+   indistinguishable from a fresh install of this export, and uninstall
+   must leave only the project. Any row that is not `CLEAN` (`LEGACY
+   RESIDUE`, `PROJECT DATA CHANGED`, `BLOCKED`) blocks the release; the fix
+   is a migration that names the release whose declaration it takes back,
+   never a waiver. `check` reads the public repository at
+   `--public-repo <url>` (default: the marketplace repo), so it needs
+   network; an unreadable repository is a FAIL. Every published release
+   is in scope — there is no minimum supported upgrade version yet; if
+   one is ever needed, `upgrade_matrix.releases()` is where it goes.
+   `python3 scripts/upgrade_matrix.py --candidate <export dir>` prints the
+   full matrix with every finding.
 3. **Publish.** `python3 scripts/release.py publish --version <x.y.z>
    --public-repo <url>`. The script re-runs every gate, exports the
    allowlisted surface, creates `release/<x.y.z>` as a fresh single-commit

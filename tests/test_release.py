@@ -138,6 +138,10 @@ def _pass_standalone(dest):
     return release.Gate("export:standalone", "PASS")
 
 
+def _pass_matrix(dest, public_repo):
+    return release.Gate("upgrade:matrix", "PASS")
+
+
 class TestReleaseGates(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(); self.dest = Path(self._tmp.name) / "exp"
@@ -148,7 +152,8 @@ class TestReleaseGates(unittest.TestCase):
     def _check(self, **kw):
         with mock.patch.object(release, "gate_tests", _pass_tests), \
              mock.patch.object(release, "gate_manifests", _pass_manifests), \
-             mock.patch.object(release, "gate_standalone", _pass_standalone):
+             mock.patch.object(release, "gate_standalone", _pass_standalone), \
+             mock.patch.object(release, "gate_upgrade_matrix", _pass_matrix):
             return release.check(dest=self.dest, **kw)
 
     def test_current_repo_passes_all_local_gates(self):
@@ -163,7 +168,8 @@ class TestReleaseGates(unittest.TestCase):
     def test_any_single_gate_fail_blocks(self):
         with mock.patch.object(release, "gate_tests", _pass_tests), \
              mock.patch.object(release, "gate_manifests", lambda root: release.Gate("manifests:valid", "FAIL", "x")), \
-             mock.patch.object(release, "gate_standalone", _pass_standalone):
+             mock.patch.object(release, "gate_standalone", _pass_standalone), \
+             mock.patch.object(release, "gate_upgrade_matrix", _pass_matrix):
             gates, verdict, _ = release.check(dest=self.dest)
         self.assertTrue(verdict.startswith("RELEASE BLOCKED"))
 
@@ -188,7 +194,8 @@ class TestReleaseGates(unittest.TestCase):
             return release.Gate("export:standalone", "PASS")
         with mock.patch.object(release, "gate_tests", _pass_tests), \
              mock.patch.object(release, "gate_manifests", _pass_manifests), \
-             mock.patch.object(release, "gate_standalone", leaves_junk):
+             mock.patch.object(release, "gate_standalone", leaves_junk), \
+             mock.patch.object(release, "gate_upgrade_matrix", _pass_matrix):
             gates, verdict, _ = release.check(dest=self.dest)
         self.assertTrue(verdict.startswith("RELEASE BLOCKED"))
         self.assertEqual({g.state for g in gates if g.name == "export:forbidden-absent"}, {"FAIL"})

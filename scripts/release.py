@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import export_public  # noqa: E402
 import settings_template  # noqa: E402
+import upgrade_matrix  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
@@ -238,8 +239,27 @@ def gate_standalone(dest: Path) -> Gate:
     return Gate("export:standalone", "PASS" if not problems else "FAIL", "; ".join(problems)[:800])
 
 
+def gate_upgrade_matrix(dest: Path, public_repo: str) -> Gate:
+    """RICE-UPGRADE-MATRIX-001: every `release/<semver>` already published on
+    the public repository -- enumerated from it, never a list kept here --
+    plus a fresh repo, upgraded to THIS export through the real lifecycle,
+    must converge to exactly a fresh install, and uninstall must leave only
+    the project. Any row that is not CLEAN blocks the release; so does a
+    public repository the matrix cannot read."""
+    with tempfile.TemporaryDirectory(prefix="rice-upgrade-matrix-") as work:
+        rows, err = upgrade_matrix.run(dest, public_repo, Path(work))
+    if err:
+        return Gate("upgrade:matrix", "FAIL", err)
+    summary = "; ".join(f"{r.source} {r.verdict}" for r in rows)
+    bad = [r for r in rows if r.verdict != upgrade_matrix.CLEAN]
+    if bad:
+        first = "; ".join(f"{r.source}: {f.text}" for r in bad for f in r.findings[:2])
+        return Gate("upgrade:matrix", "FAIL", f"{summary} -- {first}"[:800])
+    return Gate("upgrade:matrix", "PASS", summary)
+
+
 def check(root: Path = ROOT, *, requested_version: str | None = None, dest: Path | None = None,
-          run_tests: bool = True) -> tuple[list[Gate], str, Path]:
+          run_tests: bool = True, public_repo: str | None = None) -> tuple[list[Gate], str, Path]:
     dest = Path(dest) if dest else Path(tempfile.mkdtemp(prefix="rice-export-"))
     gates = []
     gates.extend(gate_tests(root, run_tests))
@@ -247,6 +267,7 @@ def check(root: Path = ROOT, *, requested_version: str | None = None, dest: Path
     gates.append(gate_version(root, requested_version))
     gates.append(gate_readme(root))
     gates.extend(gate_export(root, dest))
+    gates.append(gate_upgrade_matrix(dest, public_repo or upgrade_matrix.PUBLIC_REPO))
     failed = [g for g in gates if g.state != "PASS"]
     version = plugin_version(root)
     if failed:
@@ -483,8 +504,8 @@ def _publish_branch(ws: Path, dest: Path, branch: str, version: str, public_repo
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="rice release gates / export / publish")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    c = sub.add_parser("check"); c.add_argument("--version"); c.add_argument("--dest")
-    d = sub.add_parser("dry-run"); d.add_argument("--version"); d.add_argument("--dest")
+    c = sub.add_parser("check"); c.add_argument("--version"); c.add_argument("--dest"); c.add_argument("--public-repo")
+    d = sub.add_parser("dry-run"); d.add_argument("--version"); d.add_argument("--dest"); d.add_argument("--public-repo")
     p = sub.add_parser("publish"); p.add_argument("--version"); p.add_argument("--dest"); p.add_argument("--public-repo")
     m = sub.add_parser("promote"); m.add_argument("--version"); m.add_argument("--public-repo")
     args = ap.parse_args(argv)
@@ -499,7 +520,7 @@ def main(argv=None) -> int:
                                          source_sha=source["head_sha"])
         print(msg)
         return 0 if ok else 2
-    gates, verdict, dest = check(requested_version=args.version, dest=args.dest)
+    gates, verdict, dest = check(requested_version=args.version, dest=args.dest, public_repo=args.public_repo)
     print(render(gates, verdict))
     print(f"export staged at: {dest}")
     if not verdict.startswith("RELEASE-CHECKS PASS"):

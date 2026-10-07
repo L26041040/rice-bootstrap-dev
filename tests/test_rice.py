@@ -504,7 +504,7 @@ class TestThereIsNoUpdateSystem(unittest.TestCase):
 
     def test_no_shipped_script_carries_a_self_update_path(self):
         for py in self.SHIPPED:
-            if py.name in ("release.py", "export_public.py"):
+            if py.name in ("release.py", "export_public.py", "upgrade_matrix.py"):
                 continue  # private release tooling, never shipped to a repo
             if py.name == "delete_remote_branch.py":
                 continue  # reads whether ONE named branch exists on origin; nothing about "latest"

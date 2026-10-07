@@ -4,7 +4,8 @@ Status: canonical, frozen. Source: RICE-ARCH-REVIEW-001/-002/-003 and the OWNER'
 final decisions (amended by RICE-TO-TICKET-002: the CLAUDE.md guard activates on
 bootstrap completion instead of carrying a Matt exception; patched by
 RICE-UPDATE-SPEC-001: update safety, §14, I15–I19, from RICE-UPDATE-RESEARCH-001
-and RICE-UPDATE-GRILL-001). This document freezes an approved design; it does not reopen it.
+and RICE-UPDATE-GRILL-001; and by RICE-UPGRADE-MATRIX-001: upgrade compatibility,
+§15, I20–I22). This document freezes an approved design; it does not reopen it.
 Base: rice 0.1.6 (private main `4e7f210`).
 
 Keywords MUST / MUST NOT / MAY are normative.
@@ -158,7 +159,8 @@ behaviour up the moment a session loads the new build.
   approval. The key MUST close at the next `/clear`.
 - I12 Rice MUST NOT add repo-level state for any of this: no new settings keys,
   no marker files, no Gate A/B items. Everything lives in the plugin. (§14
-  adds exactly one verifier item, `rice-version:not-newer`, and no state.)
+  adds exactly one verifier item, `rice-version:not-newer`, and §15 exactly
+  one, `settings:retired-leaves`; neither adds state.)
 - I13 The guard MUST stay silent (no decision) outside rice repos, and MUST stay
   silent on its own internal error so that a rice bug never blocks a session.
 - I14 Existing bootstrap / repair / verify / uninstall behaviour MUST be
@@ -390,7 +392,7 @@ that check.
 
 Nothing new is written into a target repo. `OWNED_FILES`, `RICE_DENY_ENTRIES`,
 `OWNER_DEFINED_KEYS` MUST NOT change. `GATE_A` (and therefore `GATE_B`) gains
-exactly the one item §14 names; nothing else. The export allowlist gains
+exactly the items §14 and §15 name; nothing else. The export allowlist gains
 exactly the guard script and the skill file.
 
 ---
@@ -486,7 +488,7 @@ Coverage the ticket MUST include:
   segment, never on a (refused) `Skill` tool_use or an unqualified `history`
   (§5 S2); closed again after a genuine `/clear`; repo-wide Grep not matched.
 - Regression: `RICE_DENY_ENTRIES` still 28 and byte-identical; `GATE_A` /
-  `GATE_B` unchanged except for §14's one item; `OWNED_FILES` unchanged; `hooks.json` existing entries
+  `GATE_B` unchanged except for the items §14 and §15 name; `OWNED_FILES` unchanged; `hooks.json` existing entries
   unchanged and the new entry present; export allowlist includes the two new
   files; adapters still carry no lifecycle details (existing scan test).
 - `rice.md` text contains the convergence steps in order and the three policy
@@ -674,3 +676,57 @@ tooling; an uninstall by an older build of a repo finalized by a newer one
 (no repo file was added since 0.1.6, so there is nothing newer to subtract
 yet); prerelease or build-metadata version formats; any change to the
 release model.
+
+---
+
+## 15. Upgrade compatibility (patch RICE-UPGRADE-MATRIX-001)
+
+Source: the RICE-UPGRADE-MATRIX-001 audit -- every public `release/<semver>`
+branch (0.1.2-0.1.6) bootstrapped by its own shipped CLI and Stop hook, then
+upgraded to the candidate by re-running `/rice:bootstrap`, compared with a
+fresh candidate install and uninstalled; plus the three `rice 0.1.1` builds
+public `main` carried before release branches existed (ec66f54, 07c4891,
+7df1741), checked separately. Normative: I20-I22.
+
+- I20 Convergence. A repo bootstrapped by any published release, re-bootstrapped
+  by this build, MUST equal a fresh install of this build on the same project
+  (settings compared as JSON), and uninstall MUST then leave exactly the
+  project. FINAL-VERIFIED while a difference remains is a defect, never a pass.
+- I21 Provable take-back only. An update MAY remove a value only when a
+  historical declaration proves it rice's, at the exact shape that build
+  wrote; everything else at the same path is the project's and stays. Taking
+  a leaf back also takes back every container that removal emptied -- the
+  rule uninstall's projection already applies. Today that is:
+  - the 0.1.2/0.1.3 project-scope declaration (`extraKnownMarketplaces.
+    rice-bootstrap` with rice's own repo; `enabledPlugins.rice@rice-bootstrap`
+    = `true` beside it or with no marketplace entry), and the containers it
+    empties. A `false`, or the enablement of a same-named marketplace that is
+    not rice's, is the project's;
+  - `RETIRED_LEAVES` -- `env.CLAUDE_CODE_SUBAGENT_MODEL: "sonnet"`, written by
+    the public-`main` 0.1.1 builds ec66f54 / 07c4891 (`settings_template.py`),
+    retired by RICE-BOOTSTRAP-046 -- now taken back on update as on uninstall.
+    The verifier item `settings:retired-leaves` (Gate A, owned, repairable)
+    FAILs while one remains.
+- I22 Release gate. `release.py check` runs `upgrade:matrix` against the
+  export: rows are every `release/<semver>` on the public repository,
+  enumerated at run time, plus `fresh`; each runs on a bare and a rich
+  project. Any row not CLEAN (LEGACY RESIDUE, PROJECT DATA CHANGED, BLOCKED),
+  or an unreadable public repository, blocks the release. No minimum
+  supported upgrade version exists; `upgrade_matrix.releases()` is where one
+  would go.
+
+Known limits, deliberately not migrated (no historical declaration proves
+them rice's, and rice does not guess project-owned state):
+
+- Empty `extraKnownMarketplaces` / `enabledPlugins` objects that 0.1.4-0.1.6
+  already left in repos they migrated from 0.1.2/0.1.3 (multi-hop). Inert;
+  the OWNER may delete them by hand.
+- The public-`main` 0.1.1 builds owned `permissions.deny` as a whole list, so
+  in a repo with its own deny rules their Gate A stopped on a conflict and
+  rice's occurrences were never added. After an update, a project rule
+  identical to a rice rule cannot be told apart from rice's, and a later
+  uninstall takes it. Not reachable from any release branch.
+- A project's own pre-existing `outputStyle: "rice:老弟"` is taken by
+  uninstall (the same value rice writes); unchanged here.
+- Uninstall leaves the blank line apply put before the import line when
+  Matt's block follows it (whitespace only; fresh installs alike).

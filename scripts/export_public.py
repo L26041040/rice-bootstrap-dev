@@ -54,6 +54,7 @@ FORBIDDEN_PATTERNS = (
     r"^docs(/|$)",
     r"^scripts/release\.py$",
     r"^scripts/export_public\.py$",
+    r"^scripts/upgrade_matrix\.py$",
     r"^tests(/|$)",
     r"^dist(/|$)",
     r"\.pyc$",

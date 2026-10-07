@@ -23,6 +23,24 @@ session brings a repo up to date.
 - **README.** Says how an update reaches a repo, and that a pinned Environment
   stays on its release until the pin is changed.
 
+Upgrade compatibility (RICE-UPGRADE-MATRIX-001): every published release,
+upgraded by re-running `/rice:bootstrap`, now converges to exactly a fresh
+install, and uninstall leaves only the project.
+
+- **No empty containers left by the 0.1.3-era migration.** Taking back the
+  project-scope declaration 0.1.2/0.1.3 wrote also takes back the
+  `extraKnownMarketplaces` / `enabledPlugins` objects it emptied.
+- **The retired subagent pin is taken back on update.**
+  `env.CLAUDE_CODE_SUBAGENT_MODEL: "sonnet"`, written by the 0.1.1 builds
+  public `main` carried before release branches existed, is removed by
+  re-running bootstrap (not only by uninstall), and a new verifier item,
+  `settings:retired-leaves` (Gate A), refuses to call a repo final while it
+  remains. Any other value there is the project's and stays.
+- **Narrower legacy identity.** Only the exact enablement those builds
+  wrote (`true`, beside rice's own marketplace entry) is rice's; a project's
+  `false`, or the enablement of a same-named marketplace that is not rice's,
+  is left alone.
+
 ## [0.1.6] - 2026-09-13
 
 A privileged channel for the one git write rice denies the agent.
