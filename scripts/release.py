@@ -30,7 +30,6 @@ import settings_template  # noqa: E402
 import upgrade_matrix  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 README_REQUIRED = (
     "## Install once",
     "## Bootstrap a repo",
@@ -132,7 +131,7 @@ def gate_manifests(root: Path) -> Gate:
 
 def gate_version(root: Path, requested: str | None) -> Gate:
     pv, cv = plugin_version(root), changelog_top_version(root)
-    if not SEMVER.match(pv or ""):
+    if not settings_template.semver(pv):
         return Gate("version:consistent", "FAIL", f"plugin.json version {pv!r} is not SemVer")
     if cv != pv:
         return Gate("version:consistent", "FAIL", f"CHANGELOG top entry {cv!r} != plugin.json {pv!r}")
@@ -256,8 +255,7 @@ def gate_upgrade_matrix(dest: Path, public_repo: str) -> Gate:
     summary = "; ".join(f"{r.source} {r.verdict}" for r in rows)
     if upgrade_matrix.safe(rows):
         return Gate("upgrade:matrix", "PASS", summary)
-    first = "; ".join(f"{r.source}: {f.text}" for r in rows if r.verdict in upgrade_matrix.BLOCKING
-                      for f in r.findings[:2])
+    first = "; ".join(f"{r.source}: {f.text}" for r in rows if r.blocks for f in r.findings[:2])
     return Gate("upgrade:matrix", "FAIL", f"{summary} -- {first or 'no rows'}"[:800])
 
 
@@ -360,16 +358,12 @@ def advance_default_branch(version: str, public_repo: str | None, source_sha: st
 
     with tempfile.TemporaryDirectory(prefix="rice-promote-") as tmp:
         current = _default_branch_version(Path(tmp), public_repo)
-        if current and _semver(current) > _semver(version):
+        if current and settings_template.semver(current) > settings_template.semver(version):
             return False, (f"RELEASE BLOCKED -- {DEFAULT_BRANCH} already carries {current}, which is "
                            f"newer than {version}. {DEFAULT_BRANCH} is the latest pointer and only "
                            "ever moves forward; moving it back would silently downgrade every "
                            "version-less install. Publish a newer version instead.")
         return _advance_default_branch(Path(tmp), branch, version, public_repo, source_sha)
-
-
-def _semver(version: str) -> tuple:
-    return tuple(int(part) for part in version.split("."))
 
 
 def _default_branch_version(ws: Path, public_repo: str) -> str | None:
@@ -388,7 +382,7 @@ def _default_branch_version(ws: Path, public_repo: str) -> str | None:
         current = json.loads(manifest).get("version", "")
     except json.JSONDecodeError:
         return None
-    return current if SEMVER.match(current or "") else None
+    return current if settings_template.semver(current) else None
 
 
 def _advance_default_branch(ws: Path, branch: str, version: str, public_repo: str,

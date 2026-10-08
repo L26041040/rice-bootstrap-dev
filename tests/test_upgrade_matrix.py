@@ -55,9 +55,13 @@ def _publish(d: Path, public: str, version: str, doctor=None) -> None:
     assert ok, msg
 
 
+def _reconcile(tree: Path) -> Path:
+    return tree / "scripts" / "reconcile.py"
+
+
 def _doctor_apply(tree: Path, line: str) -> None:
     """An older rice whose apply also did `line` (in reconcile.apply's body)."""
-    p = tree / "scripts" / "reconcile.py"
+    p = _reconcile(tree)
     src = p.read_text(encoding="utf-8")
     anchor = "    items.append(_agents_md_item(repo_root, write=True, converge_drift=converge_drift))\n    return items\n"
     assert src.count(anchor) == 1
@@ -79,7 +83,7 @@ def _doctor_settings(tree: Path, mutation: str) -> None:
 def _doctor_tail(tree: Path, code: str) -> None:
     """A build whose reconcile module ends with `code`: a redefinition there
     replaces the function of that name for every caller."""
-    p = tree / "scripts" / "reconcile.py"
+    p = _reconcile(tree)
     p.write_text(p.read_text(encoding="utf-8") + "\n\n" + code + "\n", encoding="utf-8")
 
 
@@ -101,6 +105,10 @@ def _strips_but_leaves_the_containers(tree: Path) -> None:
 
 def _verdicts(rows) -> dict:
     return {r.source: r.verdict for r in rows}
+
+
+def _row(rows, source: str):
+    return next(r for r in rows if r.source == source)
 
 
 class TestEnumeration(unittest.TestCase):
@@ -136,6 +144,7 @@ class TestMatrix(unittest.TestCase):
         self.public = _bare(self.d)
         self.candidate = self.d / "candidate"
         export_public.export(self.candidate)
+        self.version = upgrade_matrix.Build.at(self.candidate).version
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -168,9 +177,8 @@ class TestMatrix(unittest.TestCase):
             "fresh": "CLEAN", "release/0.0.1": "CLEAN", "release/0.0.2": "CLEAN", "release/0.0.3": "CLEAN",
             "release/0.0.1 -> 0.0.2 -> 0.0.3": "CLEAN", "release/0.0.2 -> 0.0.3": "CLEAN"},
             upgrade_matrix.render(rows))
-        path = {r.source: r for r in rows}["release/0.0.1 -> 0.0.2 -> 0.0.3"]
-        candidate = upgrade_matrix.Build.at(self.candidate).version
-        self.assertEqual(path.lifecycle["rich"], f"FINAL-VERIFIED 0.0.1 -> 0.0.2 -> 0.0.3 -> {candidate}")
+        path = _row(rows, "release/0.0.1 -> 0.0.2 -> 0.0.3")
+        self.assertEqual(path.lifecycle["rich"], f"FINAL-VERIFIED 0.0.1 -> 0.0.2 -> 0.0.3 -> {self.version}")
 
     def test_an_inert_husk_an_intermediate_release_left_is_benign_and_does_not_block(self):
         """The one classified benign (SPEC-001 §15): an empty object at a
@@ -199,7 +207,7 @@ class TestMatrix(unittest.TestCase):
         self.assertEqual(_verdicts(self.run_matrix())["release/0.0.1"], "CLEAN")
         shutil.rmtree(self.d / "matrix")
         rows = self.run_matrix(self.doctored_candidate(_strips_but_leaves_the_containers))
-        row = {r.source: r for r in rows}["release/0.0.1"]
+        row = _row(rows, "release/0.0.1")
         self.assertEqual(row.verdict, "HARMFUL RESIDUE", upgrade_matrix.render(rows))
         texts = " | ".join(f.text for f in row.findings)
         self.assertIn("enabledPlugins={} left behind (a fresh install has no such key)", texts)
@@ -217,7 +225,7 @@ class TestMatrix(unittest.TestCase):
         self.assertEqual(_verdicts(rows), {
             "fresh": "CLEAN", "release/0.0.1": "CLEAN", "release/0.0.2": "CLEAN",
             "release/0.0.1 -> 0.0.2": "BENIGN LEGACY RESIDUE"}, upgrade_matrix.render(rows))
-        texts = " | ".join(f.text for f in {r.source: r for r in rows}["release/0.0.1 -> 0.0.2"].findings)
+        texts = " | ".join(f.text for f in _row(rows, "release/0.0.1 -> 0.0.2").findings)
         self.assertIn("already empty when the candidate arrived", texts)
         self.assertTrue(upgrade_matrix.safe(rows))
 
@@ -225,11 +233,11 @@ class TestMatrix(unittest.TestCase):
         """A release at the candidate's own version already stamped it; a
         candidate whose run prints no verdict of its own is BLOCKED, not
         passed on that stamp."""
-        _publish(self.d, self.public, upgrade_matrix.Build.at(self.candidate).version)
+        _publish(self.d, self.public, self.version)
         silent = self.doctored_candidate(lambda c: (c / "scripts" / "rice.py").write_text(
             "raise SystemExit(0)\n", encoding="utf-8"))
         rows = self.run_matrix(silent)
-        row = {r.source: r for r in rows}[settings_template.release_ref(upgrade_matrix.Build.at(self.candidate).version)]
+        row = _row(rows, settings_template.release_ref(self.version))
         self.assertEqual(row.verdict, "BLOCKED", upgrade_matrix.render(rows))
         self.assertIn("did not reach FINAL-VERIFIED", row.lifecycle["bare"])
 
@@ -247,14 +255,14 @@ class TestMatrix(unittest.TestCase):
         verdicts = _verdicts(rows)
         self.assertEqual(verdicts["release/0.0.1 -> 0.0.2"], "BLOCKED", upgrade_matrix.render(rows))
         self.assertEqual(verdicts["release/0.0.1"], "CLEAN")
-        path = {r.source: r for r in rows}["release/0.0.1 -> 0.0.2"]
+        path = _row(rows, "release/0.0.1 -> 0.0.2")
         self.assertIn("rice 0.0.2 did not reach FINAL-VERIFIED", path.lifecycle["bare"])
 
     def test_state_an_older_release_wrote_and_the_candidate_keeps_is_harmful_residue(self):
         _publish(self.d, self.public, "0.0.1", doctor=lambda t: _doctor_settings(
             t, '_set_path(s, "env.RICE_OLD_FLAG", "1")'))
         rows = self.run_matrix()
-        row = {r.source: r for r in rows}["release/0.0.1"]
+        row = _row(rows, "release/0.0.1")
         self.assertEqual(row.verdict, "HARMFUL RESIDUE", upgrade_matrix.render(rows))
         texts = " | ".join(f.text for f in row.findings)
         self.assertIn("env.RICE_OLD_FLAG='1' left behind", texts)
@@ -267,7 +275,7 @@ class TestMatrix(unittest.TestCase):
         _publish(self.d, self.public, "0.0.1", doctor=lambda t: _doctor_apply(
             t, '(repo_root / "README.md").write_text("rewritten by rice\\n")'))
         rows = self.run_matrix()
-        row = {r.source: r for r in rows}["release/0.0.1"]
+        row = _row(rows, "release/0.0.1")
         self.assertEqual(row.verdict, "PROJECT DATA CHANGED", upgrade_matrix.render(rows))
         self.assertIn("project file README.md changed", " | ".join(f.text for f in row.findings))
 
@@ -294,7 +302,7 @@ class TestProbeRecord(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             sb = upgrade_matrix.Sandbox(d / "sb", upgrade_matrix._tools(d))
-            settings = sb.work / ".claude" / "settings.json"
+            settings = sb.work / upgrade_matrix.SETTINGS
             settings.parent.mkdir(parents=True)
             settings.write_text("{}", encoding="utf-8")
             with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(sb.cfg)}):

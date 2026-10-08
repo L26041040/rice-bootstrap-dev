@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""rice upgrade matrix (RICE-UPGRADE-MATRIX-001): every published release,
-upgraded to the candidate through the real lifecycle, must converge to
-exactly what a fresh install of the candidate produces -- and uninstalling
-either must leave nothing but the project.
+"""rice upgrade matrix (RICE-UPGRADE-MATRIX-001, RICE-UPGRADE-PATH-001): every
+published release, upgraded to the candidate through the real lifecycle --
+directly, and along the path a long-lived repo took through every later
+release -- must converge to exactly what a fresh install of the candidate
+produces, and uninstalling either must leave nothing but the project.
 
 Private release tooling, like release.py: never exported, never shipped.
 It only ever READS other builds' verdicts, so -- as in release.py -- the
@@ -83,16 +84,18 @@ VERDICTS = ("PROJECT DATA CHANGED", "HARMFUL RESIDUE", "BLOCKED", "BENIGN LEGACY
 DATA, RESIDUE, BLOCKED, BENIGN, CLEAN = VERDICTS
 BLOCKING = VERDICTS[:3]
 
-# The one leftover classified benign, exactly: the `extraKnownMarketplaces`
-# and `enabledPlugins` objects that 0.1.2/0.1.3 created for their project-scope
-# declaration and that 0.1.4-0.1.6 emptied -- but did not remove -- when they
-# migrated that declaration away. An empty object there has no effect, and
-# nothing distinguishes it from one the project wrote itself, so no build may
-# delete it (RICE-SPEC-001 §15, known limits). It is benign only when it was
-# already empty when the candidate arrived (`_leftover` checks the repo as the
-# candidate found it): an object the candidate's own migration emptied is the
-# candidate's to remove, and leaving it is harmful.
-BENIGN_HUSKS = {"extraKnownMarketplaces": {}, "enabledPlugins": {}}
+# The one leftover classified benign, exactly: an EMPTY object at one of the
+# two containers 0.1.2/0.1.3 created for their project-scope declaration (the
+# containers of reconcile's legacy paths) that 0.1.4-0.1.6 emptied -- but did
+# not remove -- when they migrated that declaration away. An empty object
+# there has no effect, and nothing distinguishes it from one the project wrote
+# itself, so no build may delete it (RICE-SPEC-001 §15, known limits). It is
+# benign only when it was already empty when the candidate arrived
+# (`_leftover` checks the repo as the candidate found it): an object the
+# candidate's own migration emptied is the candidate's to remove, and leaving
+# it is harmful.
+BENIGN_HUSKS = frozenset(path.split(".")[0] for path in
+                         (reconcile.LEGACY_MARKETPLACE_PATH, reconcile.LEGACY_ENABLED_PLUGIN_PATH))
 
 MARKER = f".claude/{reconcile.MARKER_NAME}"
 SETTINGS = ".claude/settings.json"
@@ -405,7 +408,7 @@ class Project:
 
 @dataclass
 class Finding:
-    kind: str  # DATA / RESIDUE / BLOCKED
+    kind: str  # one of VERDICTS but CLEAN
     text: str
 
 
@@ -478,7 +481,7 @@ def _leftover(where: str, path: str, value, before: dict) -> Finding:
     settings as the candidate found them -- already held it that way: then
     no build can prove it rice's. Emptied by the candidate itself, it is the
     candidate's to remove."""
-    if path in BENIGN_HUSKS and value == BENIGN_HUSKS[path] and before.get(path, _ABSENT) == value:
+    if path in BENIGN_HUSKS and value == {} and before.get(path, _ABSENT) == value:
         return Finding(BENIGN, f"{where}: settings {path}={value!r} left behind -- already empty when the "
                                "candidate arrived (an earlier release's migration left it; SPEC-001 §15)")
     return Finding(RESIDUE, f"{where}: settings {path}={value!r} left behind (a fresh install has no such key)")
@@ -509,9 +512,11 @@ def _only_the_project(snap: dict, project: Project, where: str, before: dict) ->
     """After uninstall, exactly the project and nothing of rice's."""
     found = [Finding(RESIDUE, f"{where}: {rel} is still there")
              for rel in sorted(set(snap) - set(project.files) - set(SHARED) - {SETTINGS})]
-    for path, a, _ in _differences(_leaves(_settings(snap)), _leaves(project.settings)):
-        if a is not _ABSENT:
-            found.append(_leftover(where, path, a, before))
+    for path, a, b in _differences(_leaves(_settings(snap)), _leaves(project.settings)):
+        if a is _ABSENT:
+            continue  # the project's own key, missing: _project_survived has reported it
+        found.append(_leftover(where, path, a, before) if b is _ABSENT else
+                     Finding(RESIDUE, f"{where}: settings {path} is {a!r}, the project's own is {b!r}"))
     for rel in SHARED:
         extra = [l for l in _lines(snap, rel) if l not in project.lines[rel]]
         if extra:
@@ -551,19 +556,32 @@ def _check(candidate: Build, shape: str, subject: Sandbox, fresh: Sandbox | None
 
 @dataclass
 class Row:
-    source: str                                     # "fresh", "release/0.1.6", or the path "release/0.1.2 -> 0.1.3 -> ..."
+    source: str                                     # "fresh", "release/0.1.6", or a path "release/0.1.2 -> 0.1.3 -> ..."
     findings: list = field(default_factory=list)
-    lifecycle: dict = field(default_factory=dict)   # shape -> what each build's lifecycle reached
+    lifecycle: dict = field(default_factory=dict)   # shape -> the verdicts the builds on the path reached, in order
 
     @property
     def verdict(self) -> str:
         return min((f.kind for f in self.findings), key=VERDICTS.index, default=CLEAN)
 
+    @property
+    def blocks(self) -> bool:
+        return self.verdict in BLOCKING
+
 
 def safe(rows: list[Row]) -> bool:
-    """The matrix's one word: there are rows, and no row's verdict blocks
-    (CLEAN, or benign residue that SPEC-001 §15 already records)."""
-    return bool(rows) and not any(r.verdict in BLOCKING for r in rows)
+    """The matrix's one word: there are rows, and none blocks (CLEAN, or
+    benign residue that SPEC-001 §15 already records)."""
+    return bool(rows) and not any(r.blocks for r in rows)
+
+
+def _start(build: Build, shape: str, base: Path, tools: Path) -> tuple[Sandbox, bool, str]:
+    """The seeded project, bootstrapped by `build` with Matt's setup and
+    `build`'s own Stop continuation: (sandbox, finished, what happened)."""
+    sb = Sandbox(base, tools)
+    _seed(sb, shape)
+    ok, what = _install(build, sb, shape)
+    return sb, ok, what
 
 
 def _path(row: Row, builds: list[Build], candidate: Build, shape: str, base: Path, tools: Path,
@@ -571,15 +589,12 @@ def _path(row: Row, builds: list[Build], candidate: Build, shape: str, base: Pat
     """One cell of the matrix: the project bootstrapped by `builds[0]`, then
     re-bootstrapped by each later build in order -- every hop its own real
     lifecycle, finishing final -- then by the candidate, then checked."""
-    sb = Sandbox(base, tools)
-    _seed(sb, shape)
-    ok, what = _install(builds[0], sb, shape)
+    sb, ok, what = _start(builds[0], shape, base, tools)
     reached = [what]
     if not ok:
         row.lifecycle[shape] = what
         row.findings.append(Finding(BLOCKED, f"{shape}: {what}"))
         return
-    before = sb.settings()
     for build in (*builds[1:], candidate):
         before = sb.settings()  # what the next build finds; after the loop, what the candidate found
         out = sb.bootstrap(build, [])
@@ -597,8 +612,9 @@ def _path(row: Row, builds: list[Build], candidate: Build, shape: str, base: Pat
 
 
 def run(candidate_root: Path, public_repo: str = PUBLIC_REPO, workdir: Path | None = None) -> tuple[list[Row], str | None]:
-    """(one Row per published release plus `fresh`, error). `error` means
-    the matrix could not even be assembled -- treat as not clean."""
+    """(`fresh`, one direct Row per published release, one historical Row per
+    release but the newest; error). `error` means the matrix could not even
+    be assembled -- treat as not safe."""
     workdir = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="rice-upgrade-matrix-"))
     workdir.mkdir(parents=True, exist_ok=True)
     tools = _tools(workdir)
@@ -612,9 +628,7 @@ def run(candidate_root: Path, public_repo: str = PUBLIC_REPO, workdir: Path | No
 
     fresh_row, fresh = Row("fresh"), {}
     for shape in PROJECTS:
-        sb = Sandbox(workdir / f"fresh-{shape}", tools)
-        _seed(sb, shape)
-        ok, what = _install(candidate, sb, shape)
+        sb, ok, what = _start(candidate, shape, workdir / f"fresh-{shape}", tools)
         fresh_row.lifecycle[shape] = what
         if not ok:
             fresh_row.findings.append(Finding(BLOCKED, f"{shape}: {what}"))
@@ -650,15 +664,15 @@ def run(candidate_root: Path, public_repo: str = PUBLIC_REPO, workdir: Path | No
 def render(rows: list[Row], error: str | None = None) -> str:
     if error:
         return f"UPGRADE-MATRIX NOT SAFE -- {error}"
-    lines = [f"{'source':<16} {'verdict':<22} lifecycle"]
+    width = max((len(r.source) for r in rows), default=6)
+    lines = [f"{'source':<{width}} {'verdict':<22} lifecycle"]
     for r in rows:
-        lines.append(f"{r.source:<16} {r.verdict:<22} " + "; ".join(f"{s}: {w}" for s, w in r.lifecycle.items()))
+        lines.append(f"{r.source:<{width}} {r.verdict:<22} " + "; ".join(f"{s}: {w}" for s, w in r.lifecycle.items()))
         lines.extend(f"    - [{f.kind}] {f.text}" for f in r.findings)
-    blocking = [r for r in rows if r.verdict in BLOCKING]
-    benign = [r for r in rows if r.verdict == BENIGN]
-    tail = f" ({len(rows)} rows" + (f"; {len(benign)} with benign legacy residue" if benign else "") + ")"
+    benign = sum(r.verdict == BENIGN for r in rows)
+    tail = f" ({len(rows)} rows" + (f"; {benign} with benign legacy residue" if benign else "") + ")"
     lines.append(f"UPGRADE-MATRIX SAFE{tail}" if safe(rows)
-                 else f"UPGRADE-MATRIX NOT SAFE ({len(blocking) if rows else 'no'} of {len(rows)} rows block)")
+                 else f"UPGRADE-MATRIX NOT SAFE ({sum(r.blocks for r in rows)} of {len(rows)} rows block)")
     return "\n".join(lines)
 
 
