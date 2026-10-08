@@ -12,21 +12,26 @@ value another module owns (the verified-version file, the marker, the deny
 path, the release branch prefix, SemVer, Matt's artifacts) is read from
 that module.
 
-Rows. One per public `release/<semver>` branch -- enumerated from the
-public repository at run time, never kept as a list here -- plus `fresh`.
-(Should the supported range ever need a floor, `releases()` is the one
-place it would go; there is none today.)
+Rows. The public `release/<semver>` branches are enumerated from the public
+repository at run time, never kept as a list here. (Should the supported
+range ever need a floor, `releases()` is the one place it would go; there
+is none today.) For every release there is a **direct** row, release ->
+candidate; for every release but the newest there is also a **historical**
+row, release -> each later release in order -> candidate: the path a
+long-lived repo actually took, each hop run by that release's own build.
+Plus `fresh`: the candidate alone.
 
 Each row runs twice, on two project shapes: `bare` (a repo with no Claude
 configuration) and `rich` (project-owned settings, CLAUDE.md, AGENTS.md
 content, a project deny rule identical to one of rice's, other plugins).
 
-  1. The release under test bootstraps the project with ITS OWN shipped CLI
-     and Stop hook, the way the OWNER's sessions ran it: `rice.py bootstrap`,
+  1. The first release bootstraps the project with ITS OWN shipped CLI and
+     Stop hook, the way the OWNER's sessions ran it: `rice.py bootstrap`,
      the harness-denied git probe it asks for, Matt's setup, the Stop
      continuation stamping that release's final verdict, a commit.
-  2. The candidate re-runs `rice.py bootstrap` with no OWNER answers, as the
-     README's update path says (I15), until it verifies final.
+  2. Each later release on the path, and finally the candidate, re-runs its
+     own `rice.py bootstrap` with no OWNER answers, as the README's update
+     path says (I15), and must verify final before the next hop.
   3. The result is compared with a fresh candidate install of the same
      project; both are uninstalled with the candidate's own uninstall and
      compared with the project.
@@ -35,15 +40,19 @@ The only stand-ins are the two external probes every build makes --
 `claude plugin list --json` and `rtk --version` -- answered by tiny
 executables first on PATH, so every build runs unmodified.
 
-Verdict per row, worst first:
+Verdict per row, worst first; the first three block a release:
 
-  PROJECT DATA CHANGED  a project-owned byte or setting did not survive
-  LEGACY RESIDUE        the upgraded repo differs from a fresh install, or
-                        uninstall leaves rice state behind -- including when
-                        the candidate still verified final (a verifier or
-                        migration defect, never a success)
-  BLOCKED               a lifecycle step did not reach its verdict
-  CLEAN                 none of the above
+  PROJECT DATA CHANGED   a project-owned byte or setting did not survive
+  HARMFUL RESIDUE        the upgraded repo differs from a fresh install, or
+                         uninstall leaves rice state behind -- including when
+                         the candidate still verified final (a verifier or
+                         migration defect, never a success)
+  BLOCKED                a lifecycle step did not reach its verdict
+  BENIGN LEGACY RESIDUE  only the differences `BENIGN_HUSKS` names: a known,
+                         inert leftover whose ownership no build can prove,
+                         recorded as such in RICE-SPEC-001 §15 -- reported,
+                         never "fixed" by guessing, and not a blocker
+  CLEAN                  none of the above
 """
 import argparse
 import json
@@ -66,8 +75,19 @@ from verify import VERSION_FILE  # noqa: E402  -- read only, to see what another
 
 ROOT = Path(__file__).resolve().parent.parent
 PUBLIC_REPO = f"https://github.com/{export_public.MARKETPLACE_REPO}.git"
-VERDICTS = ("PROJECT DATA CHANGED", "LEGACY RESIDUE", "BLOCKED", "CLEAN")  # worst first
-DATA, RESIDUE, BLOCKED, CLEAN = VERDICTS
+VERDICTS = ("PROJECT DATA CHANGED", "HARMFUL RESIDUE", "BLOCKED", "BENIGN LEGACY RESIDUE", "CLEAN")  # worst first
+DATA, RESIDUE, BLOCKED, BENIGN, CLEAN = VERDICTS
+BLOCKING = VERDICTS[:3]
+
+# The one leftover classified benign, exactly: the `extraKnownMarketplaces`
+# and `enabledPlugins` objects that 0.1.2/0.1.3 created for their project-scope
+# declaration and that 0.1.4-0.1.6 emptied -- but did not remove -- when they
+# migrated that declaration away. An empty object there has no effect, and
+# nothing distinguishes it from one the project wrote itself, so no build may
+# delete it (RICE-SPEC-001 §15, known limits). A later candidate's own
+# migration removes the object it empties; this names only what is already
+# empty when the candidate arrives.
+BENIGN_HUSKS = {"extraKnownMarketplaces": {}, "enabledPlugins": {}}
 
 MARKER = f".claude/{reconcile.MARKER_NAME}"
 SETTINGS = ".claude/settings.json"
@@ -435,6 +455,15 @@ def _project_survived(snap: dict, project: Project, where: str) -> list[Finding]
     return found
 
 
+def _leftover(where: str, path: str, value) -> Finding:
+    """A settings value the candidate left where a fresh install has none:
+    benign only when it is exactly a `BENIGN_HUSKS` entry."""
+    if path in BENIGN_HUSKS and value == BENIGN_HUSKS[path]:
+        return Finding(BENIGN, f"{where}: settings {path}={value!r} left behind -- the inert object "
+                               "0.1.4-0.1.6 emptied when migrating a 0.1.2/0.1.3 declaration (SPEC-001 §15)")
+    return Finding(RESIDUE, f"{where}: settings {path}={value!r} left behind (a fresh install has no such key)")
+
+
 def _converged(up: dict, fresh: dict, where: str) -> list[Finding]:
     """The upgraded repo must BE a fresh install: same files, same bytes,
     same settings (compared as JSON -- rice writes it, key order is not
@@ -447,10 +476,12 @@ def _converged(up: dict, fresh: dict, where: str) -> list[Finding]:
             "left behind (a fresh install has no such file)" if b is _ABSENT else
             "missing (a fresh install has it)" if a is _ABSENT else "differs from a fresh install")))
     for path, a, b in _differences(_leaves(_settings(up)), _leaves(_settings(fresh))):
-        found.append(Finding(RESIDUE, f"{where}: settings {path}" + (
-            f"={a!r} left behind (a fresh install has no such key)" if b is _ABSENT else
-            f" missing (a fresh install has {b!r})" if a is _ABSENT else
-            f" is {a!r}, a fresh install has {b!r}")))
+        if b is _ABSENT:
+            found.append(_leftover(where, path, a))
+        else:
+            found.append(Finding(RESIDUE, f"{where}: settings {path}" + (
+                f" missing (a fresh install has {b!r})" if a is _ABSENT else
+                f" is {a!r}, a fresh install has {b!r}")))
     return found
 
 
@@ -458,10 +489,9 @@ def _only_the_project(snap: dict, project: Project, where: str) -> list[Finding]
     """After uninstall, exactly the project and nothing of rice's."""
     found = [Finding(RESIDUE, f"{where}: {rel} is still there")
              for rel in sorted(set(snap) - set(project.files) - set(SHARED) - {SETTINGS})]
-    left = {path: a for path, a, _ in _differences(_leaves(_settings(snap)), _leaves(project.settings))
-            if a is not _ABSENT}
-    if left:
-        found.append(Finding(RESIDUE, f"{where}: settings not back to the project's own: {left}"))
+    for path, a, _ in _differences(_leaves(_settings(snap)), _leaves(project.settings)):
+        if a is not _ABSENT:
+            found.append(_leftover(where, path, a))
     for rel in SHARED:
         extra = [l for l in _lines(snap, rel) if l not in project.lines[rel]]
         if extra:
@@ -483,8 +513,8 @@ def _check(candidate: Build, shape: str, subject: Sandbox, fresh: Sandbox | None
     if fresh is not None:
         drift = _converged(snap, fresh.snapshot(), shape)
         found += drift
-        if final and drift:
-            found.append(Finding(RESIDUE, f"{shape}: the candidate said {FINAL} with this residue present "
+        if final and any(f.kind == RESIDUE for f in drift):
+            found.append(Finding(RESIDUE, f"{shape}: the candidate said {FINAL} with harmful residue present "
                                           "-- a verifier/migration defect"))
     gone = subject.copy(base / "uninstalled")
     out = gone.uninstall(candidate)
@@ -502,7 +532,7 @@ def _check(candidate: Build, shape: str, subject: Sandbox, fresh: Sandbox | None
 
 @dataclass
 class Row:
-    source: str                                     # "release/0.1.2" or "fresh"
+    source: str                                     # "fresh", "release/0.1.6", or the path "release/0.1.2 -> 0.1.3 -> ..."
     findings: list = field(default_factory=list)
     lifecycle: dict = field(default_factory=dict)   # shape -> what each build's lifecycle reached
 
@@ -511,9 +541,38 @@ class Row:
         return min((f.kind for f in self.findings), key=VERDICTS.index, default=CLEAN)
 
 
-def clean(rows: list[Row]) -> bool:
-    """The matrix's one word: there are rows, and every one is CLEAN."""
-    return bool(rows) and all(r.verdict == CLEAN for r in rows)
+def safe(rows: list[Row]) -> bool:
+    """The matrix's one word: there are rows, and no row's verdict blocks
+    (CLEAN, or benign residue that SPEC-001 §15 already records)."""
+    return bool(rows) and not any(r.verdict in BLOCKING for r in rows)
+
+
+def _path(row: Row, builds: list[Build], candidate: Build, shape: str, base: Path, tools: Path,
+          fresh: Sandbox | None) -> None:
+    """One cell of the matrix: the project bootstrapped by `builds[0]`, then
+    re-bootstrapped by each later build in order -- every hop its own real
+    lifecycle, finishing final -- then by the candidate, then checked."""
+    sb = Sandbox(base, tools)
+    _seed(sb, shape)
+    ok, what = _install(builds[0], sb, shape)
+    reached = [what]
+    if not ok:
+        row.lifecycle[shape] = what
+        row.findings.append(Finding(BLOCKED, f"{shape}: {what}"))
+        return
+    for build in (*builds[1:], candidate):
+        out = sb.bootstrap(build, [])
+        if not sb.final(build):
+            reached.append(f"rice {build.version} did not reach {FINAL}: {_last(out)}")
+            row.lifecycle[shape] = " -> ".join(reached)
+            row.findings.append(Finding(BLOCKED, f"{shape}: {reached[-1]}"))
+            return
+        reached.append(build.version)
+    row.lifecycle[shape] = " -> ".join(reached)
+    if fresh is None:
+        row.findings.append(Finding(BLOCKED, f"{shape}: no fresh candidate install to compare with"))
+        return
+    row.findings += _check(candidate, shape, sb, fresh, base / "check")
 
 
 def run(candidate_root: Path, public_repo: str = PUBLIC_REPO, workdir: Path | None = None) -> tuple[list[Row], str | None]:
@@ -542,57 +601,55 @@ def run(candidate_root: Path, public_repo: str = PUBLIC_REPO, workdir: Path | No
         fresh[shape] = sb
         fresh_row.findings += _check(candidate, shape, sb, None, workdir / f"fresh-{shape}-check")
 
-    rows = [fresh_row]
+    rows, builds, unfetched = [fresh_row], {}, {}
     for version in versions:
-        row = Row(settings_template.release_ref(version))
-        rows.append(row)
         old_root = workdir / "releases" / version
         problem = fetch_release(public_repo, version, old_root)
         if problem:
-            row.findings.append(Finding(BLOCKED, problem))
+            unfetched[version] = problem
+        else:
+            builds[version] = Build.at(old_root)
+
+    # direct: release -> candidate; historical: release -> every later release -> candidate
+    paths = [[v] for v in versions] + [versions[i:] for i in range(len(versions) - 1)]
+    for path in paths:
+        row = Row(" -> ".join([settings_template.release_ref(path[0]), *path[1:]]))
+        rows.append(row)
+        missing = [v for v in path if v in unfetched]
+        if missing:
+            row.findings += [Finding(BLOCKED, unfetched[v]) for v in missing]
             continue
-        old = Build.at(old_root)
         for shape in PROJECTS:
-            base = workdir / f"{version}-{shape}"
-            sb = Sandbox(base, tools)
-            _seed(sb, shape)
-            ok, what = _install(old, sb, shape)
-            if not ok:
-                row.lifecycle[shape] = what
-                row.findings.append(Finding(BLOCKED, f"{shape}: {what}"))
-                continue
-            out = sb.bootstrap(candidate, [])
-            row.lifecycle[shape] = f"{what} -> " + (f"{FINAL} {candidate.version}" if sb.final(candidate)
-                                                    else _last(out))
-            if shape not in fresh:
-                row.findings.append(Finding(BLOCKED, f"{shape}: no fresh candidate install to compare with"))
-                continue
-            row.findings += _check(candidate, shape, sb, fresh[shape], base / "check")
+            _path(row, [builds[v] for v in path], candidate, shape,
+                  workdir / f"{'-'.join(path)}-{shape}", tools, fresh.get(shape))
     return rows, None
 
 
 def render(rows: list[Row], error: str | None = None) -> str:
     if error:
-        return f"UPGRADE-MATRIX NOT CLEAN -- {error}"
+        return f"UPGRADE-MATRIX NOT SAFE -- {error}"
     lines = [f"{'source':<16} {'verdict':<22} lifecycle"]
     for r in rows:
         lines.append(f"{r.source:<16} {r.verdict:<22} " + "; ".join(f"{s}: {w}" for s, w in r.lifecycle.items()))
         lines.extend(f"    - [{f.kind}] {f.text}" for f in r.findings)
-    bad = [r for r in rows if r.verdict != CLEAN]
-    lines.append(f"UPGRADE-MATRIX CLEAN ({len(rows)} rows)" if clean(rows)
-                 else f"UPGRADE-MATRIX NOT CLEAN ({len(bad)} of {len(rows)} rows)")
+    blocking = [r for r in rows if r.verdict in BLOCKING]
+    benign = [r for r in rows if r.verdict == BENIGN]
+    tail = f" ({len(rows)} rows" + (f"; {len(benign)} with benign legacy residue" if benign else "") + ")"
+    lines.append(f"UPGRADE-MATRIX SAFE{tail}" if safe(rows)
+                 else f"UPGRADE-MATRIX NOT SAFE ({len(blocking) if rows else 'no'} of {len(rows)} rows block)")
     return "\n".join(lines)
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="every published rice release, upgraded to a candidate build")
+    ap = argparse.ArgumentParser(description="every published rice release, directly and along its historical "
+                                             "path through later releases, upgraded to a candidate build")
     ap.add_argument("--candidate", default=str(ROOT), help="the candidate build's root (default: this repo)")
     ap.add_argument("--public-repo", default=PUBLIC_REPO)
     ap.add_argument("--workdir", help="keep the sandboxes here (default: a temp dir)")
     args = ap.parse_args(argv)
     rows, err = run(Path(args.candidate), args.public_repo, Path(args.workdir) if args.workdir else None)
     print(render(rows, err))
-    return 0 if not err and clean(rows) else 1
+    return 0 if not err and safe(rows) else 1
 
 
 if __name__ == "__main__":

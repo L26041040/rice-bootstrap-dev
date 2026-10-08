@@ -65,18 +65,23 @@ Environment (or a machine) at the new branch themselves.
    clean) rather than by shipping tests to prove it, and the **upgrade
    matrix** (`upgrade:matrix`, `scripts/upgrade_matrix.py`): every
    `release/<semver>` branch already on the public repository — enumerated
-   from it on every run, never a list kept anywhere — plus a fresh repo,
-   each bootstrapped by that release's own shipped CLI and Stop hook, then
-   upgraded to this export by re-running `/rice:bootstrap`, must be
+   from it on every run, never a list kept anywhere — upgraded to this
+   export **directly** (release → candidate) and, for every release but the
+   newest, along its **historical path** (release → each later release in
+   order → candidate, every hop that release's own shipped CLI), plus a
+   fresh repo; each row on a bare and a rich project. The result must be
    indistinguishable from a fresh install of this export, and uninstall
-   must leave only the project. Any row that is not `CLEAN` (`LEGACY
-   RESIDUE`, `PROJECT DATA CHANGED`, `BLOCKED`) blocks the release; the fix
-   is a migration that names the release whose declaration it takes back,
-   never a waiver. `check` reads the public repository at
-   `--public-repo <url>` (default: the marketplace repo), so it needs
-   network; an unreadable repository is a FAIL. Every published release
-   is in scope — there is no minimum supported upgrade version yet; if
-   one is ever needed, `upgrade_matrix.releases()` is where it goes.
+   must leave only the project. `HARMFUL RESIDUE`, `PROJECT DATA CHANGED`
+   and `BLOCKED` block the release; the fix is a migration that names the
+   release whose declaration it takes back, never a waiver. `BENIGN LEGACY
+   RESIDUE` — exactly the inert, unprovable leftover RICE-SPEC-001 §15
+   records (`upgrade_matrix.BENIGN_HUSKS`) — passes and is named in the
+   gate's detail; never "fix" it by guessing what the project owns. `check`
+   reads the public repository at `--public-repo <url>` (default: the
+   marketplace repo), so it needs network; an unreadable repository is a
+   FAIL. Every published release is in scope — there is no minimum
+   supported upgrade version yet; if one is ever needed,
+   `upgrade_matrix.releases()` is where it goes.
    `python3 scripts/upgrade_matrix.py --candidate <export dir>` prints the
    full matrix with every finding.
 3. **Publish.** `python3 scripts/release.py publish --version <x.y.z>

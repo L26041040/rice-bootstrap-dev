@@ -240,20 +240,24 @@ def gate_standalone(dest: Path) -> Gate:
 
 
 def gate_upgrade_matrix(dest: Path, public_repo: str) -> Gate:
-    """RICE-UPGRADE-MATRIX-001: every `release/<semver>` already published on
-    the public repository -- enumerated from it, never a list kept here --
-    plus a fresh repo, upgraded to THIS export through the real lifecycle,
-    must converge to exactly a fresh install, and uninstall must leave only
-    the project. Any row that is not CLEAN blocks the release; so does a
-    public repository the matrix cannot read."""
+    """RICE-UPGRADE-MATRIX-001 / RICE-UPGRADE-PATH-001: every `release/<semver>`
+    already published on the public repository -- enumerated from it, never a
+    list kept here -- upgraded to THIS export directly and along its
+    historical path through every later release, plus a fresh repo, must
+    converge to exactly a fresh install, and uninstall must leave only the
+    project. The matrix's own word decides: a row with harmful residue,
+    changed project data or a blocked lifecycle fails the gate, as does a
+    public repository it cannot read; benign legacy residue (the known limit
+    SPEC-001 §15 records) passes, and is named in the detail."""
     with tempfile.TemporaryDirectory(prefix="rice-upgrade-matrix-") as work:
         rows, err = upgrade_matrix.run(dest, public_repo, Path(work))
     if err:
         return Gate("upgrade:matrix", "FAIL", err)
     summary = "; ".join(f"{r.source} {r.verdict}" for r in rows)
-    if upgrade_matrix.clean(rows):
+    if upgrade_matrix.safe(rows):
         return Gate("upgrade:matrix", "PASS", summary)
-    first = "; ".join(f"{r.source}: {f.text}" for r in rows for f in r.findings[:2])
+    first = "; ".join(f"{r.source}: {f.text}" for r in rows if r.verdict in upgrade_matrix.BLOCKING
+                      for f in r.findings[:2])
     return Gate("upgrade:matrix", "FAIL", f"{summary} -- {first or 'no rows'}"[:800])
 
 

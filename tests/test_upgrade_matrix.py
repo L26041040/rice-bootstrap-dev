@@ -1,7 +1,8 @@
 """Tests for scripts/upgrade_matrix.py and the release gate built on it
-(RICE-UPGRADE-MATRIX-001): every release published on the public repository,
-upgraded to the candidate through the real lifecycle, must converge to a
-fresh install, and uninstall must leave only the project.
+(RICE-UPGRADE-MATRIX-001, RICE-UPGRADE-PATH-001): every release published on
+the public repository, upgraded to the candidate through the real lifecycle
+-- directly, and along its historical path through every later release --
+must converge to a fresh install, and uninstall must leave only the project.
 
 Each "public repository" here is a local bare repo whose `release/<semver>`
 branches are exports of this very build -- some doctored to behave like an
@@ -110,21 +111,72 @@ class TestMatrix(unittest.TestCase):
         rows = self.run_matrix()
         self.assertEqual(_verdicts(rows), {"fresh": "CLEAN", "release/0.0.1": "CLEAN"},
                          upgrade_matrix.render(rows))
-        self.assertIn("UPGRADE-MATRIX CLEAN (2 rows)", upgrade_matrix.render(rows))
+        self.assertIn("UPGRADE-MATRIX SAFE (2 rows)", upgrade_matrix.render(rows))
 
-    def test_state_an_older_release_wrote_and_the_candidate_keeps_is_legacy_residue(self):
+    def test_every_release_but_the_newest_also_walks_its_historical_path(self):
+        """RICE-UPGRADE-PATH-001: release -> each later release, in order,
+        each hop that release's own lifecycle, then the candidate."""
+        for v in ("0.0.1", "0.0.2", "0.0.3"):
+            _publish(self.d, self.public, v)
+        rows = self.run_matrix()
+        self.assertEqual(_verdicts(rows), {
+            "fresh": "CLEAN", "release/0.0.1": "CLEAN", "release/0.0.2": "CLEAN", "release/0.0.3": "CLEAN",
+            "release/0.0.1 -> 0.0.2 -> 0.0.3": "CLEAN", "release/0.0.2 -> 0.0.3": "CLEAN"},
+            upgrade_matrix.render(rows))
+        path = {r.source: r for r in rows}["release/0.0.1 -> 0.0.2 -> 0.0.3"]
+        candidate = upgrade_matrix.Build.at(self.candidate).version
+        self.assertEqual(path.lifecycle["rich"], f"FINAL-VERIFIED 0.0.1 -> 0.0.2 -> 0.0.3 -> {candidate}")
+
+    def test_an_inert_husk_an_intermediate_release_left_is_benign_and_does_not_block(self):
+        """The one classified benign (SPEC-001 §15): an empty object at a
+        container 0.1.2/0.1.3 created and 0.1.4-0.1.6 emptied. Reported,
+        never guessed away, and not a blocker."""
+        _publish(self.d, self.public, "0.0.1")
+        _publish(self.d, self.public, "0.0.2", doctor=lambda t: _doctor_apply(
+            t, '(settings := _current_settings(repo_root)).setdefault("enabledPlugins", {}); '
+               '(repo_root / ".claude" / "settings.json").write_text(json.dumps(settings))'))
+        rows = self.run_matrix()
+        verdicts = _verdicts(rows)
+        self.assertEqual(verdicts["release/0.0.1 -> 0.0.2"], "BENIGN LEGACY RESIDUE", upgrade_matrix.render(rows))
+        self.assertEqual(verdicts["release/0.0.2"], "BENIGN LEGACY RESIDUE")
+        self.assertEqual(verdicts["release/0.0.1"], "CLEAN")
+        self.assertTrue(upgrade_matrix.safe(rows))
+        rendered = upgrade_matrix.render(rows)
+        self.assertIn("UPGRADE-MATRIX SAFE (4 rows; 2 with benign legacy residue)", rendered)
+        self.assertNotIn("verifier/migration defect", rendered)  # benign never counts as the verifier's fault
+
+    def test_benign_is_exactly_the_known_husks_and_nothing_else(self):
+        _publish(self.d, self.public, "0.0.1", doctor=lambda t: _doctor_apply(
+            t, '(settings := _current_settings(repo_root)).setdefault("hooks", {}); '
+               '(repo_root / ".claude" / "settings.json").write_text(json.dumps(settings))'))
+        rows = self.run_matrix()
+        self.assertEqual(_verdicts(rows)["release/0.0.1"], "HARMFUL RESIDUE", upgrade_matrix.render(rows))
+        self.assertFalse(upgrade_matrix.safe(rows))
+
+    def test_an_intermediate_hop_that_cannot_finish_blocks_and_names_the_hop(self):
+        _publish(self.d, self.public, "0.0.1")
+        _publish(self.d, self.public, "0.0.2", doctor=lambda t: (t / "scripts" / "rice.py").write_text(
+            "raise SystemExit(1)\n", encoding="utf-8"))
+        rows = self.run_matrix()
+        verdicts = _verdicts(rows)
+        self.assertEqual(verdicts["release/0.0.1 -> 0.0.2"], "BLOCKED", upgrade_matrix.render(rows))
+        self.assertEqual(verdicts["release/0.0.1"], "CLEAN")
+        path = {r.source: r for r in rows}["release/0.0.1 -> 0.0.2"]
+        self.assertIn("rice 0.0.2 did not reach FINAL-VERIFIED", path.lifecycle["bare"])
+
+    def test_state_an_older_release_wrote_and_the_candidate_keeps_is_harmful_residue(self):
         _publish(self.d, self.public, "0.0.1", doctor=lambda t: _doctor_apply(
             t, '_set_path(settings := _current_settings(repo_root), "env.RICE_OLD_FLAG", "1"); '
                '(repo_root / ".claude" / "settings.json").write_text(json.dumps(settings))'))
         rows = self.run_matrix()
         row = {r.source: r for r in rows}["release/0.0.1"]
-        self.assertEqual(row.verdict, "LEGACY RESIDUE", upgrade_matrix.render(rows))
+        self.assertEqual(row.verdict, "HARMFUL RESIDUE", upgrade_matrix.render(rows))
         texts = " | ".join(f.text for f in row.findings)
         self.assertIn("env.RICE_OLD_FLAG='1' left behind", texts)
         self.assertIn("verifier/migration defect", texts)  # the candidate still verified final
         self.assertIn("after uninstall", texts)              # and uninstall cannot take it back either
         self.assertEqual({r.source: r.verdict for r in rows}["fresh"], "CLEAN")
-        self.assertIn("UPGRADE-MATRIX NOT CLEAN (1 of 2 rows)", upgrade_matrix.render(rows))
+        self.assertIn("UPGRADE-MATRIX NOT SAFE (1 of 2 rows block)", upgrade_matrix.render(rows))
 
     def test_an_older_release_that_touched_project_bytes_is_project_data_changed(self):
         _publish(self.d, self.public, "0.0.1", doctor=lambda t: _doctor_apply(
@@ -150,7 +202,7 @@ class TestMatrix(unittest.TestCase):
 
 
 class TestReleaseGate(unittest.TestCase):
-    def test_the_gate_passes_only_when_every_row_is_clean(self):
+    def test_the_gate_passes_only_while_no_row_blocks(self):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             public = _bare(d)
@@ -158,11 +210,20 @@ class TestReleaseGate(unittest.TestCase):
             export_public.export(dest)
             _publish(d, public, "0.0.1")
             self.assertEqual(release.gate_upgrade_matrix(dest, public).state, "PASS")
+            # benign residue passes, and is named
             _publish(d, public, "0.0.2", doctor=lambda t: _doctor_apply(
+                t, '(settings := _current_settings(repo_root)).setdefault("extraKnownMarketplaces", {}); '
+                   '(repo_root / ".claude" / "settings.json").write_text(json.dumps(settings))'))
+            gate = release.gate_upgrade_matrix(dest, public)
+            self.assertEqual(gate.state, "PASS", gate.detail)
+            self.assertIn("release/0.0.1 -> 0.0.2 BENIGN LEGACY RESIDUE", gate.detail)
+            # harmful residue on any row fails
+            _publish(d, public, "0.0.3", doctor=lambda t: _doctor_apply(
                 t, '(repo_root / ".claude" / "OLD_RICE_STATE").write_text("x")'))
             gate = release.gate_upgrade_matrix(dest, public)
         self.assertEqual(gate.state, "FAIL")
-        self.assertIn("release/0.0.2 LEGACY RESIDUE", gate.detail)
+        self.assertIn("release/0.0.3 HARMFUL RESIDUE", gate.detail)
+        self.assertIn("release/0.0.1 -> 0.0.2 -> 0.0.3 HARMFUL RESIDUE", gate.detail)
 
     def test_an_unreachable_public_repository_blocks(self):
         with tempfile.TemporaryDirectory() as d:

@@ -708,19 +708,31 @@ public `main` carried before release branches existed (ec66f54, 07c4891,
     The verifier item `settings:retired-leaves` (Gate A, owned, repairable)
     FAILs while one remains.
 - I22 Release gate. `release.py check` runs `upgrade:matrix` against the
-  export: rows are every `release/<semver>` on the public repository,
-  enumerated at run time, plus `fresh`; each runs on a bare and a rich
-  project. Any row not CLEAN (LEGACY RESIDUE, PROJECT DATA CHANGED, BLOCKED),
-  or an unreadable public repository, blocks the release. No minimum
-  supported upgrade version exists; `upgrade_matrix.releases()` is where one
-  would go.
+  export. Rows: every `release/<semver>` on the public repository,
+  enumerated at run time, upgraded directly (release → candidate) and, for
+  every release but the newest, along its historical path (release → each
+  later release in order → candidate, each hop that release's own
+  lifecycle; RICE-UPGRADE-PATH-001), plus `fresh`; each row runs on a bare
+  and a rich project. HARMFUL RESIDUE, PROJECT DATA CHANGED, BLOCKED, or an
+  unreadable public repository, block the release. No minimum supported
+  upgrade version exists; `upgrade_matrix.releases()` is where one would go.
+- I23 Benign legacy residue. A row MAY be BENIGN LEGACY RESIDUE, which does
+  not block, only for a leftover that (1) no build can prove rice's,
+  (2) has no runtime effect, and (3) this section records as a known limit.
+  Today that is exactly one thing: an empty `extraKnownMarketplaces` or
+  `enabledPlugins` object -- created by 0.1.2/0.1.3 for their declaration,
+  emptied but not removed by 0.1.4-0.1.6's migration, indistinguishable
+  from one the project wrote (`upgrade_matrix.BENIGN_HUSKS`). It is reported
+  by name, never deleted by guessing, and anything else is harmful.
 
 Known limits, deliberately not migrated (no historical declaration proves
 them rice's, and rice does not guess project-owned state):
 
 - Empty `extraKnownMarketplaces` / `enabledPlugins` objects that 0.1.4-0.1.6
   already left in repos they migrated from 0.1.2/0.1.3 (multi-hop). Inert;
-  the OWNER may delete them by hand.
+  the OWNER may delete them by hand. The matrix's historical rows from
+  0.1.2 and 0.1.3 report exactly this, as BENIGN LEGACY RESIDUE (I23), on a
+  project that had neither object of its own.
 - The public-`main` 0.1.1 builds owned `permissions.deny` as a whole list, so
   in a repo with its own deny rules their Gate A stopped on a conflict and
   rice's occurrences were never added. After an update, a project rule
