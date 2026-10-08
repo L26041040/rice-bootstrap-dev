@@ -706,15 +706,14 @@ RICE-OWNERSHIP-FIX-001: the subagent model is the project's (I21).
   takes back every container that removal emptied -- the rule uninstall's
   projection already applies, and the one exception to the rule above (a
   project's own empty container that the declaration then filled; known
-  limits). Today exactly one thing is taken
-  back: the 0.1.2/0.1.3 project-scope declaration, at exactly the shape
-  those builds wrote -- `extraKnownMarketplaces.rice-bootstrap` =
-  `{"source": {"source": "github", "repo": <rice's public repo>, "ref":
-  <string>}}` and nothing more, and `enabledPlugins.rice@rice-bootstrap` =
-  `true` beside it or with no marketplace entry -- plus the containers that
-  removal empties. A `false`, an entry with a key the project added, or the
-  enablement of a same-named marketplace that is not rice's, is the
-  project's.
+  limits). Today exactly one thing is taken back: the 0.1.2/0.1.3
+  project-scope declaration, at exactly the shape those builds wrote --
+  `extraKnownMarketplaces.rice-bootstrap` = `{"source": {"source":
+  "github", "repo": <rice's public repo>, "ref": <string>}}` and nothing
+  more, and `enabledPlugins.rice@rice-bootstrap` = `true` beside it or with
+  no marketplace entry -- plus the containers that removal empties. A
+  `false`, an entry with a key the project added, or the enablement of a
+  same-named marketplace that is not rice's, is the project's.
   `env.CLAUDE_CODE_SUBAGENT_MODEL` is the project's, whatever its value
   (RICE-OWNERSHIP-FIX-001). No release branch ever wrote it; the value the
   pre-release 0.1.1 builds wrote, "sonnet", is one a project sets for its

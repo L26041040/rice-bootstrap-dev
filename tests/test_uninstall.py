@@ -114,6 +114,7 @@ class TestCleanUninstall(UninstallBase):
         included (RICE-OWNERSHIP-FIX-001; 0.1.2-0.1.6 removed "sonnet")."""
         for model in ("opus", "sonnet"):
             with self.subTest(model=model):
+                self.root = Path(self._tmp.name) / model  # a repo of its own per value
                 _bootstrapped_repo(self.root)
                 p = self.root / ".claude" / "settings.json"
                 s = json.loads(p.read_text(encoding="utf-8"))
@@ -124,7 +125,8 @@ class TestCleanUninstall(UninstallBase):
                 s = json.loads(p.read_text(encoding="utf-8"))
                 self.assertEqual(s["outputStyle"], "mine")
                 self.assertEqual(s["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], model)
-        self.assertEqual((self.root / ".claude" / "output-styles" / "mine.md").read_text(), "---\nname: mine\n---\nbe terse\n")
+                self.assertEqual((self.root / ".claude" / "output-styles" / "mine.md").read_text(),
+                                 "---\nname: mine\n---\nbe terse\n")
 
     def test_session_history_matt_artifacts_repo_files_byte_identical(self):
         _bootstrapped_repo(self.root)

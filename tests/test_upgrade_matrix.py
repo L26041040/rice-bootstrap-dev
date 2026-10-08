@@ -30,6 +30,7 @@ import export_public  # noqa: E402
 import release  # noqa: E402
 import settings_template  # noqa: E402
 import upgrade_matrix  # noqa: E402
+import verify  # noqa: E402
 
 
 def _bare(d: Path) -> str:
@@ -80,10 +81,10 @@ def _doctor_settings(tree: Path, mutation: str) -> None:
                         '(repo_root / ".claude" / "settings.json").write_text(json.dumps(s))')
 
 
-def _doctor_tail(tree: Path, code: str) -> None:
-    """A build whose reconcile module ends with `code`: a redefinition there
+def _doctor_tail(tree: Path, code: str, module: str = "reconcile") -> None:
+    """A build whose `module` ends with `code`: a redefinition there
     replaces the function of that name for every caller."""
-    p = _reconcile(tree)
+    p = tree / "scripts" / f"{module}.py"
     p.write_text(p.read_text(encoding="utf-8") + "\n\n" + code + "\n", encoding="utf-8")
 
 
@@ -241,12 +242,6 @@ class TestMatrix(unittest.TestCase):
         self.assertEqual(row.verdict, "BLOCKED", upgrade_matrix.render(rows))
         self.assertIn("did not reach FINAL-VERIFIED", row.lifecycle["bare"])
 
-    def test_the_rich_project_owns_a_subagent_model_of_sonnet(self):
-        """RICE-OWNERSHIP-FIX-001: the fixture carries the one value a
-        project might share with pre-release rice, so every row proves it
-        survives every hop, the candidate, a re-run and uninstall."""
-        self.assertEqual(upgrade_matrix.Project.of("rich").settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "sonnet")
-
     def test_a_candidate_whose_re_run_changes_the_repo_is_harmful(self):
         _publish(self.d, self.public, "0.0.1")
         restless = self.doctored_candidate(lambda c: _doctor_apply(
@@ -259,13 +254,12 @@ class TestMatrix(unittest.TestCase):
 
     def test_a_candidate_whose_re_run_cannot_finish_is_blocked(self):
         _publish(self.d, self.public, "0.0.1")
-        once = self.doctored_candidate(lambda c: (c / "scripts" / "verify.py").write_text(
-            (c / "scripts" / "verify.py").read_text(encoding="utf-8") + "\n\n"
-            "_version_not_newer_item = version_not_newer_item\n"
-            "def version_not_newer_item(repo_root):\n"
-            "    if version_order(repo_root)[2] == 0:\n"
-            "        return reconcile.ItemResult(VERSION_ITEM, 'FAIL', 'refuses a repo it already finalized')\n"
-            "    return _version_not_newer_item(repo_root)\n", encoding="utf-8"))
+        once = self.doctored_candidate(lambda c: _doctor_tail(
+            c, "_version_not_newer_item = version_not_newer_item\n"
+               "def version_not_newer_item(repo_root):\n"
+               "    if version_order(repo_root)[2] == 0:\n"
+               "        return reconcile.ItemResult(VERSION_ITEM, 'FAIL', 'refuses a repo it already finalized')\n"
+               "    return _version_not_newer_item(repo_root)", module="verify"))
         rows = self.run_matrix(once)
         for source in ("fresh", "release/0.0.1"):
             row = _row(rows, source)
@@ -293,10 +287,11 @@ class TestMatrix(unittest.TestCase):
 
     def test_a_re_run_that_takes_project_data_is_project_data_changed(self):
         late = self.doctored_candidate(lambda c: _doctor_settings(
-            c, '(repo_root / ".claude" / "rice-version").exists() and '
+            c, f'(repo_root / {verify.VERSION_FILE!r}).exists() and '
                's.get("env", {}).pop("CLAUDE_CODE_SUBAGENT_MODEL", None)'))
-        row = _row(self.run_matrix(late), "fresh")
-        self.assertEqual(row.verdict, "PROJECT DATA CHANGED")
+        rows = self.run_matrix(late)
+        row = _row(rows, "fresh")
+        self.assertEqual(row.verdict, "PROJECT DATA CHANGED", upgrade_matrix.render(rows))
         self.assertIn("rich after a second bootstrap: project setting env.CLAUDE_CODE_SUBAGENT_MODEL='sonnet' "
                       "changed or missing", [f.text for f in row.findings])
 

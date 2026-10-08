@@ -50,12 +50,13 @@ import settings_template
 #                owner-defined `env.RICE_SESSION_ARCHIVE`, written once and
 #                never reasserted.
 #
-# Ownership is proven, never inferred from a value: a key no release branch
-# can be shown to have written is the project's, whatever it holds, and no
-# lifecycle -- bootstrap, update, repair, uninstall -- deletes or rewrites it
-# (RICE-OWNERSHIP-FIX-001). The subagent model is one: the pre-release 0.1.1
-# builds on public `main` set it to "sonnet", but a project sets that same
-# value for its own reasons, so a repo that carries it keeps it.
+# Ownership is proven, never inferred from a value alone: a key no release
+# branch can be shown to have written is the project's, whatever it holds,
+# and no lifecycle -- bootstrap, update, repair, uninstall -- deletes or
+# rewrites it (RICE-OWNERSHIP-FIX-001). The subagent model is one: the
+# pre-release 0.1.1 builds on public `main` set it to "sonnet", but a project
+# sets that same value for its own reasons, so a repo that carries it keeps
+# it.
 #
 # The pending marker is rice-created repo state too, so it lives here with
 # the rest of what rice puts in a repo (RICE-BOOTSTRAP-045 folded the old
@@ -284,8 +285,8 @@ def _settings_items(repo_root: Path, current: dict, *, write: bool, converge_dri
     write=True and an item needs creating/updating."""
     # read before anything below is written: it is the marker itself
     fresh = _is_fresh_install(repo_root)
-    items = [_legacy_project_scope_item(current, write=write)]
-    items.append(_deny_item(current, write=write, fresh=fresh))
+    items = [_legacy_project_scope_item(current, write=write),
+             _deny_item(current, write=write, fresh=fresh)]
 
     for key in _OWNER_LEAF_KEYS:
         cur = _get_path(current, key)
@@ -541,9 +542,9 @@ def apply(repo_root, *, converge_drift: bool = False) -> list[ItemResult]:
 def project_settings(repo_root, current: dict) -> dict:
     """`current` minus rice's own entries. A 0.1.3-era project-scope
     declaration goes unconditionally (RICE-FIX-001); owner-defined leaves go
-    by key; deny entries are subtracted one by one,
-    keeping every project rule in its original order; containers rice
-    emptied are dropped, containers with project content stay.
+    by key; deny entries are subtracted one by one, keeping every project
+    rule in its original order; containers rice emptied are dropped,
+    containers with project content stay.
 
     `repo_root` decides whether the deny subtraction runs at all --
     `rice_installed_here(repo_root)`, read at the moment this is called, is

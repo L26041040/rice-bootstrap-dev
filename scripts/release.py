@@ -243,8 +243,8 @@ def gate_upgrade_matrix(dest: Path, public_repo: str) -> Gate:
     already published on the public repository -- enumerated from it, never a
     list kept here -- upgraded to THIS export directly and along its
     historical path through every later release, plus a fresh repo, must
-    converge to exactly a fresh install, and uninstall must leave only the
-    project. The matrix's own word decides: a row with harmful residue,
+    converge to exactly a fresh install, a second bootstrap must change
+    nothing, and uninstall must leave only the project. The matrix's own word decides: a row with harmful residue,
     changed project data or a blocked lifecycle fails the gate, as does a
     public repository it cannot read; benign legacy residue (the known limit
     SPEC-001 §15 records) passes, and is named in the detail."""

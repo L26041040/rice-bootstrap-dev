@@ -23,8 +23,10 @@ long-lived repo actually took, each hop run by that release's own build.
 Plus `fresh`: the candidate alone.
 
 Each row runs twice, on two project shapes: `bare` (a repo with no Claude
-configuration) and `rich` (project-owned settings, CLAUDE.md, AGENTS.md
-content, a project deny rule identical to one of rice's, other plugins).
+configuration) and `rich` (project-owned settings -- among them the
+subagent model pre-release rice once wrote, "sonnet" -- CLAUDE.md,
+AGENTS.md content, a project deny rule identical to one of rice's, other
+plugins).
 
   1. The first release bootstraps the project with ITS OWN shipped CLI and
      Stop hook, the way the OWNER's sessions ran it: `rice.py bootstrap`,
@@ -34,9 +36,10 @@ content, a project deny rule identical to one of rice's, other plugins).
      own `rice.py bootstrap` with no OWNER answers, as the README's update
      path says (I15), and must verify final before the next hop.
   3. The result is compared with a fresh candidate install of the same
-     project; the candidate's bootstrap is run once more and must change
-     nothing; both are uninstalled with the candidate's own uninstall and
-     compared with the project.
+     project; the candidate's bootstrap is run once more, on a copy, and
+     must change nothing; both repos as the candidate left them are
+     uninstalled with the candidate's own uninstall and compared with the
+     project.
 
 The only stand-ins are the two external probes every build makes --
 `claude plugin list --json` and `rtk --version` -- answered by tiny
@@ -47,9 +50,9 @@ Verdict per row, worst first; the first three block a release:
   PROJECT DATA CHANGED   a project-owned byte or setting did not survive
   HARMFUL RESIDUE        the upgraded repo differs from a fresh install, a
                          second bootstrap changes a byte, or uninstall
-                         leaves rice state behind -- including when
-                         the candidate still verified final (a verifier or
-                         migration defect, never a success)
+                         leaves rice state behind; when the candidate still
+                         verified final, that is a verifier or migration
+                         defect, never a success
   BLOCKED                a lifecycle step did not reach its verdict
   BENIGN LEGACY RESIDUE  only the differences `BENIGN_HUSKS` names, and only
                          when they were already there when the candidate

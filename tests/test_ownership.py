@@ -337,31 +337,6 @@ class TestMultisetSafetyUnderDrift(OwnershipBase):
         uninstall.uninstall(self.root)
         self.assertEqual(_tree(self.root), after)
 
-    def _plant_subagent_model(self, value):
-        s = self.settings(); s.setdefault("env", {})["CLAUDE_CODE_SUBAGENT_MODEL"] = value
-        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
-
-    def test_the_subagent_model_is_the_projects_through_every_verb(self):
-        """RICE-OWNERSHIP-FIX-001: no build that rice ever released can be
-        shown to have written `env.CLAUDE_CODE_SUBAGENT_MODEL`, and the
-        value "sonnet" is one a project sets for its own reasons -- so it is
-        the project's, whatever its value. Install, update, repair and
-        uninstall leave it byte-for-byte alone, and it never fails an item."""
-        for value in ("sonnet", "opus"):
-            with self.subTest(value=value):
-                self.existing_repo()
-                self.install()
-                states = {i.name: i.state for i in reconcile.check_owned(self.root)}
-                self._plant_subagent_model(value)
-                self.assertEqual({i.name: i.state for i in reconcile.check_owned(self.root)}, states)
-                before = (self.root / ".claude" / "settings.json").read_bytes()
-                self.install()                                  # an update
-                reconcile.apply(self.root, converge_drift=True)  # repair's mode
-                self.assertEqual((self.root / ".claude" / "settings.json").read_bytes(), before)
-                uninstall.uninstall(self.root)
-                self.assertEqual(self.settings()["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], value)
-
-
 class TestIndistinguishableValues(OwnershipBase):
     """Where a value cannot be told apart, rice still must not guess.
 
@@ -400,6 +375,31 @@ class TestIndistinguishableValues(OwnershipBase):
         (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
         uninstall.uninstall(self.root)
         self.assertIn("Bash(git nonsense*)", self.settings()["permissions"]["deny"])
+
+    def _plant_subagent_model(self, value):
+        s = self.settings(); s.setdefault("env", {})["CLAUDE_CODE_SUBAGENT_MODEL"] = value
+        (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
+
+    def test_the_subagent_model_is_the_projects_through_every_verb(self):
+        """RICE-OWNERSHIP-FIX-001: no release branch can be shown to have
+        written `env.CLAUDE_CODE_SUBAGENT_MODEL`, and the value "sonnet" is
+        one a project sets for its own reasons -- so it is the project's,
+        whatever its value. Install, update, repair and uninstall leave it
+        byte-for-byte alone, and it never fails an item."""
+        for value in ("sonnet", "opus"):
+            with self.subTest(value=value):
+                self.root = Path(self._tmp.name) / value  # a repo of its own per value
+                self.existing_repo()
+                self.install()
+                states = {i.name: i.state for i in reconcile.check_owned(self.root)}
+                self._plant_subagent_model(value)
+                self.assertEqual({i.name: i.state for i in reconcile.check_owned(self.root)}, states)
+                before = (self.root / ".claude" / "settings.json").read_bytes()
+                self.install()                                  # an update
+                reconcile.apply(self.root, converge_drift=True)  # repair's mode
+                self.assertEqual((self.root / ".claude" / "settings.json").read_bytes(), before)
+                uninstall.uninstall(self.root)
+                self.assertEqual(self.settings()["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], value)
 
 
 class TestCollisionsBlock(OwnershipBase):

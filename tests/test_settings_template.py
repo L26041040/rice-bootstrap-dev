@@ -2,7 +2,6 @@
 
 Run: python3 -m unittest tests.test_settings_template -v
 """
-import re
 import sys
 import unittest
 from pathlib import Path
@@ -73,10 +72,8 @@ class TestDesiredSettings(unittest.TestCase):
         # ... nor one rice takes back (RICE-OWNERSHIP-FIX-001): no shipped
         # script names the key in code -- it is the project's, whatever its
         # value. (Private release tooling may, to put it in a fixture.)
-        import reconcile
-        self.assertFalse(hasattr(reconcile, "RETIRED_LEAVES"))
         for py in (Path(__file__).resolve().parents[1] / "scripts").glob("*.py"):
-            if any(re.match(p, f"scripts/{py.name}") for p in export_public.FORBIDDEN_PATTERNS):
+            if export_public.is_forbidden(f"scripts/{py.name}"):
                 continue
             code = "\n".join(l for l in py.read_text(encoding="utf-8").splitlines()
                              if not l.lstrip().startswith("#"))

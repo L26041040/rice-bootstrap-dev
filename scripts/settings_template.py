@@ -12,10 +12,11 @@ reasserted); `permissions.deny` is owned entry by entry. Anything not listed
 here is project-owned and never touched -- e.g. `permissions.allow`,
 marketplaces, plugins, other env vars.
 
-The subagent model is NOT a setting rice writes (RICE-BOOTSTRAP-046). It
-was `env.CLAUDE_CODE_SUBAGENT_MODEL`, hard-enforcing Sonnet on every repo
-rice touched -- a value the OWNER may legitimately want different per repo,
-per task, or not at all. It is a working rule now, in `.claude/rice.md`:
+The subagent model is NOT a setting rice writes (RICE-BOOTSTRAP-046). In
+the pre-release 0.1.1 builds on public `main` it was
+`env.CLAUDE_CODE_SUBAGENT_MODEL`, hard-enforcing Sonnet on every repo they
+touched -- a value the OWNER may legitimately want different per repo, per
+task, or not at all. It is a working rule now, in `.claude/rice.md`:
 prefer Sonnet for subagents, name another model when a task wants one.
 Nothing here enforces it, and no lifecycle touches the key: a repo that
 carries it keeps it, whatever its value (RICE-OWNERSHIP-FIX-001).
