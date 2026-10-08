@@ -53,7 +53,6 @@ GATE_A = (
     "output-style:bundled",
     "output-style:choice",
     "settings:legacy-project-scope",
-    "settings:retired-leaves",
     f"settings:{settings_template.DENY_PATH}",
     *sorted(f"settings:{k}" for k in settings_template.OWNER_DEFINED_KEYS),
     "rice.md",

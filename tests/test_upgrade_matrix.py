@@ -241,6 +241,22 @@ class TestMatrix(unittest.TestCase):
         self.assertEqual(row.verdict, "BLOCKED", upgrade_matrix.render(rows))
         self.assertIn("did not reach FINAL-VERIFIED", row.lifecycle["bare"])
 
+    def test_the_rich_project_owns_a_subagent_model_of_sonnet(self):
+        """RICE-OWNERSHIP-FIX-001: the fixture carries the one value a
+        project might share with pre-release rice, so every row proves it
+        survives every hop, the candidate, a re-run and uninstall."""
+        self.assertEqual(upgrade_matrix.Project.of("rich").settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "sonnet")
+
+    def test_a_candidate_whose_re_run_changes_the_repo_is_harmful(self):
+        _publish(self.d, self.public, "0.0.1")
+        restless = self.doctored_candidate(lambda c: _doctor_apply(
+            c, '(p := repo_root / ".claude" / "runs").write_text(p.read_text() + "x" if p.exists() else "x")'))
+        rows = self.run_matrix(restless)
+        for source in ("fresh", "release/0.0.1"):
+            row = _row(rows, source)
+            self.assertEqual(row.verdict, "HARMFUL RESIDUE", upgrade_matrix.render(rows))
+            self.assertIn("a second bootstrap changed ['.claude/runs']", " | ".join(f.text for f in row.findings))
+
     def test_benign_is_exactly_the_known_husks_and_nothing_else(self):
         _publish(self.d, self.public, "0.0.1", doctor=lambda t: _doctor_settings(t, 's.setdefault("hooks", {})'))
         rows = self.run_matrix()

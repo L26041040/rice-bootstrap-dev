@@ -34,7 +34,8 @@ content, a project deny rule identical to one of rice's, other plugins).
      own `rice.py bootstrap` with no OWNER answers, as the README's update
      path says (I15), and must verify final before the next hop.
   3. The result is compared with a fresh candidate install of the same
-     project; both are uninstalled with the candidate's own uninstall and
+     project; the candidate's bootstrap is run once more and must change
+     nothing; both are uninstalled with the candidate's own uninstall and
      compared with the project.
 
 The only stand-ins are the two external probes every build makes --
@@ -135,7 +136,9 @@ PROJECTS = {
             "AGENTS.md": "# Agents\n\nNever commit generated files.\n",
             SETTINGS: json.dumps({
                 "permissions": {"allow": ["Bash(make test)"], "deny": ["Bash(rm -rf *)", "Bash(git rebase*)"]},
-                "env": {"PROJECT_FLAG": "1"},
+                # "sonnet" is the value pre-release rice once wrote here: the
+                # project's all the same (RICE-OWNERSHIP-FIX-001)
+                "env": {"PROJECT_FLAG": "1", "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"},
                 "outputStyle": "Explanatory",
                 "enabledPlugins": {"other@acme": True},
                 "extraKnownMarketplaces": {"acme": {"source": {"source": "github", "repo": "acme/plugins"}}},
@@ -540,6 +543,13 @@ def _check(candidate: Build, shape: str, subject: Sandbox, fresh: Sandbox | None
         if any(f.kind == RESIDUE for f in drift):
             found.append(Finding(RESIDUE, f"{shape}: the candidate said {FINAL} with harmful residue present "
                                           "-- a verifier/migration defect"))
+    again = subject.copy(base / "again")
+    out = again.bootstrap(candidate, [])
+    if not again.finished(candidate, out):
+        found.append(Finding(BLOCKED, f"{shape}: a second bootstrap did not reach {FINAL}: {_last(out)}"))
+    changed = [rel for rel, _, _ in _differences(again.snapshot(), snap)]
+    if changed:
+        found.append(Finding(RESIDUE, f"{shape}: a second bootstrap changed {changed} -- a re-run must be a no-op"))
     gone = subject.copy(base / "uninstalled")
     out = gone.uninstall(candidate)
     if _last(out) != UNINSTALLED:

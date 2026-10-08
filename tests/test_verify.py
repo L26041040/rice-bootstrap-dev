@@ -322,10 +322,9 @@ class TestVersionNotNewer(VerifierRunBase):
         with mock.patch.object(evidence, "build_version", lambda: build):
             return verify.run(self.root, rtk_probe=_ok_rtk, plugin_probe=_installed).item(self.ITEM)
 
-    def test_gate_a_is_016s_plus_exactly_the_two_update_safety_items(self):
-        """0.1.6's Gate A, plus `settings:retired-leaves` beside the other
-        legacy item (RICE-UPGRADE-MATRIX-001) and this item, last
-        (RICE-SPEC-001 I17)."""
+    def test_gate_a_is_016s_plus_exactly_this_item(self):
+        """0.1.6's Gate A, plus this item, last (RICE-SPEC-001 I17). Nothing
+        gates a value rice cannot prove it wrote (RICE-OWNERSHIP-FIX-001)."""
         shipped_016 = (
             "plugin:installed", "plugin:build", "plugin:scope", "output-style:bundled",
             "output-style:choice", "settings:legacy-project-scope",
@@ -333,9 +332,8 @@ class TestVersionNotNewer(VerifierRunBase):
             *sorted(f"settings:{k}" for k in settings_template.OWNER_DEFINED_KEYS),
             "rice.md", "CLAUDE.md:import-line", "AGENTS.md:rice-pointer", "archive-hook:exists",
             "archive-sync-hook:exists", "continuation-hook:exists", "git-deny:behaves")
-        legacy = shipped_016.index("settings:legacy-project-scope") + 1
-        expected = shipped_016[:legacy] + ("settings:retired-leaves",) + shipped_016[legacy:] + (self.ITEM,)
-        self.assertEqual(verify.GATE_A, expected)
+        self.assertEqual(verify.GATE_A, shipped_016 + (self.ITEM,))
+        self.assertNotIn("settings:retired-leaves", verify.GATE_B)
         self.assertEqual(verify.GATE_B_EXTRA, ("matt:artifacts", "rtk"))
         self.assertEqual(len(settings_template.RICE_DENY_ENTRIES), 28)
         self.assertEqual(set(reconcile.OWNED_FILES), {".claude/rice.md", f".claude/{reconcile.MARKER_NAME}"})

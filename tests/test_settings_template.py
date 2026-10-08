@@ -2,11 +2,14 @@
 
 Run: python3 -m unittest tests.test_settings_template -v
 """
+import re
 import sys
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import export_public  # noqa: E402
 
 from settings_template import (  # noqa: E402
     desired_settings,
@@ -67,17 +70,17 @@ class TestDesiredSettings(unittest.TestCase):
         self.assertNotIn("env.CLAUDE_CODE_SUBAGENT_MODEL", OWNER_DEFINED_KEYS | OWNER_CHOICE_KEYS)
         rice_md = (Path(__file__).resolve().parents[1] / "resources" / "rice.md").read_text(encoding="utf-8")
         self.assertIn("Sonnet", rice_md)
-        # the only place the retired key may still be named is the
-        # declaration that lets uninstall take it back from repos that were
-        # bootstrapped when rice did write it
+        # ... nor one rice takes back (RICE-OWNERSHIP-FIX-001): no shipped
+        # script names the key in code -- it is the project's, whatever its
+        # value. (Private release tooling may, to put it in a fixture.)
         import reconcile
-        self.assertEqual(reconcile.RETIRED_LEAVES, {"env.CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"})
+        self.assertFalse(hasattr(reconcile, "RETIRED_LEAVES"))
         for py in (Path(__file__).resolve().parents[1] / "scripts").glob("*.py"):
+            if any(re.match(p, f"scripts/{py.name}") for p in export_public.FORBIDDEN_PATTERNS):
+                continue
             code = "\n".join(l for l in py.read_text(encoding="utf-8").splitlines()
                              if not l.lstrip().startswith("#"))
             code = "".join(code.split('"""')[::2])  # drop docstrings
-            if py.name == "reconcile.py":
-                code = code.replace('RETIRED_LEAVES = {"env.CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"}', "")
             self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", code, py.name)
 
     def test_deny_is_owned_entry_by_entry_not_as_a_leaf(self):

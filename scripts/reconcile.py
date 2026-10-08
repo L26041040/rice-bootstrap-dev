@@ -48,8 +48,14 @@ import settings_template
 #                project-owned bytes are never read as drift.
 #   leaf         one settings value at one dotted path -- today only the
 #                owner-defined `env.RICE_SESSION_ARCHIVE`, written once and
-#                never reasserted, and the retired leaves an update or an
-#                uninstall takes back wherever they still hold rice's value.
+#                never reasserted.
+#
+# Ownership is proven, never inferred from a value: a key no released build
+# can be shown to have written is the project's, whatever it holds, and no
+# lifecycle -- bootstrap, update, repair, uninstall -- deletes or rewrites it
+# (RICE-OWNERSHIP-FIX-001). The subagent model is one: the pre-release 0.1.1
+# builds on public `main` set it to "sonnet", but a project sets that same
+# value for its own reasons, so a repo that carries it keeps it.
 #
 # The pending marker is rice-created repo state too, so it lives here with
 # the rest of what rice puts in a repo (RICE-BOOTSTRAP-045 folded the old
@@ -69,17 +75,6 @@ _MARKER_CONTENT = (
 
 # Files rice creates in a target repo. The verified-version file is NOT one
 # of them: verify.py owns that, and only verify.py writes it.
-# Leaves rice used to write and no longer does, each with the exact value it
-# wrote. Nothing re-creates or reasserts them; wherever one is found with
-# that value it is rice's, and it is taken back -- by an update (re-running
-# bootstrap, RICE-UPGRADE-MATRIX-001) and by uninstall alike. A different
-# value at the same path is the project's and stays. RICE-BOOTSTRAP-046
-# retired the subagent pin, written by the rice 0.1.1 builds public `main`
-# shipped before release branches existed: which model a subagent uses is
-# the OWNER's call per repo, so it became a working rule in `.claude/rice.md`
-# instead of a setting.
-RETIRED_LEAVES = {"env.CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"}
-
 OWNED_FILES = {
     ".claude/rice.md": "rice-md:absent",
     f".claude/{MARKER_NAME}": "waiting-marker:absent",
@@ -267,28 +262,6 @@ def _take_back(d: dict, dotted: str) -> None:
         chain[depth - 1].pop(parts[depth - 1], None)
 
 
-def _retired_present(d: dict) -> list[str]:
-    return [key for key, value in RETIRED_LEAVES.items() if _get_path(d, key) == value]
-
-
-def _retired_leaves_item(current: dict, *, write: bool) -> ItemResult:
-    """Every retired leaf still carrying the exact value rice wrote is
-    rice's to take back -- on an update as on uninstall (RICE-UPGRADE-MATRIX-001).
-    Until then the repo is not in this build's state, so the verifier cannot
-    say final while one remains."""
-    name = "settings:retired-leaves"
-    present = _retired_present(current)
-    if not present:
-        return ItemResult(name, "noop" if write else "PASS", kind=EXISTS, owned=True)
-    found = ", ".join(f"{k}={RETIRED_LEAVES[k]!r}" for k in present)
-    if not write:
-        return ItemResult(name, "FAIL", f"a setting rice no longer writes is still present ({found}) -- run "
-                          "bootstrap again to take it back", kind=EXISTS, owned=True)
-    for key in present:
-        _take_back(current, key)
-    return ItemResult(name, "removed", f"took back {found}, which rice no longer writes", kind=EXISTS, owned=True)
-
-
 def _legacy_project_scope_item(current: dict, *, write: bool) -> ItemResult:
     name = "settings:legacy-project-scope"
     paths = _legacy_project_scope_paths(current)
@@ -312,7 +285,6 @@ def _settings_items(repo_root: Path, current: dict, *, write: bool, converge_dri
     # read before anything below is written: it is the marker itself
     fresh = _is_fresh_install(repo_root)
     items = [_legacy_project_scope_item(current, write=write)]
-    items.append(_retired_leaves_item(current, write=write))
     items.append(_deny_item(current, write=write, fresh=fresh))
 
     for key in _OWNER_LEAF_KEYS:
@@ -568,8 +540,8 @@ def apply(repo_root, *, converge_drift: bool = False) -> list[ItemResult]:
 
 def project_settings(repo_root, current: dict) -> dict:
     """`current` minus rice's own entries. A 0.1.3-era project-scope
-    declaration goes unconditionally (RICE-FIX-001); owner-defined leaves and
-    retired ones go by key/value; deny entries are subtracted one by one,
+    declaration goes unconditionally (RICE-FIX-001); owner-defined leaves go
+    by key; deny entries are subtracted one by one,
     keeping every project rule in its original order; containers rice
     emptied are dropped, containers with project content stay.
 
@@ -585,8 +557,6 @@ def project_settings(repo_root, current: dict) -> dict:
     was_installed = rice_installed_here(repo_root)
     _strip_legacy_project_scope(out)
     for key in _OWNER_LEAF_KEYS:
-        _del_path(out, key)
-    for key in _retired_present(out):
         _del_path(out, key)
     cur, usable = _deny_entries(out)
     if usable and cur and was_installed:

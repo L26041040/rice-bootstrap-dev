@@ -17,7 +17,8 @@ was `env.CLAUDE_CODE_SUBAGENT_MODEL`, hard-enforcing Sonnet on every repo
 rice touched -- a value the OWNER may legitimately want different per repo,
 per task, or not at all. It is a working rule now, in `.claude/rice.md`:
 prefer Sonnet for subagents, name another model when a task wants one.
-Nothing here enforces it, and uninstall has nothing to take back.
+Nothing here enforces it, and no lifecycle touches the key: a repo that
+carries it keeps it, whatever its value (RICE-OWNERSHIP-FIX-001).
 
 Rice's own marketplace/plugin declaration is NOT a setting rice writes
 either (RICE-FIX-001). Through 0.1.3 this template also declared

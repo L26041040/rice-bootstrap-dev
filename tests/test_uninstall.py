@@ -90,7 +90,6 @@ class TestCleanUninstall(UninstallBase):
         s = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
         self.assertNotIn("rice-bootstrap", s["extraKnownMarketplaces"])
         self.assertNotIn("rice@rice-bootstrap", s["enabledPlugins"])
-        self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", s["env"])
         self.assertNotIn("RICE_SESSION_ARCHIVE", s["env"])
         self.assertNotIn("outputStyle", s)  # rice's own canonical value goes with rice
         for rule in settings_template.desired_settings(True)["permissions"]["deny"]:
@@ -110,17 +109,21 @@ class TestCleanUninstall(UninstallBase):
         self.assertEqual(s["hooks"]["SessionEnd"][0]["hooks"][0]["command"], "echo hi")
         self.assertEqual(s["someOtherKey"], {"nested": True})
 
-    def test_custom_output_style_and_non_rice_subagent_model_preserved(self):
-        _bootstrapped_repo(self.root)
-        p = self.root / ".claude" / "settings.json"
-        s = json.loads(p.read_text(encoding="utf-8"))
-        s["outputStyle"] = "mine"; s["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] = "opus"
-        p.write_text(json.dumps(s), encoding="utf-8")
-        _, verdict = self._run()
-        self.assertEqual(verdict, "RICE-UNINSTALLED")
-        s = json.loads(p.read_text(encoding="utf-8"))
-        self.assertEqual(s["outputStyle"], "mine")
-        self.assertEqual(s["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "opus")
+    def test_custom_output_style_and_the_projects_subagent_model_preserved(self):
+        """The subagent model is the project's whatever its value, "sonnet"
+        included (RICE-OWNERSHIP-FIX-001; 0.1.2-0.1.6 removed "sonnet")."""
+        for model in ("opus", "sonnet"):
+            with self.subTest(model=model):
+                _bootstrapped_repo(self.root)
+                p = self.root / ".claude" / "settings.json"
+                s = json.loads(p.read_text(encoding="utf-8"))
+                s["outputStyle"] = "mine"; s["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] = model
+                p.write_text(json.dumps(s), encoding="utf-8")
+                _, verdict = self._run()
+                self.assertEqual(verdict, "RICE-UNINSTALLED")
+                s = json.loads(p.read_text(encoding="utf-8"))
+                self.assertEqual(s["outputStyle"], "mine")
+                self.assertEqual(s["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], model)
         self.assertEqual((self.root / ".claude" / "output-styles" / "mine.md").read_text(), "---\nname: mine\n---\nbe terse\n")
 
     def test_session_history_matt_artifacts_repo_files_byte_identical(self):

@@ -354,6 +354,24 @@ class TestBuildPreconditions(LifecycleBase):
                          reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
 
 
+class TestTheSubagentModelIsTheProjects(LifecycleBase):
+    """RICE-OWNERSHIP-FIX-001, through the lifecycle engine itself."""
+
+    def test_bootstrap_finalizes_with_it_and_a_second_bootstrap_changes_nothing(self):
+        (self.root / ".claude").mkdir(parents=True, exist_ok=True)
+        (self.root / ".claude" / "settings.json").write_text(
+            json.dumps({"env": {"CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"}}), encoding="utf-8")
+        _matt_artifacts(self.root)
+        first = self.bootstrap()
+        self.assertEqual(first.stage, "finalized", first.lines)
+        settings = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "sonnet")
+        before = _tree(self.root)
+        again = rice.bootstrap(self.root, **PROBES)  # a re-run asks nothing
+        self.assertEqual(again.stage, "finalized", again.lines)
+        self.assertEqual(_tree(self.root), before)
+
+
 class TestCanonicalInstallPolicy(LifecycleBase):
     """RICE-BOOTSTRAP-044C: rice's canonical install is user scope, and only
     user scope -- like Matt's plugin. Anything else is a definite stop with

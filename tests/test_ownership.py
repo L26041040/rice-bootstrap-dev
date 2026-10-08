@@ -337,46 +337,29 @@ class TestMultisetSafetyUnderDrift(OwnershipBase):
         uninstall.uninstall(self.root)
         self.assertEqual(_tree(self.root), after)
 
-    def _retired_state(self):
-        return {i.name: i.state for i in reconcile.check_owned(self.root)}.get("settings:retired-leaves")
-
-    def _plant_retired(self, value):
+    def _plant_subagent_model(self, value):
         s = self.settings(); s.setdefault("env", {})["CLAUDE_CODE_SUBAGENT_MODEL"] = value
         (self.root / ".claude" / "settings.json").write_text(json.dumps(s), encoding="utf-8")
 
-    def test_a_retired_setting_is_taken_back_by_an_update_and_never_re_created(self):
-        """A repo bootstrapped by the rice 0.1.1 builds public `main` shipped
-        before RICE-BOOTSTRAP-046 (ec66f54 / 07c4891, `settings_template.py`
-        `"CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"`) still carries the subagent
-        pin. Re-running bootstrap -- the update path -- takes rice's own value
-        back, exactly as uninstall does (RICE-UPGRADE-MATRIX-001); nothing
-        writes it again."""
-        self.existing_repo()
-        self.install()
-        self._plant_retired("sonnet")
-        self.assertEqual(self._retired_state(), "FAIL")
-        self.install()
-        self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", self.settings().get("env", {}))
-        self.assertEqual(self._retired_state(), "PASS")
-        self.install()
-        self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", self.settings().get("env", {}))
-
-    def test_a_retired_setting_is_still_taken_back_on_uninstall(self):
-        self.existing_repo()
-        self.install()
-        self._plant_retired("sonnet")
-        uninstall.uninstall(self.root)
-        self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", self.settings().get("env", {}))
-
-    def test_a_project_value_at_the_retired_path_is_kept_by_update_and_uninstall(self):
-        self.existing_repo()
-        self.install()
-        self._plant_retired("opus")
-        self.install()
-        self.assertEqual(self.settings()["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "opus")
-        self.assertEqual(self._retired_state(), "PASS")
-        uninstall.uninstall(self.root)
-        self.assertEqual(self.settings()["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "opus")
+    def test_the_subagent_model_is_the_projects_through_every_verb(self):
+        """RICE-OWNERSHIP-FIX-001: no build that rice ever released can be
+        shown to have written `env.CLAUDE_CODE_SUBAGENT_MODEL`, and the
+        value "sonnet" is one a project sets for its own reasons -- so it is
+        the project's, whatever its value. Install, update, repair and
+        uninstall leave it byte-for-byte alone, and it never fails an item."""
+        for value in ("sonnet", "opus"):
+            with self.subTest(value=value):
+                self.existing_repo()
+                self.install()
+                states = {i.name: i.state for i in reconcile.check_owned(self.root)}
+                self._plant_subagent_model(value)
+                self.assertEqual({i.name: i.state for i in reconcile.check_owned(self.root)}, states)
+                before = (self.root / ".claude" / "settings.json").read_bytes()
+                self.install()                                  # an update
+                reconcile.apply(self.root, converge_drift=True)  # repair's mode
+                self.assertEqual((self.root / ".claude" / "settings.json").read_bytes(), before)
+                uninstall.uninstall(self.root)
+                self.assertEqual(self.settings()["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], value)
 
 
 class TestIndistinguishableValues(OwnershipBase):

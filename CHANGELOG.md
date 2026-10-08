@@ -32,12 +32,14 @@ install, and uninstall leaves only the project.
   `extraKnownMarketplaces` / `enabledPlugins` objects it empties. A repo
   that 0.1.4-0.1.6 already migrated keeps the empty objects they left: they
   do nothing, and nothing can prove they are rice's.
-- **The retired subagent pin is taken back on update.**
-  `env.CLAUDE_CODE_SUBAGENT_MODEL: "sonnet"`, written by the 0.1.1 builds
-  public `main` carried before release branches existed, is removed by
-  re-running bootstrap (not only by uninstall), and a new verifier item,
-  `settings:retired-leaves` (Gate A), refuses to call a repo final while it
-  remains. Any other value there is the project's and stays.
+- **The subagent model is the project's.** `env.CLAUDE_CODE_SUBAGENT_MODEL`
+  is never removed or rewritten by bootstrap, update, repair or uninstall,
+  whatever its value -- uninstall no longer removes `"sonnet"`, as 0.1.2-0.1.6
+  did. No released build wrote it, and a project sets that value for its own
+  reasons. A repo the pre-release 0.1.1 builds bootstrapped keeps the
+  `"sonnet"` they wrote until the OWNER deletes it.
+- **Re-running bootstrap is a no-op.** The release gate now checks that a
+  second `/rice:bootstrap` on every upgraded and fresh repo changes no byte.
 - **Narrower legacy identity.** Only the exact enablement those builds
   wrote (`true`, beside rice's own marketplace entry) is rice's; a project's
   `false`, or the enablement of a same-named marketplace that is not rice's,
