@@ -45,8 +45,9 @@ executables first on PATH, so every build runs unmodified.
 Verdict per row, worst first; the first three block a release:
 
   PROJECT DATA CHANGED   a project-owned byte or setting did not survive
-  HARMFUL RESIDUE        the upgraded repo differs from a fresh install, or
-                         uninstall leaves rice state behind -- including when
+  HARMFUL RESIDUE        the upgraded repo differs from a fresh install, a
+                         second bootstrap changes a byte, or uninstall
+                         leaves rice state behind -- including when
                          the candidate still verified final (a verifier or
                          migration defect, never a success)
   BLOCKED                a lifecycle step did not reach its verdict
@@ -547,7 +548,9 @@ def _check(candidate: Build, shape: str, subject: Sandbox, fresh: Sandbox | None
     out = again.bootstrap(candidate, [])
     if not again.finished(candidate, out):
         found.append(Finding(BLOCKED, f"{shape}: a second bootstrap did not reach {FINAL}: {_last(out)}"))
-    changed = [rel for rel, _, _ in _differences(again.snapshot(), snap)]
+    twice = again.snapshot()
+    found += _project_survived(twice, project, f"{shape} after a second bootstrap")
+    changed = [rel for rel, _, _ in _differences(twice, snap)]
     if changed:
         found.append(Finding(RESIDUE, f"{shape}: a second bootstrap changed {changed} -- a re-run must be a no-op"))
     gone = subject.copy(base / "uninstalled")

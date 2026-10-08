@@ -50,7 +50,7 @@ import settings_template
 #                owner-defined `env.RICE_SESSION_ARCHIVE`, written once and
 #                never reasserted.
 #
-# Ownership is proven, never inferred from a value: a key no released build
+# Ownership is proven, never inferred from a value: a key no release branch
 # can be shown to have written is the project's, whatever it holds, and no
 # lifecycle -- bootstrap, update, repair, uninstall -- deletes or rewrites it
 # (RICE-OWNERSHIP-FIX-001). The subagent model is one: the pre-release 0.1.1

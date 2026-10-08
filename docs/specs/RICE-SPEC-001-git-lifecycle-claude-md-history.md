@@ -698,11 +698,15 @@ RICE-OWNERSHIP-FIX-001: the subagent model is the project's (I21).
   difference remains is a defect, never a pass.
 - I21 Provable take-back only. A lifecycle MAY remove a value only when a
   released build's declaration proves it rice's, at the exact shape that
-  build wrote AND in a form no project would write for itself; everything
-  else is the project's, and bootstrap, update, repair and uninstall MUST
-  neither delete nor rewrite it, nor fail an item over it. Taking a leaf back
-  also takes back every container that removal emptied -- the rule
-  uninstall's projection already applies. Today exactly one thing is taken
+  build wrote, AND the value means nothing but a rice install rice itself
+  now forbids -- a project-scope declaration of rice is rice's by
+  definition (RICE-FIX-001), whoever typed it. Everything else is the
+  project's, and bootstrap, update, repair and uninstall MUST neither
+  delete nor rewrite it, nor fail an item over it. Taking a leaf back also
+  takes back every container that removal emptied -- the rule uninstall's
+  projection already applies, and the one exception to the rule above (a
+  project's own empty container that the declaration then filled; known
+  limits). Today exactly one thing is taken
   back: the 0.1.2/0.1.3 project-scope declaration, at exactly the shape
   those builds wrote -- `extraKnownMarketplaces.rice-bootstrap` =
   `{"source": {"source": "github", "repo": <rice's public repo>, "ref":

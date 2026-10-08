@@ -257,6 +257,49 @@ class TestMatrix(unittest.TestCase):
             self.assertEqual(row.verdict, "HARMFUL RESIDUE", upgrade_matrix.render(rows))
             self.assertIn("a second bootstrap changed ['.claude/runs']", " | ".join(f.text for f in row.findings))
 
+    def test_a_candidate_whose_re_run_cannot_finish_is_blocked(self):
+        _publish(self.d, self.public, "0.0.1")
+        once = self.doctored_candidate(lambda c: (c / "scripts" / "verify.py").write_text(
+            (c / "scripts" / "verify.py").read_text(encoding="utf-8") + "\n\n"
+            "_version_not_newer_item = version_not_newer_item\n"
+            "def version_not_newer_item(repo_root):\n"
+            "    if version_order(repo_root)[2] == 0:\n"
+            "        return reconcile.ItemResult(VERSION_ITEM, 'FAIL', 'refuses a repo it already finalized')\n"
+            "    return _version_not_newer_item(repo_root)\n", encoding="utf-8"))
+        rows = self.run_matrix(once)
+        for source in ("fresh", "release/0.0.1"):
+            row = _row(rows, source)
+            self.assertEqual(row.verdict, "BLOCKED", upgrade_matrix.render(rows))
+            self.assertIn("a second bootstrap did not reach FINAL-VERIFIED", " | ".join(f.text for f in row.findings))
+
+    def test_a_candidate_that_takes_the_projects_subagent_model_is_project_data_changed(self):
+        """RICE-OWNERSHIP-FIX-001: the uninstall 0.1.2-0.1.6 shipped took
+        "sonnet" back; a candidate that still did loses a project setting."""
+        _publish(self.d, self.public, "0.0.1")
+        greedy = self.doctored_candidate(lambda c: _doctor_tail(
+            c, "_project_settings = project_settings\n"
+               "def project_settings(repo_root, current):\n"
+               "    out = _project_settings(repo_root, current)\n"
+               "    if out.get('env', {}).get('CLAUDE_CODE_SUBAGENT_MODEL') == 'sonnet':\n"
+               "        del out['env']['CLAUDE_CODE_SUBAGENT_MODEL']\n"
+               "    return out"))
+        rows = self.run_matrix(greedy)
+        for source in ("fresh", "release/0.0.1"):
+            row = _row(rows, source)
+            self.assertEqual(row.verdict, "PROJECT DATA CHANGED", upgrade_matrix.render(rows))
+            self.assertEqual({f.text for f in row.findings if f.kind == "PROJECT DATA CHANGED"},
+                             {"rich after uninstall: project setting "
+                              "env.CLAUDE_CODE_SUBAGENT_MODEL='sonnet' changed or missing"})
+
+    def test_a_re_run_that_takes_project_data_is_project_data_changed(self):
+        late = self.doctored_candidate(lambda c: _doctor_settings(
+            c, '(repo_root / ".claude" / "rice-version").exists() and '
+               's.get("env", {}).pop("CLAUDE_CODE_SUBAGENT_MODEL", None)'))
+        row = _row(self.run_matrix(late), "fresh")
+        self.assertEqual(row.verdict, "PROJECT DATA CHANGED")
+        self.assertIn("rich after a second bootstrap: project setting env.CLAUDE_CODE_SUBAGENT_MODEL='sonnet' "
+                      "changed or missing", [f.text for f in row.findings])
+
     def test_benign_is_exactly_the_known_husks_and_nothing_else(self):
         _publish(self.d, self.public, "0.0.1", doctor=lambda t: _doctor_settings(t, 's.setdefault("hooks", {})'))
         rows = self.run_matrix()

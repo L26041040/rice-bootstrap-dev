@@ -35,8 +35,8 @@ install, and uninstall leaves only the project.
 - **The subagent model is the project's.** `env.CLAUDE_CODE_SUBAGENT_MODEL`
   is never removed or rewritten by bootstrap, update, repair or uninstall,
   whatever its value -- uninstall no longer removes `"sonnet"`, as 0.1.2-0.1.6
-  did. No released build wrote it, and a project sets that value for its own
-  reasons. A repo the pre-release 0.1.1 builds bootstrapped keeps the
+  did. No release branch ever wrote it, and a project sets that value for
+  its own reasons. A repo the pre-release 0.1.1 builds bootstrapped keeps the
   `"sonnet"` they wrote until the OWNER deletes it.
 - **Re-running bootstrap is a no-op.** The release gate now checks that a
   second `/rice:bootstrap` on every upgraded and fresh repo changes no byte.
