@@ -27,9 +27,11 @@ Upgrade compatibility (RICE-UPGRADE-MATRIX-001): every published release,
 upgraded by re-running `/rice:bootstrap`, now converges to exactly a fresh
 install, and uninstall leaves only the project.
 
-- **No empty containers left by the 0.1.3-era migration.** Taking back the
-  project-scope declaration 0.1.2/0.1.3 wrote also takes back the
-  `extraKnownMarketplaces` / `enabledPlugins` objects it emptied.
+- **No empty containers left by this build's migration.** Taking back the
+  project-scope declaration 0.1.2/0.1.3 wrote now also takes back the
+  `extraKnownMarketplaces` / `enabledPlugins` objects it empties. A repo
+  that 0.1.4-0.1.6 already migrated keeps the empty objects they left: they
+  do nothing, and nothing can prove they are rice's.
 - **The retired subagent pin is taken back on update.**
   `env.CLAUDE_CODE_SUBAGENT_MODEL: "sonnet"`, written by the 0.1.1 builds
   public `main` carried before release branches existed, is removed by

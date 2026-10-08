@@ -157,6 +157,21 @@ class TestLegacyProjectScopeMigration(ReconcileTestBase):
         self.assertEqual(after["enabledPlugins"], {"other-plugin@other-marketplace": True})
         self.assertNotIn("extraKnownMarketplaces", after)
 
+    def test_rices_own_entry_with_a_project_key_added_is_the_projects(self):
+        """RICE-UPGRADE-PATH-001 (SPEC-001 I21): identity is the exact shape
+        rice wrote, not a repo match. A key the project added means the
+        project adopted the entry; rice leaves it, and its enablement."""
+        _make_correct_repo(self.repo_root)
+        settings = _read_settings(self.repo_root)
+        _plant_legacy(settings)
+        settings["extraKnownMarketplaces"][settings_template.MARKETPLACE_NAME]["autoUpdate"] = False
+        _write_settings(self.repo_root, settings)
+        self.assertEqual(_states(_rubric(self.repo_root, rtk_probe=_ok_rtk_probe))[LEGACY_ITEM], "PASS")
+        reconcile.apply(self.repo_root)
+        after = _read_settings(self.repo_root)
+        self.assertEqual(after["extraKnownMarketplaces"][settings_template.MARKETPLACE_NAME]["autoUpdate"], False)
+        self.assertIs(after["enabledPlugins"][settings_template.PLUGIN_KEY], True)
+
     def test_a_projects_own_false_enablement_is_never_read_as_rices(self):
         """Every build that declared itself at project scope wrote `true`;
         `false` is the project switching rice off, and stays."""

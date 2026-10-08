@@ -48,14 +48,18 @@ Verdict per row, worst first; the first three block a release:
                          the candidate still verified final (a verifier or
                          migration defect, never a success)
   BLOCKED                a lifecycle step did not reach its verdict
-  BENIGN LEGACY RESIDUE  only the differences `BENIGN_HUSKS` names: a known,
-                         inert leftover whose ownership no build can prove,
-                         recorded as such in RICE-SPEC-001 §15 -- reported,
-                         never "fixed" by guessing, and not a blocker
+  BENIGN LEGACY RESIDUE  only the differences `BENIGN_HUSKS` names, and only
+                         when they were already there when the candidate
+                         arrived: a known, inert leftover whose ownership no
+                         build can prove, recorded as such in RICE-SPEC-001
+                         §15 -- reported, never "fixed" by guessing, and not
+                         a blocker. The same object emptied by the candidate
+                         itself is the candidate's to remove: harmful.
   CLEAN                  none of the above
 """
 import argparse
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -84,9 +88,10 @@ BLOCKING = VERDICTS[:3]
 # declaration and that 0.1.4-0.1.6 emptied -- but did not remove -- when they
 # migrated that declaration away. An empty object there has no effect, and
 # nothing distinguishes it from one the project wrote itself, so no build may
-# delete it (RICE-SPEC-001 §15, known limits). A later candidate's own
-# migration removes the object it empties; this names only what is already
-# empty when the candidate arrives.
+# delete it (RICE-SPEC-001 §15, known limits). It is benign only when it was
+# already empty when the candidate arrived (`_leftover` checks the repo as the
+# candidate found it): an object the candidate's own migration emptied is the
+# candidate's to remove, and leaving it is harmful.
 BENIGN_HUSKS = {"extraKnownMarketplaces": {}, "enabledPlugins": {}}
 
 MARKER = f".claude/{reconcile.MARKER_NAME}"
@@ -246,11 +251,16 @@ class Sandbox:
     def deny_git_probe(self) -> None:
         """What the harness records when the model runs the verifier's git
         probe in a rice repo: a Bash tool_use and its permission denial, in
-        this repo's transcript directory, after the latest settings change."""
+        this repo's transcript directory, dated now -- never ahead of the
+        clock, so a later hop that rewrites settings.json has to ask for the
+        probe again, exactly as a real session would (the record's
+        millisecond is rounded up only so it is not older than a settings
+        write made in the same millisecond)."""
         tdir = self.cfg / "projects" / str(self.work.resolve()).replace("/", "-")
         tdir.mkdir(parents=True, exist_ok=True)
         settings = self.work / SETTINGS
-        when = max(time.time(), settings.stat().st_mtime if settings.exists() else 0.0) + 1.0
+        when = max(time.time(), settings.stat().st_mtime if settings.exists() else 0.0)
+        when = math.ceil(when * 1000) / 1000
         ts = datetime.fromtimestamp(when, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         self._probes += 1
         tid = f"matrix-probe-{self._probes}"
@@ -286,11 +296,18 @@ class Sandbox:
         return _run([sys.executable, "-I", "-B", str(build.root / "scripts" / "uninstall.py"), str(self.work)],
                     cwd=self.work, env=self.env(build))[1]
 
-    def final(self, build: Build) -> bool:
-        """Did `build` finish this repo: its version stamped, no bootstrap waiting."""
+    def finished(self, build: Build, out: str) -> bool:
+        """Did `build` just finish this repo: its own run said so (its final
+        verdict is in `out` -- so a build that did nothing is never credited
+        with a stamp an earlier hop of the same version left), its version is
+        stamped, and no bootstrap is waiting."""
         stamped = self.work / VERSION_FILE
-        return (stamped.exists() and stamped.read_text(encoding="utf-8").strip() == build.version
+        return (f"{FINAL} {build.version}" in out
+                and stamped.exists() and stamped.read_text(encoding="utf-8").strip() == build.version
                 and not (self.work / MARKER).exists())
+
+    def settings(self) -> dict:
+        return _settings(self.snapshot())
 
     def snapshot(self) -> dict[str, bytes]:
         return {str(p.relative_to(self.work)): p.read_bytes() for p in sorted(self.work.rglob("*"))
@@ -353,7 +370,7 @@ def _install(build: Build, sb: Sandbox, shape: str) -> tuple[bool, str]:
         return False, f"rice {build.version} bootstrap did not reach the Matt hand-off: {_last(out)}"
     _matt_setup(sb)
     out = sb.stop_hook(build)
-    if not sb.final(build):
+    if not sb.finished(build, out):
         return False, f"rice {build.version} Stop continuation did not finalize: {_last(out)}"
     sb.git("add", "-A")
     sb.git("commit", "-q", "-m", f"rice {build.version} bootstrap + Matt")
@@ -455,16 +472,19 @@ def _project_survived(snap: dict, project: Project, where: str) -> list[Finding]
     return found
 
 
-def _leftover(where: str, path: str, value) -> Finding:
-    """A settings value the candidate left where a fresh install has none:
-    benign only when it is exactly a `BENIGN_HUSKS` entry."""
-    if path in BENIGN_HUSKS and value == BENIGN_HUSKS[path]:
-        return Finding(BENIGN, f"{where}: settings {path}={value!r} left behind -- the inert object "
-                               "0.1.4-0.1.6 emptied when migrating a 0.1.2/0.1.3 declaration (SPEC-001 §15)")
+def _leftover(where: str, path: str, value, before: dict) -> Finding:
+    """A settings value the candidate left where a fresh install has none.
+    Benign only when it is exactly a `BENIGN_HUSKS` entry AND `before` -- the
+    settings as the candidate found them -- already held it that way: then
+    no build can prove it rice's. Emptied by the candidate itself, it is the
+    candidate's to remove."""
+    if path in BENIGN_HUSKS and value == BENIGN_HUSKS[path] and before.get(path, _ABSENT) == value:
+        return Finding(BENIGN, f"{where}: settings {path}={value!r} left behind -- already empty when the "
+                               "candidate arrived (an earlier release's migration left it; SPEC-001 §15)")
     return Finding(RESIDUE, f"{where}: settings {path}={value!r} left behind (a fresh install has no such key)")
 
 
-def _converged(up: dict, fresh: dict, where: str) -> list[Finding]:
+def _converged(up: dict, fresh: dict, where: str, before: dict) -> list[Finding]:
     """The upgraded repo must BE a fresh install: same files, same bytes,
     same settings (compared as JSON -- rice writes it, key order is not
     meaning). Anything else is state an older rice left that the candidate
@@ -477,7 +497,7 @@ def _converged(up: dict, fresh: dict, where: str) -> list[Finding]:
             "missing (a fresh install has it)" if a is _ABSENT else "differs from a fresh install")))
     for path, a, b in _differences(_leaves(_settings(up)), _leaves(_settings(fresh))):
         if b is _ABSENT:
-            found.append(_leftover(where, path, a))
+            found.append(_leftover(where, path, a, before))
         else:
             found.append(Finding(RESIDUE, f"{where}: settings {path}" + (
                 f" missing (a fresh install has {b!r})" if a is _ABSENT else
@@ -485,13 +505,13 @@ def _converged(up: dict, fresh: dict, where: str) -> list[Finding]:
     return found
 
 
-def _only_the_project(snap: dict, project: Project, where: str) -> list[Finding]:
+def _only_the_project(snap: dict, project: Project, where: str, before: dict) -> list[Finding]:
     """After uninstall, exactly the project and nothing of rice's."""
     found = [Finding(RESIDUE, f"{where}: {rel} is still there")
              for rel in sorted(set(snap) - set(project.files) - set(SHARED) - {SETTINGS})]
     for path, a, _ in _differences(_leaves(_settings(snap)), _leaves(project.settings)):
         if a is not _ABSENT:
-            found.append(_leftover(where, path, a))
+            found.append(_leftover(where, path, a, before))
     for rel in SHARED:
         extra = [l for l in _lines(snap, rel) if l not in project.lines[rel]]
         if extra:
@@ -499,21 +519,20 @@ def _only_the_project(snap: dict, project: Project, where: str) -> list[Finding]
     return found
 
 
-def _check(candidate: Build, shape: str, subject: Sandbox, fresh: Sandbox | None, base: Path) -> list[Finding]:
-    """Everything wrong with `subject` once the candidate is done with it.
-    `fresh` is the fresh candidate install to compare an upgraded repo
-    with; None when `subject` is that fresh install."""
+def _check(candidate: Build, shape: str, subject: Sandbox, fresh: Sandbox | None, base: Path,
+           before: dict) -> list[Finding]:
+    """Everything wrong with `subject` once the candidate has finished it.
+    `fresh` is the fresh candidate install to compare an upgraded repo with
+    (None when `subject` is that fresh install); `before` is the settings
+    as the candidate found them, which decides what may count as benign."""
     project = Project.of(shape)
-    found = []
-    final = subject.final(candidate)
-    if not final:
-        found.append(Finding(BLOCKED, f"{shape}: the candidate did not reach {FINAL} {candidate.version}"))
+    before = _leaves(before)
     snap = subject.snapshot()
-    found += _project_survived(snap, project, shape)
+    found = _project_survived(snap, project, shape)
     if fresh is not None:
-        drift = _converged(snap, fresh.snapshot(), shape)
+        drift = _converged(snap, fresh.snapshot(), shape, before)
         found += drift
-        if final and any(f.kind == RESIDUE for f in drift):
+        if any(f.kind == RESIDUE for f in drift):
             found.append(Finding(RESIDUE, f"{shape}: the candidate said {FINAL} with harmful residue present "
                                           "-- a verifier/migration defect"))
     gone = subject.copy(base / "uninstalled")
@@ -522,7 +541,7 @@ def _check(candidate: Build, shape: str, subject: Sandbox, fresh: Sandbox | None
         found.append(Finding(RESIDUE, f"{shape}: uninstall: {_last(out)}"))
     after = gone.snapshot()
     found += _project_survived(after, project, f"{shape} after uninstall")
-    found += _only_the_project(after, project, f"{shape} after uninstall")
+    found += _only_the_project(after, project, f"{shape} after uninstall", before)
     return found
 
 
@@ -560,9 +579,11 @@ def _path(row: Row, builds: list[Build], candidate: Build, shape: str, base: Pat
         row.lifecycle[shape] = what
         row.findings.append(Finding(BLOCKED, f"{shape}: {what}"))
         return
+    before = sb.settings()
     for build in (*builds[1:], candidate):
+        before = sb.settings()  # what the next build finds; after the loop, what the candidate found
         out = sb.bootstrap(build, [])
-        if not sb.final(build):
+        if not sb.finished(build, out):
             reached.append(f"rice {build.version} did not reach {FINAL}: {_last(out)}")
             row.lifecycle[shape] = " -> ".join(reached)
             row.findings.append(Finding(BLOCKED, f"{shape}: {reached[-1]}"))
@@ -572,7 +593,7 @@ def _path(row: Row, builds: list[Build], candidate: Build, shape: str, base: Pat
     if fresh is None:
         row.findings.append(Finding(BLOCKED, f"{shape}: no fresh candidate install to compare with"))
         return
-    row.findings += _check(candidate, shape, sb, fresh, base / "check")
+    row.findings += _check(candidate, shape, sb, fresh, base / "check", before)
 
 
 def run(candidate_root: Path, public_repo: str = PUBLIC_REPO, workdir: Path | None = None) -> tuple[list[Row], str | None]:
@@ -599,7 +620,8 @@ def run(candidate_root: Path, public_repo: str = PUBLIC_REPO, workdir: Path | No
             fresh_row.findings.append(Finding(BLOCKED, f"{shape}: {what}"))
             continue
         fresh[shape] = sb
-        fresh_row.findings += _check(candidate, shape, sb, None, workdir / f"fresh-{shape}-check")
+        fresh_row.findings += _check(candidate, shape, sb, None, workdir / f"fresh-{shape}-check",
+                                     Project.of(shape).settings)
 
     rows, builds, unfetched = [fresh_row], {}, {}
     for version in versions:

@@ -4,8 +4,8 @@ Status: canonical, frozen. Source: RICE-ARCH-REVIEW-001/-002/-003 and the OWNER'
 final decisions (amended by RICE-TO-TICKET-002: the CLAUDE.md guard activates on
 bootstrap completion instead of carrying a Matt exception; patched by
 RICE-UPDATE-SPEC-001: update safety, §14, I15–I19, from RICE-UPDATE-RESEARCH-001
-and RICE-UPDATE-GRILL-001; and by RICE-UPGRADE-MATRIX-001: upgrade compatibility,
-§15, I20–I22). This document freezes an approved design; it does not reopen it.
+and RICE-UPDATE-GRILL-001; and by RICE-UPGRADE-MATRIX-001 / RICE-UPGRADE-PATH-001:
+upgrade compatibility, §15, I20–I23). This document freezes an approved design; it does not reopen it.
 Base: rice 0.1.6 (private main `4e7f210`).
 
 Keywords MUST / MUST NOT / MAY are normative.
@@ -681,12 +681,14 @@ release model.
 
 ## 15. Upgrade compatibility (patch RICE-UPGRADE-MATRIX-001)
 
-Source: the RICE-UPGRADE-MATRIX-001 audit -- every public `release/<semver>`
-branch (0.1.2-0.1.6) bootstrapped by its own shipped CLI and Stop hook, then
-upgraded to the candidate by re-running `/rice:bootstrap`, compared with a
-fresh candidate install and uninstalled; plus the three `rice 0.1.1` builds
-public `main` carried before release branches existed (ec66f54, 07c4891,
-7df1741), checked separately. Normative: I20-I22.
+Source: the RICE-UPGRADE-MATRIX-001 and RICE-UPGRADE-PATH-001 audits -- every
+public `release/<semver>` branch (0.1.2-0.1.6) bootstrapped by its own shipped
+CLI and Stop hook, then upgraded to the candidate by re-running
+`/rice:bootstrap`, directly and along its historical path through every later
+release, compared with a fresh candidate install and uninstalled; plus the
+three `rice 0.1.1` builds public `main` carried before release branches
+existed (ec66f54, 07c4891, 7df1741), checked separately by the steps their
+own skill documented (they had no CLI). Normative: I20-I23.
 
 - I20 Convergence. A repo bootstrapped by any published release, re-bootstrapped
   by this build, MUST equal a fresh install of this build on the same project
@@ -697,11 +699,14 @@ public `main` carried before release branches existed (ec66f54, 07c4891,
   wrote; everything else at the same path is the project's and stays. Taking
   a leaf back also takes back every container that removal emptied -- the
   rule uninstall's projection already applies. Today that is:
-  - the 0.1.2/0.1.3 project-scope declaration (`extraKnownMarketplaces.
-    rice-bootstrap` with rice's own repo; `enabledPlugins.rice@rice-bootstrap`
-    = `true` beside it or with no marketplace entry), and the containers it
-    empties. A `false`, or the enablement of a same-named marketplace that is
-    not rice's, is the project's;
+  - the 0.1.2/0.1.3 project-scope declaration, at exactly the shape those
+    builds wrote: `extraKnownMarketplaces.rice-bootstrap` =
+    `{"source": {"source": "github", "repo": <rice's public repo>, "ref":
+    <string>}}` and nothing more, and `enabledPlugins.rice@rice-bootstrap` =
+    `true` beside it or with no marketplace entry; plus the containers that
+    removal empties. A `false`, an entry with a key the project added, or the
+    enablement of a same-named marketplace that is not rice's, is the
+    project's;
   - `RETIRED_LEAVES` -- `env.CLAUDE_CODE_SUBAGENT_MODEL: "sonnet"`, written by
     the public-`main` 0.1.1 builds ec66f54 / 07c4891 (`settings_template.py`),
     retired by RICE-BOOTSTRAP-046 -- now taken back on update as on uninstall.
@@ -722,8 +727,11 @@ public `main` carried before release branches existed (ec66f54, 07c4891,
   Today that is exactly one thing: an empty `extraKnownMarketplaces` or
   `enabledPlugins` object -- created by 0.1.2/0.1.3 for their declaration,
   emptied but not removed by 0.1.4-0.1.6's migration, indistinguishable
-  from one the project wrote (`upgrade_matrix.BENIGN_HUSKS`). It is reported
-  by name, never deleted by guessing, and anything else is harmful.
+  from one the project wrote (`upgrade_matrix.BENIGN_HUSKS`) -- and only
+  when it was already empty when the candidate arrived. The same object
+  emptied by the candidate's own migration is the candidate's to remove;
+  left behind, it is harmful. Benign residue is reported by name and never
+  deleted by guessing; anything else is harmful.
 
 Known limits, deliberately not migrated (no historical declaration proves
 them rice's, and rice does not guess project-owned state):
@@ -740,5 +748,14 @@ them rice's, and rice does not guess project-owned state):
   uninstall takes it. Not reachable from any release branch.
 - A project's own pre-existing `outputStyle: "rice:老弟"` is taken by
   uninstall (the same value rice writes); unchanged here.
+- A project's own deliberate `env.CLAUDE_CODE_SUBAGENT_MODEL: "sonnet"` is
+  indistinguishable from the pin the 0.1.1 builds wrote, so an update (and
+  uninstall, as before) takes it; any other value stays. The OWNER who wants
+  that exact value keeps it outside `.claude/settings.json`'s `env`, or
+  re-adds it after bootstrap.
+- A project's own pre-existing empty `extraKnownMarketplaces` or
+  `enabledPlugins` object that 0.1.2/0.1.3 then filled with rice's
+  declaration is removed together with that declaration (an emptied
+  container is read as rice's, the rule uninstall has always applied).
 - Uninstall leaves the blank line apply put before the import line when
   Matt's block follows it (whitespace only; fresh installs alike).

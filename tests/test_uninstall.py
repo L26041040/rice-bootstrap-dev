@@ -236,7 +236,8 @@ class TestUninstallCheck(UninstallBase):
         # answer comes from reconcile's own projection (RICE-BOOTSTRAP-045)
         settings_leftovers = {
             "marketplace": lambda s: s.setdefault("extraKnownMarketplaces", {}).__setitem__(
-                "rice-bootstrap", {"source": {"source": "github", "repo": "L26041040/rice-bootstrap"}}),
+                "rice-bootstrap", {"source": {"source": "github", "repo": "L26041040/rice-bootstrap",
+                                              "ref": "release/0.1.3"}}),  # the exact shape 0.1.2/0.1.3 wrote
             "enabled-plugin": lambda s: s.setdefault("enabledPlugins", {}).__setitem__("rice@rice-bootstrap", True),
             "archive-switch": lambda s: s.setdefault("env", {}).__setitem__("RICE_SESSION_ARCHIVE", "1"),
             "rice output style": lambda s: s.__setitem__("outputStyle", settings_template.RICE_STYLE),

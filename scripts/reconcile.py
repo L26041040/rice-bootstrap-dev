@@ -201,14 +201,17 @@ def _current_settings(repo_root: Path) -> dict:
 
 
 def _is_rice_legacy_marketplace(entry) -> bool:
-    """Only a marketplace entry that is unmistakably rice's own -- source
-    `github`, repo this build's own public repo -- is 0.1.3-era rice state.
-    Anything else at the same name is the project's, and is left alone."""
-    if not isinstance(entry, dict):
+    """Only a marketplace entry of exactly the shape rice's own builds wrote
+    -- `{"source": {"source": "github", "repo": <this build's public repo>,
+    "ref": <a string>}}`, nothing more -- is 0.1.3-era rice state. The same
+    repo with a key added, or anything else at the same name, is the
+    project's, and is left alone."""
+    if not isinstance(entry, dict) or set(entry) != {"source"}:
         return False
-    source = entry.get("source")
-    return (isinstance(source, dict) and source.get("source") == "github"
-            and source.get("repo") == settings_template.MARKETPLACE_REPO)
+    source = entry["source"]
+    return (isinstance(source, dict) and set(source) == {"source", "repo", "ref"}
+            and source["source"] == "github" and source["repo"] == settings_template.MARKETPLACE_REPO
+            and isinstance(source["ref"], str))
 
 
 def _legacy_project_scope_present(d: dict) -> tuple[bool, bool]:
