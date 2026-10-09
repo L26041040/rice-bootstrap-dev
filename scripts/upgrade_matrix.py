@@ -620,6 +620,7 @@ def _path(row: Row, builds: list[Build], candidate: Build, shape: str, base: Pat
         return
     for build in (*builds[1:], candidate):
         before = sb.settings()  # what the next build finds; after the loop, what the candidate found
+        head = sb.git("rev-parse", "HEAD")[1].strip()
         out = sb.bootstrap(build, [])
         if not sb.finished(build, out):
             reached.append(f"rice {build.version} did not reach {FINAL}: {_last(out)}")
@@ -627,6 +628,16 @@ def _path(row: Row, builds: list[Build], candidate: Build, shape: str, base: Pat
             row.findings.append(Finding(BLOCKED, f"{shape}: {reached[-1]}"))
             return
         reached.append(build.version)
+        if build is not candidate:
+            sb.git("add", "-A")  # the agent commits each finished hop, as the directive says
+            sb.git("commit", "-q", "-m", f"rice {build.version}")
+    # The tree was clean when the candidate arrived, so its update had nothing
+    # of the OWNER's to save: any commit it made is rice's own writes saved as
+    # the OWNER's work (RICE-UPDATE-PRESAVE-001).
+    saved = sb.git("diff", "--name-only", head, "HEAD")[1].split()
+    if saved:
+        row.findings.append(Finding(RESIDUE, f"{shape}: the candidate's update committed {saved} as the "
+                                             "OWNER's work -- rice's own writes belong to rice's commit"))
     row.lifecycle[shape] = " -> ".join(reached)
     if fresh is None:
         row.findings.append(Finding(BLOCKED, f"{shape}: no fresh candidate install to compare with"))

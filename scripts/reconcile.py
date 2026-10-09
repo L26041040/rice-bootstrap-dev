@@ -654,6 +654,39 @@ def project_agents_md(text: str) -> str | None:
     return kept
 
 
+# Every path a bootstrap can write in a repo (the verified-version file aside: only the
+# verifier's stamp writes it, after any save).
+RICE_WRITES = (".claude/rice.md", f".claude/{MARKER_NAME}", "CLAUDE.md", "AGENTS.md", ".claude/settings.json")
+
+
+def only_rices_change(repo_root, rel: str, before: str | None) -> bool:
+    """Is every difference between `before` (the committed text of `rel`,
+    None when it was absent) and the file now rice's own write? Decided by
+    ownership, never by guessing (RICE-UPDATE-PRESAVE-001): `.claude/rice.md`
+    at exactly this build's content, rice's own pending marker, or a shared
+    file whose project-owned part -- the projection uninstall uses -- is
+    unchanged. Any other file is never rice's -- and is never read."""
+    if rel not in RICE_WRITES:
+        return False
+    p = Path(repo_root) / rel
+    now = p.read_text(encoding="utf-8") if p.exists() else None
+    if rel == ".claude/rice.md":
+        return now == RICE_MD_RESOURCE.read_text(encoding="utf-8")
+    if rel == f".claude/{MARKER_NAME}":
+        return True
+    if rel in ("CLAUDE.md", "AGENTS.md"):
+        project = project_claude_md if rel == "CLAUDE.md" else project_agents_md
+        return now is not None and project(now) == (project(before) if before is not None else None)
+    if rel == ".claude/settings.json":
+        try:
+            ours, theirs = json.loads(now or "{}"), json.loads(before or "{}")
+        except json.JSONDecodeError:
+            return False
+        return (isinstance(ours, dict) and isinstance(theirs, dict)
+                and project_settings(repo_root, ours) == project_settings(repo_root, theirs))
+    return False
+
+
 def remove(repo_root) -> list[str]:
     """Subtract rice from this repo. Returns the actions taken; idempotent,
     and byte-for-byte a no-op on everything rice does not own."""

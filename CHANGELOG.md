@@ -54,10 +54,13 @@ Updating saves your work first (RICE-UPDATE-PRESAVE-001):
   is the OWNER's go-ahead; nothing is asked. It happens only after the build
   and anti-downgrade checks pass. A first install, a same-version re-run and
   the Stop continuation save nothing.
-- **A failed save stops the update.** If the commit or the push fails,
-  nothing of rice's is written and the work stays in the tree or in the local
-  commit; re-running saves again. Never a force push, rewrite or branch
-  deletion.
+- **A failed save stops the update.** If the commit or the push fails, or a
+  merge, rebase, cherry-pick or revert is in progress, nothing of rice's is
+  written; the work stays in the tree (with your own staging) or in the
+  local commit, and re-running saves again. It pushes where git would
+  (`pushRemote`, `pushDefault`, upstream, `origin`), never onto another
+  branch name. A repo with no remote is not updated until one is added.
+  Never a force push, rewrite or branch deletion.
 
 What real sessions showed (RICE-FINAL-UX-REVIEW-001):
 

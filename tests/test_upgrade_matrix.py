@@ -295,6 +295,23 @@ class TestMatrix(unittest.TestCase):
         self.assertIn("rich after a second bootstrap: project setting env.CLAUDE_CODE_SUBAGENT_MODEL='sonnet' "
                       "changed or missing", [f.text for f in row.findings])
 
+    def test_a_candidate_that_commits_its_own_writes_as_the_owners_is_harmful(self):
+        """RICE-UPDATE-PRESAVE-001: an update saves the OWNER's work, never
+        rice's own -- a candidate whose save swept up its writes is caught."""
+        _publish(self.d, self.public, "0.0.1")
+        sweeping = self.doctored_candidate(lambda c: _doctor_tail(
+            c, "_run = run\n"
+               "def run(repo_root, **kw):  # every verification, its stamp included, then committed\n"
+               "    report = _run(repo_root, **kw)\n"
+               "    import subprocess\n"
+               "    for args in (('add', '-A'), ('commit', '-qm', 'rice: save work')):\n"
+               "        subprocess.run(['git', '-C', str(repo_root), *args], capture_output=True)\n"
+               "    return report", module="verify"))
+        rows = self.run_matrix(sweeping)
+        row = _row(rows, "release/0.0.1")
+        self.assertEqual(row.verdict, "HARMFUL RESIDUE", upgrade_matrix.render(rows))
+        self.assertIn("as the OWNER's work", " | ".join(f.text for f in row.findings))
+
     def test_benign_is_exactly_the_known_husks_and_nothing_else(self):
         _publish(self.d, self.public, "0.0.1", doctor=lambda t: _doctor_settings(t, 's.setdefault("hooks", {})'))
         rows = self.run_matrix()

@@ -301,6 +301,7 @@ class GitLifecycleBase(LifecycleBase):
         (self.root / "README.md").write_text("project\nhalf-done edit\n", encoding="utf-8")
         (self.root / "notes.md").write_text("new file\n", encoding="utf-8")
         (self.root / "debug.log").write_text("ignored\n", encoding="utf-8")
+        (self.root / "logo.bin").write_bytes(b"\x89PNG\x00\xff\xfe")   # not text: never decoded
 
 
 class TestAnUpdateSavesTheWorkFirst(GitLifecycleBase):
@@ -318,7 +319,7 @@ class TestAnUpdateSavesTheWorkFirst(GitLifecycleBase):
         saved = self.git("rev-parse", "HEAD")  # rice's own changes are the agent's to commit, after
         self.assertEqual(self.git("rev-parse", f"{saved}^"), before)
         files = set(self.git("show", "--name-only", "--format=", saved).split())
-        self.assertEqual(files, {"README.md", "notes.md"})                 # .gitignore respected
+        self.assertEqual(files, {"README.md", "notes.md", "logo.bin"})     # .gitignore respected
         self.assertEqual(self.git("show", f"{saved}:.claude/rice.md"), "an older build's rules")  # before rice
         self.assertEqual(self.origin_head(), saved)
         self.assertEqual((self.root / ".claude" / "rice.md").read_text(encoding="utf-8"),
@@ -375,6 +376,114 @@ class TestAnUpdateSavesTheWorkFirst(GitLifecycleBase):
         self.assertEqual(self.origin_head(), main_before)
         self.assertEqual(self.origin_head("feature"), "")
         self.assertIn("?? notes.md", self.git("status", "--short"))   # nothing committed either
+
+    def test_a_later_run_of_the_same_update_saves_no_rice_write_as_the_owners(self):
+        """In a new session the first run saves, writes, then stops for the
+        git-deny probe; the model runs it and re-runs. That second run must not
+        commit rice's own half-written update as "your changes" (a real
+        session did), and it still tells the OWNER their work was saved."""
+        self.finalized_by_an_older_rice()
+        self.owner_wip()
+        stop, saved = rice._save_before_update(self.root)       # the first run's save ...
+        self.assertIsNone(stop)
+        first = self.git("rev-parse", "--short", "HEAD")
+        reconcile.apply(self.root)                               # ... and its writes, before Gate A stopped
+        outcome = rice.bootstrap(self.root, **PROBES)            # the re-run
+        self.assertEqual(outcome.stage, "finalized", outcome.lines)
+        self.assertEqual(self.git("rev-parse", "--short", "HEAD"), first)   # no second save commit
+        self.assertIn(f"committed as {first}", "\n".join(outcome.directive))
+        self.assertEqual(set(self.git("diff", "--name-only", "HEAD").split()),
+                         {".claude/rice.md", ".claude/rice-version"})       # left for rice's own commit
+
+    def test_an_owners_edit_to_a_shared_file_is_saved_with_rices_entries_left_alone(self):
+        self.finalized_by_an_older_rice()
+        p = self.root / ".claude" / "settings.json"
+        s = json.loads(p.read_text(encoding="utf-8")); s.setdefault("permissions", {})["allow"] = ["Bash(make test)"]
+        p.write_text(json.dumps(s), encoding="utf-8")
+        (self.root / ".claude" / "rice.md").write_text("the OWNER's hand edit\n", encoding="utf-8")
+        before = self.git("rev-parse", "HEAD")
+        self.assertEqual(rice.bootstrap(self.root, **PROBES).stage, "finalized")
+        saved = self.git("rev-list", f"{before}..HEAD").split()
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(set(self.git("show", "--name-only", "--format=", saved[0]).split()),
+                         {".claude/settings.json", ".claude/rice.md"})      # both are the OWNER's edits
+        self.assertEqual(self.git("show", f"{saved[0]}:.claude/rice.md"), "the OWNER's hand edit")
+
+    def test_a_merge_in_progress_is_the_owners_to_finish(self):
+        self.finalized_by_an_older_rice()
+        self.git("checkout", "-q", "-b", "side"); (self.root / "README.md").write_text("side\n", encoding="utf-8")
+        self.git("commit", "-qam", "side"); self.git("checkout", "-q", "main")
+        (self.root / "README.md").write_text("main\n", encoding="utf-8"); self.git("commit", "-qam", "main")
+        subprocess.run(["git", "-C", str(self.root), "merge", "-q", "side"], capture_output=True)  # conflicts
+        before = self.git("rev-parse", "HEAD")
+        outcome = rice.bootstrap(self.root, **PROBES)
+        self._refused_with_nothing_of_rices_written(outcome)
+        self.assertIn("merge", "\n".join(outcome.directive))
+        self.assertEqual(self.git("rev-parse", "HEAD"), before)
+        self.assertTrue((self.root / ".git" / "MERGE_HEAD").exists())          # the merge is still theirs
+
+    def test_a_failed_commit_gives_back_the_owners_own_staging(self):
+        self.finalized_by_an_older_rice()
+        (self.root / "README.md").write_text("staged version\n", encoding="utf-8"); self.git("add", "README.md")
+        (self.root / "README.md").write_text("working version\n", encoding="utf-8")
+        hook = self.root / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\nexit 1\n"); hook.chmod(0o755)
+        self._refused_with_nothing_of_rices_written(rice.bootstrap(self.root, **PROBES))
+        self.assertEqual(self.git("show", ":README.md"), "staged version")      # the index as they left it
+        self.assertEqual((self.root / "README.md").read_text(encoding="utf-8"), "working version\n")
+
+    def test_a_rejected_push_says_why(self):
+        self.finalized_by_an_older_rice()
+        other = Path(self._tmp.name) / "other"
+        subprocess.run(["git", "clone", "-q", str(self.origin), str(other)], check=True)
+        subprocess.run(["git", "-C", str(other), "-c", "user.email=x@y", "-c", "user.name=x", "commit", "-q",
+                        "--allow-empty", "-m", "someone else's"], check=True)
+        subprocess.run(["git", "-C", str(other), "push", "-q"], check=True)
+        self.owner_wip()
+        outcome = rice.bootstrap(self.root, **PROBES)
+        self._refused_with_nothing_of_rices_written(outcome)
+        text = "\n".join(outcome.directive)
+        self.assertIn("rejected", text)
+        self.assertNotIn("hint:", text)
+
+    def test_no_remote_to_push_to_says_what_to_do(self):
+        self.finalized_by_an_older_rice()
+        self.git("remote", "remove", "origin")
+        self.owner_wip()
+        outcome = rice.bootstrap(self.root, **PROBES)
+        self._refused_with_nothing_of_rices_written(outcome)
+        self.assertIn("git remote add", "\n".join(outcome.directive))
+
+    def test_the_push_goes_where_git_itself_would_push(self):
+        self.finalized_by_an_older_rice()
+        fork = Path(self._tmp.name) / "fork.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(fork)], check=True)
+        self.git("remote", "add", "fork", str(fork)); self.git("config", "remote.pushDefault", "fork")
+        before = self.origin_head()
+        self.owner_wip()
+        self.assertEqual(rice.bootstrap(self.root, **PROBES).stage, "finalized")
+        self.assertEqual(self.origin_head(), before)                             # not origin ...
+        r = subprocess.run(["git", "-C", str(fork), "rev-parse", "main"], capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), self.git("rev-parse", "HEAD"))         # ... the fork
+
+    def test_the_stop_continuation_saves_nothing(self):
+        self.finalized_by_an_older_rice()
+        reconcile.enter_waiting_for_matt(self.root)
+        self.owner_wip()
+        before = self.git("rev-parse", "HEAD")
+        rice.continue_after_matt(self.root, **PROBES)
+        self.assertEqual(self.git("rev-parse", "HEAD"), before)
+        self.assertIn("?? notes.md", self.git("status", "--short"))
+
+    def test_the_saved_line_leads_a_matt_hand_off_too(self):
+        self.finalized_by_an_older_rice()
+        for rel in ("docs/agents/issue-tracker.md", "docs/agents/domain.md"):
+            (self.root / rel).unlink()
+        self.git("commit", "-qam", "matt docs gone"); self.git("push", "-q")
+        self.owner_wip()
+        outcome = rice.bootstrap(self.root, **PROBES)
+        self.assertEqual(outcome.stage, "waiting-for-matt", outcome.lines)
+        self.assertTrue(outcome.directive[0].startswith("Before updating rice"), outcome.directive)
 
     def _refused_with_nothing_of_rices_written(self, outcome):
         self.assertEqual(outcome.stage, "blocked")
@@ -461,7 +570,7 @@ class TestAnUpdateSavesTheWorkFirst(GitLifecycleBase):
 
     def test_the_save_never_forces_or_rewrites(self):
         src = (REPO / "scripts" / "rice.py").read_text(encoding="utf-8")
-        for flag in ("--force", '"-f"', "--amend", "reset --hard", '"rebase"', '"--delete"'):
+        for flag in ("--force", '"-f"', "--amend", '"--hard"', '"rebase"', '"--delete"', '"+', "'+"):
             self.assertNotIn(flag, src)
 
 

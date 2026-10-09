@@ -210,19 +210,24 @@ behaviour up the moment a session loads the new build.
 - I24 Save before an update (RICE-UPDATE-PRESAVE-001). When bootstrap finds
   the repo finalized by an older rice than the running build, and only after
   I16 and I17 pass, it MUST save the OWNER's work before its first write:
-  `git add -A` (`.gitignore` applies), a commit when that staged anything,
-  then a plain push of the current branch, unpushed commits included,
-  always under its own name: to its upstream of that name, or, with none,
-  to `origin`, setting it as the upstream. An upstream of another name
-  stops the update before anything is staged (git's own
-  `push.default=simple` refuses that push too). The OWNER running `/rice:bootstrap` to update
-  is the authorization; nothing is asked. A first install, a same-version
-  re-run, a newer or malformed repo, and the Stop continuation save nothing.
-  Any failing step (detached HEAD, add, commit, push) stops the update with
-  nothing of rice's written; the work stays in the tree (index restored
-  when the commit fails) or in the local commit, and a re-run saves again.
-  Never a force push, history rewrite, branch deletion, stash, pull or
-  merge; no setting, state file or git framework is added.
+  `git add -A` (`.gitignore` applies) — less rice's own pending writes from
+  an earlier run of the same update, which are rice's commit to make — a
+  commit when that staged anything, then a plain push of the current branch,
+  unpushed commits included, to the remote git itself would push to
+  (`branch.<b>.pushRemote`, else `remote.pushDefault`, else its upstream's,
+  else `origin`) and always under its own name, setting the upstream for a
+  branch never pushed. The OWNER running `/rice:bootstrap` to update is the
+  authorization; nothing is asked. A first install, a same-version re-run, a
+  newer or malformed repo, and the Stop continuation save nothing. Any
+  failing step stops the update with nothing of rice's written: a detached
+  or unborn HEAD, a merge, rebase, cherry-pick or revert in progress,
+  unmerged entries, or an upstream of another name (git's own
+  `push.default=simple` refuses that push too) before anything is staged;
+  add, commit or push after. The work stays in the tree, with the OWNER's
+  own index given back exactly, or in the local commit, and a re-run saves
+  again. A repo with no remote at all cannot be saved, so it is not updated
+  until one is added. Never a force push, history rewrite, branch deletion,
+  stash, pull or merge; no setting, state file or git framework is added.
 
 ---
 
@@ -668,7 +673,8 @@ helper line, printed only when all of: rice installed here (the existing
 reconcile question), `.claude/rice-version` present and SemVer, running build
 SemVer, build > repo, waiting marker absent. Text (wording MAY vary):
 `rice: this repo was finalized by rice <repo>; this session runs rice <build>.
-Run /rice:bootstrap to bring it up to date.` Any exception ⇒ silence.
+Run /rice:bootstrap to bring it up to date (it first commits and pushes your
+work).` Any exception ⇒ silence.
 RICE-FINAL-UX-REVIEW-001: as plain context the line reached no one in real
 sessions — not addressed to anyone, nor when it told the agent to tell the
 OWNER. The hook therefore prints, for this case only, a JSON object:
@@ -700,7 +706,8 @@ only requires that the sole release branch named is the build's own).
 | --- | --- |
 | old plugin, newer repo | blocked before any write (14.3); context silent |
 | new plugin, older repo | context line; re-run bootstrap ⇒ work saved (I24) ⇒ FINAL-VERIFIED new |
-| update, save fails (commit or push) | blocked before rice's first write; the work stays in the tree or the local commit; re-run saves again |
+| update, save fails (commit or push) | blocked before rice's first write; the work stays in the tree (index as it was) or the local commit; re-run saves again |
+| update, merge/rebase in progress or no remote | blocked before anything is staged; the OWNER finishes it or adds a remote |
 | same version | idempotent re-run, no questions, silent; the OWNER's work-in-progress is not committed |
 | no rice-version | not compared; silent (fresh or waiting repo) |
 | malformed rice-version | NOT_VERIFIED ⇒ blocked before any write; silent |
@@ -726,16 +733,33 @@ first write, using only native git through the archive sync's existing
 helpers. The steps, each stopping the update on failure:
 
 1. `version_order` says older → newer; otherwise nothing happens.
-2. The current branch (detached HEAD stops; so does an upstream whose
-   branch has another name, before anything is staged).
-3. `git add -A`; when something is staged, `git commit -m "rice: save work
-   before updating rice <old> -> <new>"` (a failed commit unstages again).
-4. When the branch has unpushed commits (or no upstream yet): `git push
-   <remote> HEAD:<upstream branch>`, or `git push -u origin
-   HEAD:refs/heads/<branch>` for a branch never pushed.
+2. The current branch (detached or unborn HEAD stops; so do a merge,
+   rebase, cherry-pick or revert in progress, unmerged entries, and an
+   upstream whose branch has another name — all before anything is
+   staged). `git write-tree` records the OWNER's index to give back on any
+   later failure.
+3. `git add -A`, then unstage rice's own pending writes
+   (`reconcile.only_rices_change`: `.claude/rice.md` at this build's
+   content, the pending marker, or `CLAUDE.md` / `AGENTS.md` /
+   `.claude/settings.json` whose project-owned part — uninstall's projection
+   — is unchanged since HEAD). A new session's first run writes and then
+   stops for the git-deny probe; without this, the re-run would save rice's
+   half-written update as the OWNER's work (a real session did). When
+   something is still staged, `git commit -m "rice: save work before
+   updating rice <old> -> <new>"` (a failed commit gives the index back).
+4. When `@{push}..HEAD` is not empty (or does not resolve): `git push
+   <remote> HEAD:refs/heads/<branch>`, with `-u` for a branch never pushed;
+   60 s and no credential prompt, so it fails inside the bootstrap command.
+   The stop message keeps git's own reason (hints dropped) and the next
+   step (with no remote: `git remote add origin <url>`).
+
+The upgrade matrix's sandboxes track a bare origin and commit each older
+release's hop, as the agent does; any commit the candidate's update then
+makes is rice's own writes saved as the OWNER's work, a harmful finding.
 
 The OWNER sees one line before the usual directive, naming the commit and
-the push. The agent's own commit after FINAL-VERIFIED stays as it was:
+the push — also on a re-run of the same update, whose HEAD is still that
+save commit (its subject names both versions). The agent's own commit after FINAL-VERIFIED stays as it was:
 rice's paths by name, never `git add -A` — on an update, nothing else is
 left by then.
 

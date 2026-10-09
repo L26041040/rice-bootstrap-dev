@@ -45,7 +45,7 @@ def staleness(repo_root) -> str | None:
     if order != -1:
         return None
     return (f"rice: this repo was finalized by rice {recorded}; this session runs rice {build}. "
-            "Run /rice:bootstrap to bring it up to date.")
+            "Run /rice:bootstrap to bring it up to date (it first commits and pushes your work).")
 
 
 def _cwd() -> Path:

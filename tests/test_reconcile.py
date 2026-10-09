@@ -498,3 +498,46 @@ def _init_archive_repo(root: Path, remote: Path) -> None:
     _git_r(root, "push", "-q", "-u", "origin", "main")
 
 
+
+
+class TestOnlyRicesChange(unittest.TestCase):
+    """RICE-UPDATE-PRESAVE-001: which uncommitted changes are rice's own
+    pending writes -- decided by the same ownership projections uninstall
+    uses, never by guessing."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(); self.root = Path(self._tmp.name)
+        (self.root / ".claude").mkdir()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _now(self, rel, text):
+        (self.root / rel).write_text(text, encoding="utf-8")
+
+    def test_rice_md_is_rices_only_at_this_builds_content(self):
+        self._now(".claude/rice.md", reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
+        self.assertTrue(reconcile.only_rices_change(self.root, ".claude/rice.md", "old rules\n"))
+        self._now(".claude/rice.md", "hand edit\n")
+        self.assertFalse(reconcile.only_rices_change(self.root, ".claude/rice.md", "old rules\n"))
+
+    def test_claude_md_with_only_the_import_line_added_is_rices(self):
+        self._now("CLAUDE.md", f"# mine\n\n{reconcile.IMPORT_LINE}\n")
+        self.assertTrue(reconcile.only_rices_change(self.root, "CLAUDE.md", "# mine\n"))
+        self._now("CLAUDE.md", f"# mine, edited\n\n{reconcile.IMPORT_LINE}\n")
+        self.assertFalse(reconcile.only_rices_change(self.root, "CLAUDE.md", "# mine\n"))
+        self._now("CLAUDE.md", f"{reconcile.IMPORT_LINE}\n")
+        self.assertTrue(reconcile.only_rices_change(self.root, "CLAUDE.md", None))   # rice created it
+
+    def test_settings_whose_project_part_is_unchanged_are_rices(self):
+        rule = settings_template.RICE_DENY_ENTRIES[0]
+        self._now(".claude/rice.md", "rules\n")   # rice is installed here: its deny entries are subtracted
+        self._now(".claude/settings.json", json.dumps({"permissions": {"deny": ["Bash(curl *)", rule]}}))
+        before = json.dumps({"permissions": {"deny": ["Bash(curl *)"]}})
+        self.assertTrue(reconcile.only_rices_change(self.root, ".claude/settings.json", before))
+        self._now(".claude/settings.json", json.dumps({"permissions": {"deny": ["Bash(wget *)", rule]}}))
+        self.assertFalse(reconcile.only_rices_change(self.root, ".claude/settings.json", before))
+
+    def test_any_other_file_is_never_rices(self):
+        self._now("README.md", "x\n")
+        self.assertFalse(reconcile.only_rices_change(self.root, "README.md", None))
