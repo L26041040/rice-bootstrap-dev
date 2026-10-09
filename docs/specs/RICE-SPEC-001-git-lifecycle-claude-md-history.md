@@ -7,7 +7,8 @@ RICE-UPDATE-SPEC-001: update safety, §14, I15–I19, from RICE-UPDATE-RESEARCH-
 and RICE-UPDATE-GRILL-001; and by RICE-UPGRADE-MATRIX-001 / RICE-UPGRADE-PATH-001:
 upgrade compatibility, §15, I20–I23; corrected by RICE-OWNERSHIP-FIX-001; and by
 RICE-FINAL-UX-REVIEW-001: I15, I18 and §14.4–14.5 as real sessions showed them, evidence in
-`docs/research/RICE-FINAL-UX-REVIEW-001-real-sessions.md`). This document freezes an approved design; it does not reopen it.
+`docs/research/RICE-FINAL-UX-REVIEW-001-real-sessions.md`; and by RICE-UPDATE-PRESAVE-001: an
+update saves the OWNER's work first, I24 and §14.8). This document freezes an approved design; it does not reopen it.
 Base: rice 0.1.6 (private main `4e7f210`).
 
 Keywords MUST / MUST NOT / MAY are normative.
@@ -167,7 +168,9 @@ behaviour up the moment a session loads the new build.
   silent on its own internal error so that a rice bug never blocks a session.
 - I14 Existing bootstrap / repair / verify / uninstall behaviour MUST be
   unchanged, bit for bit, by this spec. (§14 narrows this: two read-only
-  preconditions move ahead of the first repo write; nothing else changes.)
+  preconditions move ahead of the first repo write, and on an update the
+  OWNER's work is saved after them and before it (I24); nothing else
+  changes.)
 - I15 Update model. Rice MUST NOT update, reinstall or reload itself, and
   MUST NOT carry an `/rice:update` verb. An update is: the platform installs
   the new plugin build (`claude plugin update rice@rice-bootstrap`, or a new
@@ -204,6 +207,20 @@ behaviour up the moment a session loads the new build.
   Environment pinned to `@release/<x.y.z>` stays on that release until the
   OWNER changes the pin, that unpinned is the default and follows the latest
   release, and how a repo is brought up to date (I15).
+- I24 Save before an update (RICE-UPDATE-PRESAVE-001). When bootstrap finds
+  the repo finalized by an older rice than the running build, and only after
+  I16 and I17 pass, it MUST save the OWNER's work before its first write:
+  `git add -A` (`.gitignore` applies), a commit when that staged anything,
+  then a plain push of the current branch, unpushed commits included, to
+  its upstream — or, with none, to `origin` under the branch's own name,
+  setting it as the upstream. The OWNER running `/rice:bootstrap` to update
+  is the authorization; nothing is asked. A first install, a same-version
+  re-run, a newer or malformed repo, and the Stop continuation save nothing.
+  Any failing step (detached HEAD, add, commit, push) stops the update with
+  nothing of rice's written; the work stays in the tree (index restored
+  when the commit fails) or in the local commit, and a re-run saves again.
+  Never a force push, history rewrite, branch deletion, stash, pull or
+  merge; no setting, state file or git framework is added.
 
 ---
 
@@ -606,7 +623,9 @@ are consumed from the first verifier report, before the first write:
 3. stop: install is not the canonical user-scope one (existing)
 4. stop: `plugin:build` not PASS (new consumption of an existing item)
 5. stop: `rice-version:not-newer` not PASS (new item, §14.3)
-6. OWNER choices → apply → Gate A with repair → waiting marker → Gate B
+6. on an update only: save the OWNER's work — add, commit, push (I24, §14.8);
+   any failure stops here, before rice's first write
+7. OWNER choices → apply → Gate A with repair → waiting marker → Gate B
    with stamp (unchanged)
 
 The Stop continuation keeps its two silent guards (not waiting; Matt not
@@ -678,8 +697,9 @@ only requires that the sole release branch named is the build's own).
 | Case | Outcome |
 | --- | --- |
 | old plugin, newer repo | blocked before any write (14.3); context silent |
-| new plugin, older repo | context line; re-run bootstrap ⇒ FINAL-VERIFIED new |
-| same version | idempotent re-run, no questions, silent |
+| new plugin, older repo | context line; re-run bootstrap ⇒ work saved (I24) ⇒ FINAL-VERIFIED new |
+| update, save fails (commit or push) | blocked before rice's first write; the work stays in the tree or the local commit; re-run saves again |
+| same version | idempotent re-run, no questions, silent; the OWNER's work-in-progress is not committed |
 | no rice-version | not compared; silent (fresh or waiting repo) |
 | malformed rice-version | NOT_VERIFIED ⇒ blocked before any write; silent |
 | plugin updated, not reloaded | old hooks run; `plugin:build` FAIL ⇒ both entry points block before any write |
@@ -696,6 +716,25 @@ tooling; an uninstall by an older build of a repo finalized by a newer one
 (no repo file was added since 0.1.6, so there is nothing newer to subtract
 yet); prerelease or build-metadata version formats; any change to the
 release model.
+
+### 14.8 Save before an update (I24)
+
+Lives in the lifecycle engine (`rice.py`), between the preconditions and the
+first write, using only native git through the archive sync's existing
+helpers. The steps, each stopping the update on failure:
+
+1. `version_order` says older → newer; otherwise nothing happens.
+2. The current branch (detached HEAD stops).
+3. `git add -A`; when something is staged, `git commit -m "rice: save work
+   before updating rice <old> -> <new>"` (a failed commit unstages again).
+4. When the branch has unpushed commits (or no upstream yet): `git push
+   <remote> HEAD:<upstream branch>`, or `git push -u origin
+   HEAD:refs/heads/<branch>` for a branch never pushed.
+
+The OWNER sees one line before the usual directive, naming the commit and
+the push. The agent's own commit after FINAL-VERIFIED stays as it was:
+rice's paths by name, never `git add -A` — on an update, nothing else is
+left by then.
 
 ---
 

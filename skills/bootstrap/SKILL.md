@@ -45,6 +45,13 @@ python3 "<plugin root>/scripts/rice.py" bootstrap <repo_root> \
 Run nothing else before it: no repo analysis, no hand edits, no probing
 commands.
 
+On an update (this repo set up by an older rice), the command itself first
+commits every change in the working tree (`.gitignore` applies) and pushes
+the current branch, unpushed commits included: the OWNER running this skill
+to update is their go-ahead, so ask nothing. Do not stage, commit, stash or
+push anything yourself before it. If saving fails, the command stops with
+nothing of rice's written; pass its words on.
+
 ## 3 — Pass its words on
 
 The output ends with a block marked

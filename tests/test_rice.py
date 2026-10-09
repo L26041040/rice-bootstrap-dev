@@ -258,6 +258,198 @@ def _entries(*pairs):
     return probe
 
 
+class GitLifecycleBase(LifecycleBase):
+    """A real git work tree with a bare `origin` it tracks; the harness's own
+    state (git-deny evidence) lives outside the tree."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name).resolve()
+        self.root, self.origin = tmp / "work", tmp / "origin.git"
+        self._env = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(tmp / "cfg")})
+        self._env.start()
+        _git_denied_transcript(self.root)
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], check=True)
+        self.root.mkdir(exist_ok=True)
+        for args in (("init", "-q", "-b", "main"), ("config", "user.email", "o@example.com"),
+                     ("config", "user.name", "OWNER"), ("remote", "add", "origin", str(self.origin))):
+            self.git(*args)
+        (self.root / "README.md").write_text("project\n", encoding="utf-8")
+        (self.root / ".gitignore").write_text("*.log\n", encoding="utf-8")
+        self.git("add", "-A"); self.git("commit", "-q", "-m", "init"); self.git("push", "-q", "-u", "origin", "main")
+
+    def git(self, *args) -> str:
+        r = subprocess.run(["git", "-C", str(self.root), *args], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, f"git {args}: {r.stderr}")
+        return r.stdout.strip()
+
+    def origin_head(self, branch="main") -> str:
+        r = subprocess.run(["git", "-C", str(self.origin), "rev-parse", f"refs/heads/{branch}"],
+                           capture_output=True, text=True)
+        return r.stdout.strip()
+
+    def finalized_by_an_older_rice(self):
+        """Bootstrapped, finalized, committed and pushed -- then stamped as an
+        older build's, the way a repo looks when a new rice arrives."""
+        _matt_artifacts(self.root)
+        self.assertTrue(self.bootstrap().ok)
+        (self.root / ".claude" / "rice.md").write_text("an older build's rules\n", encoding="utf-8")
+        self.version_file.write_text("0.0.1\n", encoding="utf-8")
+        self.git("add", "-A"); self.git("commit", "-q", "-m", "rice 0.0.1"); self.git("push", "-q")
+
+    def owner_wip(self):
+        (self.root / "README.md").write_text("project\nhalf-done edit\n", encoding="utf-8")
+        (self.root / "notes.md").write_text("new file\n", encoding="utf-8")
+        (self.root / "debug.log").write_text("ignored\n", encoding="utf-8")
+
+
+class TestAnUpdateSavesTheWorkFirst(GitLifecycleBase):
+    """RICE-UPDATE-PRESAVE-001: the OWNER running /rice:bootstrap to update is
+    their authorization to commit and push everything first -- only on a real
+    update (older -> newer), only after this session may change the repo at
+    all, and a failure stops the update with nothing of rice's written."""
+
+    def test_a_dirty_repo_is_committed_and_pushed_before_rice_writes(self):
+        self.finalized_by_an_older_rice()
+        before = self.git("rev-parse", "HEAD")
+        self.owner_wip()
+        outcome = rice.bootstrap(self.root, **PROBES)  # no answers: an update asks nothing
+        self.assertEqual(outcome.stage, "finalized", outcome.lines)
+        saved = self.git("rev-parse", "HEAD")  # rice's own changes are the agent's to commit, after
+        self.assertEqual(self.git("rev-parse", f"{saved}^"), before)
+        files = set(self.git("show", "--name-only", "--format=", saved).split())
+        self.assertEqual(files, {"README.md", "notes.md"})                 # .gitignore respected
+        self.assertEqual(self.git("show", f"{saved}:.claude/rice.md"), "an older build's rules")  # before rice
+        self.assertEqual(self.origin_head(), saved)
+        self.assertEqual((self.root / ".claude" / "rice.md").read_text(encoding="utf-8"),
+                         reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
+        self.assertIn(saved[:7], "\n".join(outcome.directive))
+        self.assertIn("debug.log", self.git("status", "--short", "--ignored"))  # never staged
+
+    def test_an_older_finalized_repo_is_brought_up_to_date_asking_nothing(self):
+        self.finalized_by_an_older_rice()
+        outcome = rice.bootstrap(self.root, **PROBES)  # no OWNER answers passed
+        self.assertTrue(outcome.ok, outcome.lines)
+        self.assertEqual(outcome.stage, "finalized")
+        self.assertEqual(self.version_file.read_text().strip(), evidence.build_version())
+        self.assertEqual((self.root / ".claude" / "rice.md").read_text(encoding="utf-8"),
+                         reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
+
+    def test_a_clean_repo_in_sync_gets_no_commit(self):
+        self.finalized_by_an_older_rice()
+        before = self.git("rev-parse", "HEAD")
+        outcome = rice.bootstrap(self.root, **PROBES)
+        self.assertEqual(outcome.stage, "finalized", outcome.lines)
+        self.assertEqual(self.git("rev-parse", "HEAD"), before)
+        self.assertEqual(self.origin_head(), before)
+
+    def test_unpushed_commits_are_pushed(self):
+        self.finalized_by_an_older_rice()
+        (self.root / "feature.py").write_text("x = 1\n", encoding="utf-8")
+        self.git("add", "feature.py"); self.git("commit", "-q", "-m", "local work")
+        local = self.git("rev-parse", "HEAD")
+        outcome = rice.bootstrap(self.root, **PROBES)
+        self.assertEqual(outcome.stage, "finalized", outcome.lines)
+        self.assertEqual(self.git("rev-parse", "HEAD"), local)   # nothing new to commit
+        self.assertEqual(self.origin_head(), local)
+
+    def test_a_branch_without_an_upstream_is_published_under_its_own_name(self):
+        self.finalized_by_an_older_rice()
+        self.git("checkout", "-q", "-b", "claude/session-x")   # a platform session branch, never pushed
+        outcome = rice.bootstrap(self.root, **PROBES)
+        self.assertEqual(outcome.stage, "finalized", outcome.lines)
+        self.assertEqual(self.origin_head("claude/session-x"), self.git("rev-parse", "HEAD"))
+        self.assertEqual(self.git("rev-parse", "--abbrev-ref", "@{upstream}"), "origin/claude/session-x")
+
+    def _refused_with_nothing_of_rices_written(self, outcome):
+        self.assertEqual(outcome.stage, "blocked")
+        self.assertTrue(outcome.blocked)
+        self.assertEqual((self.root / ".claude" / "rice.md").read_text(encoding="utf-8"), "an older build's rules\n")
+        self.assertEqual(self.version_file.read_text(encoding="utf-8"), "0.0.1\n")
+        self.assertIn("nothing of rice's was written", "\n".join(outcome.directive))
+
+    def test_a_failed_push_stops_the_update_and_keeps_the_work(self):
+        self.finalized_by_an_older_rice()
+        hook = self.origin / "hooks" / "pre-receive"
+        hook.write_text("#!/bin/sh\necho rejected by origin >&2\nexit 1\n"); hook.chmod(0o755)
+        self.owner_wip()
+        outcome = rice.bootstrap(self.root, **PROBES)
+        self._refused_with_nothing_of_rices_written(outcome)
+        self.assertIn("rejected by origin", "\n".join(outcome.directive))
+        self.assertEqual(self.git("show", "HEAD:notes.md"), "new file")  # kept, in a local commit
+        self.assertEqual(self.git("status", "--short"), "")
+        hook.unlink()                                       # the OWNER fixes origin and re-runs
+        again = rice.bootstrap(self.root, **PROBES)
+        self.assertEqual(again.stage, "finalized", again.lines)
+        self.assertEqual(self.origin_head(), self.git("rev-parse", "HEAD"))
+
+    def test_a_failed_commit_stops_the_update_and_leaves_the_tree_as_it_was(self):
+        self.finalized_by_an_older_rice()
+        hook = self.root / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\necho lint failed >&2\nexit 1\n"); hook.chmod(0o755)
+        self.owner_wip()
+        before = self.git("rev-parse", "HEAD")
+        outcome = rice.bootstrap(self.root, **PROBES)
+        self._refused_with_nothing_of_rices_written(outcome)
+        self.assertIn("lint failed", "\n".join(outcome.directive))
+        self.assertEqual(self.git("rev-parse", "HEAD"), before)
+        self.assertEqual(self.git("diff", "--cached", "--name-only"), "")   # nothing left staged
+        self.assertEqual(self.git("status", "--porcelain", "README.md", "notes.md").splitlines(),
+                         ["M README.md", "?? notes.md"])                       # first line's space is stripped
+
+    def test_a_detached_head_stops_the_update(self):
+        self.finalized_by_an_older_rice()
+        self.git("checkout", "-q", "--detach")
+        self._refused_with_nothing_of_rices_written(rice.bootstrap(self.root, **PROBES))
+
+    def test_a_first_install_saves_nothing(self):
+        self.owner_wip()
+        before = self.git("rev-parse", "HEAD")
+        self.bootstrap()
+        self.assertEqual(self.git("rev-parse", "HEAD"), before)
+        self.assertIn("?? notes.md", self.git("status", "--short"))
+
+    def test_a_same_version_re_run_saves_nothing(self):
+        _matt_artifacts(self.root)
+        self.assertTrue(self.bootstrap().ok)
+        self.git("add", "-A"); self.git("commit", "-q", "-m", "rice"); self.git("push", "-q")
+        self.owner_wip()
+        before = self.git("rev-parse", "HEAD")
+        self.assertEqual(rice.bootstrap(self.root, **PROBES).stage, "finalized")
+        self.assertEqual(self.git("rev-parse", "HEAD"), before)
+        self.assertIn("?? notes.md", self.git("status", "--short"))
+
+    def _refused_before_any_save(self, outcome, before):
+        self.assertTrue(outcome.blocked)
+        self.assertEqual(self.git("rev-parse", "HEAD"), before)
+        self.assertEqual(self.origin_head(), before)
+        self.assertIn("?? notes.md", self.git("status", "--short"))
+
+    def test_a_newer_repo_is_refused_before_any_save(self):
+        self.finalized_by_an_older_rice()
+        self.version_file.write_text("9.9.9\n", encoding="utf-8")
+        self.git("commit", "-q", "-am", "rice 9.9.9"); self.git("push", "-q")
+        self.owner_wip()
+        self._refused_before_any_save(rice.bootstrap(self.root, **PROBES), self.git("rev-parse", "HEAD"))
+
+    def test_a_session_not_running_the_installed_build_is_refused_before_any_save(self):
+        self.finalized_by_an_older_rice()
+        self.owner_wip()
+        before = self.git("rev-parse", "HEAD")
+        outcome = rice.bootstrap(self.root, rtk_probe=_ok_rtk, plugin_probe=_entries(("user", "9.9.9")))
+        self._refused_before_any_save(outcome, before)
+
+    def test_the_skill_leaves_the_save_to_the_command(self):
+        skill = (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertRegex(skill, r"(?is)update.*commits\s+every\s+change.*pushes")
+        self.assertRegex(skill, r"(?is)do\s+not\s+stage,\s+commit,\s+stash\s+or\s+push")
+
+    def test_the_save_never_forces_or_rewrites(self):
+        src = (REPO / "scripts" / "rice.py").read_text(encoding="utf-8")
+        for flag in ("--force", '"-f"', "--amend", "reset --hard", '"rebase"', '"--delete"'):
+            self.assertNotIn(flag, src)
+
+
 class TestBuildPreconditions(LifecycleBase):
     """RICE-SPEC-001 I16: neither entry point writes anything to a repo
     unless this session runs the installed build and is not older than the
@@ -344,16 +536,6 @@ class TestBuildPreconditions(LifecycleBase):
         self.assertIn("nothing was written", msg)
         self.assertEqual(_tree(self.root), before)
 
-    def test_an_older_finalized_repo_is_brought_up_to_date_asking_nothing(self):
-        self._finalized()
-        (self.root / ".claude" / "rice.md").write_text("an older build's rules\n", encoding="utf-8")
-        self.version_file.write_text("0.0.1\n", encoding="utf-8")
-        outcome = rice.bootstrap(self.root, **PROBES)  # no OWNER answers passed
-        self.assertTrue(outcome.ok, outcome.lines)
-        self.assertEqual(outcome.stage, "finalized")
-        self.assertEqual(self.version_file.read_text().strip(), evidence.build_version())
-        self.assertEqual((self.root / ".claude" / "rice.md").read_text(encoding="utf-8"),
-                         reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
 
 
 class TestTheOwnerLearnsWhenTheRulesLoad(LifecycleBase):

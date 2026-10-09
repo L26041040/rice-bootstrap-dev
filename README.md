@@ -38,8 +38,11 @@ to `/mattpocock-skills:setup-matt-pocock-skills`; after that setup, rice
 finishes on its own and reports `FINAL-VERIFIED <version>`, recorded in
 `.claude/rice-version`. Re-running is safe. When rice itself has been
 updated, start a new session (or run `/reload-plugins`) and run
-`/rice:bootstrap` once in each repo: it asks nothing and brings the repo up
-to date. Rice's working rules take effect after `/clear` or in a new session.
+`/rice:bootstrap` once in each repo: it asks nothing, first commits and
+pushes everything in your working tree (running it is your go-ahead;
+`.gitignore` applies), then brings the repo up to date. If that save fails,
+nothing is updated. Rice's working rules take effect after `/clear` or in a
+new session.
 
 Work happens on the session's branch; when you say 「合併回主枝」 the agent
 fast-forwards it onto the default branch, proves it landed, then removes

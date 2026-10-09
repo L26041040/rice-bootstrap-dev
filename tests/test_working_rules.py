@@ -99,6 +99,8 @@ class TestReadme(unittest.TestCase):
         bootstrap = _section(readme, "## Bootstrap a repo")
         self.assertRegex(bootstrap, r"(?is)updated.*new session.*/rice:bootstrap")
         self.assertIn("asks nothing", bootstrap)
+        # RICE-UPDATE-PRESAVE-001: running it to update is the go-ahead to save first
+        self.assertRegex(bootstrap, r"(?is)commits\s+and\s+pushes.*\.gitignore")
         install = _section(readme, "## Install once")
         self.assertRegex(install, r"(?is)pinned.*stays on that release until you change the pin")
         self.assertRegex(install, r"(?is)unpinned.*latest")

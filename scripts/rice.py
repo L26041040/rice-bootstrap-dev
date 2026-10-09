@@ -220,7 +220,9 @@ def bootstrap(repo_root, *, archive=None, output_style=UNSET, **probes) -> Outco
     """A fresh repo, up to (and when possible past) the Matt hand-off.
 
     Rice must be loaded before any of this means anything, so that is asked
-    first and nothing is written when it is not. Then the OWNER's answers are
+    first and nothing is written when it is not. On an update the OWNER's
+    work is then saved -- committed and pushed -- before rice's first write
+    (I24). Then the OWNER's answers are
     written once if absent, rice-owned state is reconciled, and Gate A goes
     through the canonical flow. On a Gate A pass the repo enters the pending
     state -- and if Matt's artifacts are already present (a re-bootstrap, or
@@ -247,7 +249,19 @@ def bootstrap(repo_root, *, archive=None, output_style=UNSET, **probes) -> Outco
     stop = _precondition_stop(loaded)
     if stop is not None:
         return stop
+    # ... and an update saves the OWNER's work before rice writes (I24)
+    stop, saved = _save_before_update(repo_root)
+    if stop is not None:
+        return stop
+    outcome = _configure(repo_root, archive=archive, output_style=output_style, **probes)
+    if saved:
+        outcome.directive = [*saved, "", *outcome.directive]
+    return outcome
 
+
+def _configure(repo_root: Path, *, archive, output_style, **probes) -> Outcome:
+    """Bootstrap past its preconditions: the OWNER's answers, rice-owned
+    state, Gate A, and -- when Matt's artifacts are there -- Gate B."""
     reconcile.write_owner_choices(repo_root, archive=archive, output_style=output_style)
     reconcile.apply(repo_root)
 
@@ -265,6 +279,85 @@ def bootstrap(repo_root, *, archive=None, output_style=UNSET, **probes) -> Outco
         return final
     return Outcome(report=gate_a.report, repaired=gate_a.repaired, waiting_for_matt=True,
                    stage="waiting-for-matt", directive=_matt_handoff_directive(gate_a.report.verdict))
+
+
+# A push that can carry the OWNER's whole work-in-progress gets more time than
+# the archive sync's hook-budget push.
+SAVE_PUSH_TIMEOUT_SECONDS = 120
+
+
+def _save_before_update(repo_root: Path) -> tuple[Outcome | None, list[str]]:
+    """RICE-UPDATE-PRESAVE-001: on a real update -- this repo finalized by an
+    older rice than this build -- the OWNER running bootstrap is their
+    authorization to save everything first: `git add -A` (`.gitignore`
+    applies), a commit when that staged anything, then a plain push of the
+    current branch, unpushed commits included (a branch without an upstream
+    is published under its own name). First installs and same-version
+    re-runs save nothing. Called only once the preconditions passed, so a
+    session that may not change this repo never commits or pushes it either.
+
+    Returns (blocked outcome, []) when a step fails -- nothing of rice's is
+    written then, and the work stays in the tree or in the local commit --
+    else (None, the lines to show the OWNER)."""
+    recorded, build, order = verify.version_order(repo_root)
+    if order != -1:
+        return None, []
+    import archive_hook  # local: the archive sync's git helpers, as evidence and the guard use them
+
+    def git(*args, **kw):
+        return archive_hook.run(["git", "-C", str(repo_root), *args], **kw)
+
+    def stop(step: str, why: str, kept: str):
+        return Outcome(stage="blocked", blocked=True, directive=[
+            f"rice did not update this repo ({recorded} -> {build}): saving your work first failed,"
+            " so nothing of rice's was written.",
+            f"  - {step}: {why}",
+            kept,
+            "",
+            "Report this to the OWNER and stop; once it is fixed, /rice:bootstrap saves and updates again.",
+        ]), []
+
+    def why(r) -> str:
+        """Git's own words: its last few lines carry the reason (a remote's
+        rejection comes before the final "failed to push")."""
+        out = [l.strip() for l in f"{r.stdout}\n{r.stderr}".splitlines() if l.strip()]
+        return " / ".join(out[-4:]) if out else f"exit {r.returncode}"
+
+    as_left = "Your changes are as you left them."
+    branch = archive_hook._current_branch(repo_root)
+    if not branch:
+        return stop("the current branch", "HEAD is not on a branch (detached, or not a git repository)", as_left)
+    remote = git("config", "--get", f"branch.{branch}.remote").stdout.strip()
+    target = git("config", "--get", f"branch.{branch}.merge").stdout.strip()
+    tracked = bool(remote and target)
+    remote, target = (remote, target) if tracked else ("origin", f"refs/heads/{branch}")
+
+    r = git("add", "-A")
+    if r.returncode != 0:
+        git("reset", "-q")
+        return stop("git add -A", why(r), as_left)
+    committed = git("diff", "--cached", "--quiet").returncode == 1
+    if committed:
+        r = git("commit", "-q", "-m", f"rice: save work before updating rice {recorded} -> {build}")
+        if r.returncode != 0:
+            git("reset", "-q")  # unstage only: the files themselves are untouched
+            return stop("git commit", why(r), "Your changes are still in the working tree, unstaged.")
+    sha = git("rev-parse", "--short", "HEAD").stdout.strip()
+    ahead = git("rev-list", "--count", "@{upstream}..HEAD") if tracked else None
+    if ahead is None or ahead.returncode != 0 or ahead.stdout.strip() != "0":
+        push = ["push", *(() if tracked else ("-u",)), remote, f"HEAD:{target}"]
+        r = git(*push, timeout=SAVE_PUSH_TIMEOUT_SECONDS)
+        if r.returncode != 0:
+            kept = (f"Your changes are committed locally as {sha}, not pushed." if committed
+                    else "Your commits are still here, not pushed.")
+            return stop("git " + " ".join(push), why(r), kept)
+        pushed = f"pushed {branch} to {remote}"
+    else:
+        pushed = ""
+    if not (committed or pushed):
+        return None, []
+    did = " and ".join(x for x in (f"committed your changes as {sha}" if committed else "", pushed) if x)
+    return None, [f"Before updating rice {recorded} -> {build}: {did}."]
 
 
 def continue_after_matt(repo_root, **probes) -> Outcome | None:

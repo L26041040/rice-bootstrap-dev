@@ -349,13 +349,20 @@ def _tools(base: Path) -> Path:
 
 
 def _seed(sb: Sandbox, shape: str) -> None:
+    """The project, committed and pushed to a bare `origin` it tracks -- as a
+    real repo is, so the candidate's update can save and push the work first
+    (RICE-UPDATE-PRESAVE-001)."""
     for rel, text in PROJECTS[shape]["files"].items():
         p = sb.work / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text, encoding="utf-8")
+    origin = sb.work.parent / "origin.git"
+    _run(["git", "init", "-q", "--bare", str(origin)])
     sb.git("init", "-q")
     sb.git("add", "-A")
     sb.git("commit", "-q", "-m", "project")
+    sb.git("remote", "add", "origin", str(origin))
+    sb.git("push", "-q", "-u", "origin", "HEAD")
 
 
 def _matt_setup(sb: Sandbox) -> None:

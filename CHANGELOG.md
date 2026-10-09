@@ -45,6 +45,20 @@ install, and uninstall leaves only the project.
   `false`, or the enablement of a same-named marketplace that is not rice's,
   is left alone.
 
+Updating saves your work first (RICE-UPDATE-PRESAVE-001):
+
+- **An update commits and pushes first.** When `/rice:bootstrap` finds a
+  repo set up by an older rice, it commits every change in the working tree
+  (`git add -A`, `.gitignore` respected) and pushes the current branch,
+  unpushed commits included, before writing anything of its own. Running it
+  is the OWNER's go-ahead; nothing is asked. It happens only after the build
+  and anti-downgrade checks pass. A first install, a same-version re-run and
+  the Stop continuation save nothing.
+- **A failed save stops the update.** If the commit or the push fails,
+  nothing of rice's is written and the work stays in the tree or in the local
+  commit; re-running saves again. Never a force push, rewrite or branch
+  deletion.
+
 What real sessions showed (RICE-FINAL-UX-REVIEW-001):
 
 - **A re-run asks nothing.** `/rice:bootstrap` asks only the choices
