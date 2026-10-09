@@ -268,7 +268,7 @@ def _output_style_choice_item(repo_root: Path, current_settings: dict, plugin_pr
     """MATCHES: whatever `outputStyle` the OWNER chose resolves to a real
     style. Absent key = Claude's native default (PASS). A value that points
     at nothing is FAIL -- rice never writes or 'fixes' this key."""
-    value = current_settings.get("outputStyle") if isinstance(current_settings, dict) else None
+    value = current_settings.get(settings_template.STYLE_KEY) if isinstance(current_settings, dict) else None
     ok, detail = output_styles.resolve(value, repo_root, plugin_probe,
                                        self_plugin=(settings_template.PLUGIN_NAME, PLUGIN_ROOT))
     return ItemResult("output-style:choice", "PASS" if ok else "FAIL", detail, kind=MATCHES)

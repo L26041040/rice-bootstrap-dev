@@ -214,7 +214,7 @@ class TestStalenessLine(unittest.TestCase):
         return self._run(recorded, build)[0]
 
     def test_an_older_repo_gets_the_helper_line_then_one_actionable_line(self):
-        lines, shown = self._run("0.1.6")
+        lines = self._lines("0.1.6")
         self.assertEqual(len(lines), 2, lines)
         self.assertIn(str(session_context.HELPER), lines[0])
         for word in ("0.1.6", "0.1.7", "/rice:bootstrap"):
@@ -222,7 +222,7 @@ class TestStalenessLine(unittest.TestCase):
         self.assertIn("do not run it yourself", lines[1])
         self.assertEqual(len(self._lines("0.1.9", build="0.1.10")), 2)  # numeric, not lexical
 
-    def test_the_owner_is_shown_the_staleness_line_by_claude_code_itself(self):
+    def test_a_stale_repo_puts_the_line_in_system_message(self):
         """RICE-FINAL-UX-REVIEW-001: in real sessions a context-only line --
         addressed to no one, then to the agent -- never reached the OWNER.
         `systemMessage` is shown in the session itself (a real session showed

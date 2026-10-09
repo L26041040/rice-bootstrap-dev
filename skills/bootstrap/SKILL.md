@@ -17,9 +17,8 @@ python3 "<plugin root>/scripts/rice.py" questions <repo_root>
 
 It prints the choices this repo has not answered yet, one per line
 (`archive`, `output-style`). Ask exactly those, with the native choice UI
-(`AskUserQuestion`), batched into one prompt. It prints nothing on a repo
-rice already configured (a re-run or an update): ask nothing, and run step 2
-with no flags.
+(`AskUserQuestion`), batched into one prompt. If it prints nothing, ask
+nothing and run step 2 with no flags.
 
 - **Session archive** — Enabled (recommended) → `--archive 1`; Disabled →
   `--archive 0`. A repo with its own `/clear` archive hook: the OWNER removes

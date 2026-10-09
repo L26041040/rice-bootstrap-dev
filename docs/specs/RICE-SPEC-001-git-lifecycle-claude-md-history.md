@@ -6,7 +6,8 @@ bootstrap completion instead of carrying a Matt exception; patched by
 RICE-UPDATE-SPEC-001: update safety, §14, I15–I19, from RICE-UPDATE-RESEARCH-001
 and RICE-UPDATE-GRILL-001; and by RICE-UPGRADE-MATRIX-001 / RICE-UPGRADE-PATH-001:
 upgrade compatibility, §15, I20–I23; corrected by RICE-OWNERSHIP-FIX-001; and by
-RICE-FINAL-UX-REVIEW-001: I15, I18 and §14.4–14.5 as real sessions showed them). This document freezes an approved design; it does not reopen it.
+RICE-FINAL-UX-REVIEW-001: I15, I18 and §14.4–14.5 as real sessions showed them, evidence in
+`docs/research/RICE-FINAL-UX-REVIEW-001-real-sessions.md`). This document freezes an approved design; it does not reopen it.
 Base: rice 0.1.6 (private main `4e7f210`).
 
 Keywords MUST / MUST NOT / MAY are normative.

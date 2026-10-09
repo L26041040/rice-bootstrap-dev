@@ -61,19 +61,18 @@ def main() -> int:
     try:
         repo_root = _cwd()
         if HELPER.exists() and reconcile.rice_installed_here(repo_root):
-            helper = context(repo_root)
+            helper_line = context(repo_root)
             try:
                 line = staleness(repo_root)
             except Exception:  # noqa: BLE001 - never cost the helper line
                 line = None
             if not line:
-                print(helper)
+                print(helper_line)
             else:
-                told = f"{line} (The OWNER is shown this line; the command is theirs -- do not run it yourself.)"
+                agent_line = f"{line} (The OWNER is shown this line; the command is theirs -- do not run it yourself.)"
                 print(json.dumps({"systemMessage": line,
                                   "hookSpecificOutput": {"hookEventName": "SessionStart",
-                                                         "additionalContext": f"{helper}\n{told}"}},
-                                 ensure_ascii=False))
+                                                         "additionalContext": f"{helper_line}\n{agent_line}"}}))
     except Exception:  # noqa: BLE001 - never disturb a session
         pass
     return 0

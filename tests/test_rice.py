@@ -422,6 +422,15 @@ class TestTheOwnerIsAskedOnlyWhatIsUnanswered(LifecycleBase):
         self.bootstrap(archive=False, output_style=None)
         self.assertEqual(rice.questions(self.root), [])
 
+    def test_a_claude_default_answer_survives_a_re_run_that_passes_a_style(self):
+        """One predicate answers "is this answered?" for asking and writing
+        alike: the absent key of a Claude-default answer is never filled."""
+        self.bootstrap(archive=False, output_style=None)
+        self.bootstrap(archive=True, output_style="rice:老弟")
+        s = json.loads((self.root / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        self.assertNotIn("outputStyle", s)
+        self.assertEqual(s["env"]["RICE_SESSION_ARCHIVE"], "0")
+
     def test_a_projects_own_output_style_is_never_asked_about(self):
         (self.root / ".claude").mkdir(parents=True, exist_ok=True)
         (self.root / ".claude" / "settings.json").write_text(json.dumps({"outputStyle": "Explanatory"}),
@@ -797,7 +806,7 @@ class TestVerifierSoleAuthority(LifecycleBase):
 class TestAdaptersCarryNoSteps(unittest.TestCase):
     """The success criterion of RICE-BOOTSTRAP-044/-044B: the three adapters
     -- the bootstrap skill, the update skill, the Stop hook -- collect input,
-    run one verb, and present what comes back. None of them may contain a
+    run the engine's verbs, and present what comes back. None of them may contain a
     lifecycle implementation detail, because a decision written in two places
     is a decision that will drift."""
 

@@ -91,8 +91,11 @@ RICE_STYLE = "rice:老弟"  # the plugin's bundled style, namespaced <plugin>:<n
 # permissions key stay project-owned.
 DENY_PATH = "permissions.deny"
 
+ARCHIVE_KEY = "env.RICE_SESSION_ARCHIVE"
+STYLE_KEY = "outputStyle"
+
 OWNER_DEFINED_KEYS = {
-    "env.RICE_SESSION_ARCHIVE",
+    ARCHIVE_KEY,
 }
 
 # RICE-BOOTSTRAP-023: the output style is the OWNER's choice, made once at
@@ -102,7 +105,7 @@ OWNER_DEFINED_KEYS = {
 # actually resolves to an existing style (scripts/output_styles.py);
 # reconcile never writes or reasserts it, in any mode.
 OWNER_CHOICE_KEYS = {
-    "outputStyle",
+    STYLE_KEY,
 }
 
 # Destructive / history-rewriting git operations. Bash rules match the whole
@@ -178,5 +181,5 @@ def desired_settings(archive_default: bool, output_style: str | None = RICE_STYL
         },
     }
     if output_style is not None:
-        settings["outputStyle"] = output_style
+        settings[STYLE_KEY] = output_style
     return settings

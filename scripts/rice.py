@@ -7,7 +7,7 @@ Four verbs, and nothing outside this module needs to know more than these:
     bootstrap  configure this repo from scratch, up to the Matt hand-off
     continue   finish a bootstrap after the OWNER's Matt setup (Stop hook)
     styles     the output-style values the OWNER may choose from
-    questions  the OWNER choices still unanswered here (none on a re-run)
+    questions  the OWNER choices still unanswered here (none once answered)
 
 There is no update verb (RICE-FINAL-001). Rice has exactly two repo
 lifecycles -- bootstrap and uninstall -- and neither ever asks the OWNER to
@@ -15,7 +15,8 @@ migrate a ref or reason about which build is "latest". An update is the
 platform's: a new session (or /reload-plugins) loads it, and one re-run of
 bootstrap brings a repo up to date.
 
-Every verb runs the same canonical flow, which lives here and only here:
+Every lifecycle verb runs the same canonical flow, which lives here and
+only here:
 
     normal path -> verify -> PASS: done
                           -> FAIL: deterministic repair -> verify again
@@ -39,9 +40,9 @@ and every decision that follows from it (RICE-BOOTSTRAP-044/-044B):
 
 Each verb returns, besides the verifier's word, a `directive`: the exact
 text the OWNER must see. The skills and the Stop hook are adapters -- they
-collect answers, run one verb, and present the directive verbatim. They
-carry no steps, no branching on gates, and no lifecycle knowledge of their
-own.
+collect answers, run the engine's verbs, and present the directive verbatim.
+They carry no steps, no branching on gates, and no lifecycle knowledge of
+their own.
 """
 import argparse
 import sys
@@ -206,12 +207,12 @@ def styles(repo_root, **probes) -> list[dict]:
 
 
 # the bootstrap flag each unanswered OWNER-defined key is asked for under
-_QUESTION_FLAGS = {"env.RICE_SESSION_ARCHIVE": "archive", "outputStyle": "output-style"}
+_QUESTION_FLAGS = {settings_template.ARCHIVE_KEY: "archive", settings_template.STYLE_KEY: "output-style"}
 
 
 def questions(repo_root) -> list[str]:
     """The OWNER's Step 1 choices bootstrap would still write, by flag name:
-    both on a fresh repo, none on a re-run (RICE-FINAL-UX-REVIEW-001)."""
+    both on a fresh repo, none once answered (RICE-FINAL-UX-REVIEW-001)."""
     return [_QUESTION_FLAGS[k] for k in reconcile.unanswered_owner_choices(repo_root)]
 
 
@@ -330,7 +331,7 @@ COMMIT_ONLY = ("stage only " + ", ".join(f"`{p}`" for p in _COMMIT_PATHS) + ", b
 
 # CLAUDE.md imports `.claude/rice.md` when a session starts, so the session
 # that bootstrapped keeps the rules it started with (RICE-FINAL-UX-REVIEW-001)
-RULES_LOAD = ("Rice's working rules (`.claude/rice.md`) load when a session starts: this session keeps"
+WHEN_RULES_LOAD = ("Rice's working rules (`.claude/rice.md`) load when a session starts: this session keeps"
               " the ones it started with, and the current rules apply after `/clear` or in a new session.")
 
 
@@ -342,7 +343,7 @@ def _finalized_directive(verdict: str) -> list[str]:
         f" changes ({COMMIT_ONLY}) and quote that line verbatim. This repo needs no Matt"
         " hand-off: the setup is already there.",
         "",
-        RULES_LOAD,
+        WHEN_RULES_LOAD,
     ]
 
 
@@ -423,7 +424,7 @@ def continuation_message(repo_root, outcome: Outcome) -> str:
             f"rice: {outcome.verdict}. The verifier has stamped the verified-version file "
             f"and cleared the pending marker.{repaired} Commit and push the bootstrap, "
             f"Matt and finalization changes ({COMMIT_ONLY}), then report `{outcome.verdict}` "
-            f"to the OWNER, adding: {RULES_LOAD}"
+            f"to the OWNER, adding: {WHEN_RULES_LOAD}"
         )
     done = outcome.repaired
     repaired = "\n".join(f"  - {a}" for a in done.applied) if done and done.applied else "  - nothing was mechanically repairable"

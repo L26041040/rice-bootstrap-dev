@@ -483,19 +483,20 @@ def check_owned(repo_root) -> list[ItemResult]:
 UNSET = object()  # "the OWNER was not asked", as distinct from None
 
 
+def _answered(current: dict, key: str, installed: bool) -> bool:
+    """Has the OWNER answered `key`? A present value is an answer; so is an
+    absent `outputStyle` on a repo rice already configured -- Claude's
+    default, the one answer that leaves its key absent."""
+    return _get_path(current, key) is not _MISSING or (key == settings_template.STYLE_KEY and installed)
+
+
 def unanswered_owner_choices(repo_root) -> list[str]:
-    """The OWNER-defined keys `write_owner_choices` would still write -- the
-    only questions worth asking, since an answer to any other is dropped.
-    `outputStyle` may be absent BY ANSWER (Claude's default), so once rice is
-    installed here its absence is that answer, never a question."""
+    """The OWNER-defined keys still unanswered here: the only questions worth
+    asking, since `write_owner_choices` never writes an answered one."""
     repo_root = Path(repo_root)
-    current = _current_settings(repo_root)
-    keys = []
-    if _get_path(current, "env.RICE_SESSION_ARCHIVE") is _MISSING:
-        keys.append("env.RICE_SESSION_ARCHIVE")
-    if _get_path(current, "outputStyle") is _MISSING and not rice_installed_here(repo_root):
-        keys.append("outputStyle")
-    return keys
+    current, installed = _current_settings(repo_root), rice_installed_here(repo_root)
+    return [k for k in (settings_template.ARCHIVE_KEY, settings_template.STYLE_KEY)
+            if not _answered(current, k, installed)]
 
 
 def write_owner_choices(repo_root, *, archive=None, output_style=UNSET) -> list[ItemResult]:
@@ -511,16 +512,15 @@ def write_owner_choices(repo_root, *, archive=None, output_style=UNSET) -> list[
     key exactly as it is), None (the OWNER chose Claude's native default --
     the key stays absent, never a placeholder value), or a style name."""
     repo_root = Path(repo_root)
-    current = _current_settings(repo_root)
+    current, installed = _current_settings(repo_root), rice_installed_here(repo_root)
     items, wrote = [], False
-    wanted = [("env.RICE_SESSION_ARCHIVE", None if archive is None else ("1" if archive else "0"),
+    wanted = [(settings_template.ARCHIVE_KEY, None if archive is None else ("1" if archive else "0"),
                "not supplied; the key stays missing and the verifier will fail it")]
     if output_style is not UNSET:
         # the one key whose absence is itself a valid answer: Claude's native default
-        wanted.append(("outputStyle", output_style, "left absent by the OWNER's choice (Claude default)"))
+        wanted.append((settings_template.STYLE_KEY, output_style, "left absent by the OWNER's choice (Claude default)"))
     for key, value, absent_detail in wanted:
-        cur = _get_path(current, key)
-        if cur is not _MISSING:
+        if _answered(current, key, installed):
             items.append(ItemResult(f"settings:{key}", "noop", "owner-defined; already answered", kind=EXISTS))
         elif value is None:
             items.append(ItemResult(f"settings:{key}", "noop", absent_detail, kind=EXISTS))
@@ -581,8 +581,8 @@ def project_settings(repo_root, current: dict) -> dict:
             _set_path(out, DENY_PATH, kept)
         else:
             _del_path(out, DENY_PATH)
-    if _get_path(out, "outputStyle") == settings_template.RICE_STYLE:
-        _del_path(out, "outputStyle")
+    if _get_path(out, settings_template.STYLE_KEY) == settings_template.RICE_STYLE:
+        _del_path(out, settings_template.STYLE_KEY)
     return _prune_emptied(out, current)
 
 
