@@ -458,7 +458,7 @@ class TestTheOwnerIsAskedOnlyWhatIsUnanswered(LifecycleBase):
     def test_the_skill_asks_only_what_questions_prints(self):
         skill = (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn('scripts/rice.py" questions <repo_root>', skill)
-        self.assertRegex(skill, r"(?is)prints nothing.*ask nothing")
+        self.assertRegex(skill, r"(?is)prints\s+nothing.*ask\s+nothing")
 
 
 class TestTheSubagentModelIsTheProjects(LifecycleBase):
