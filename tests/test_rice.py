@@ -14,6 +14,7 @@ tests below pin that this module keeps none of it.
 Run: python3 -m unittest tests.test_rice -v
 """
 import contextlib
+import inspect
 import io
 import json
 import os
@@ -393,7 +394,7 @@ class TestAnUpdateSavesTheWorkFirst(GitLifecycleBase):
         self.assertEqual(self.git("rev-parse", "--short", "HEAD"), first)   # no second save commit
         self.assertIn(f"committed as {first}", "\n".join(outcome.directive))
         self.assertEqual(set(self.git("diff", "--name-only", "HEAD").split()),
-                         {".claude/rice.md", ".claude/rice-version"})       # left for rice's own commit
+                         {".claude/rice.md", verify.VERSION_FILE})          # left for rice's own commit
 
     def test_an_owners_edit_to_a_shared_file_is_saved_with_rices_entries_left_alone(self):
         self.finalized_by_an_older_rice()
@@ -563,15 +564,12 @@ class TestAnUpdateSavesTheWorkFirst(GitLifecycleBase):
         outcome = rice.bootstrap(self.root, rtk_probe=_ok_rtk, plugin_probe=_entries(("user", "9.9.9")))
         self._refused_before_any_save(outcome, before)
 
-    def test_the_skill_leaves_the_save_to_the_command(self):
-        skill = (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8")
-        self.assertRegex(skill, r"(?is)update.*commits\s+every\s+change.*pushes")
-        self.assertRegex(skill, r"(?is)do\s+not\s+stage,\s+commit,\s+stash\s+or\s+push")
-
     def test_the_save_never_forces_or_rewrites(self):
-        src = (REPO / "scripts" / "rice.py").read_text(encoding="utf-8")
-        for flag in ("--force", '"-f"', "--amend", '"--hard"', '"rebase"', '"--delete"', '"+', "'+"):
+        src = "".join(inspect.getsource(f) for f in (rice._save_before_update, rice._push_destination,
+                                                     rice._give_back_rices_writes, rice._git))
+        for flag in ("--force", '"-f"', "--amend", '"--hard"', '"rebase"', '"--delete"', "stash", "pull"):
             self.assertNotIn(flag, src)
+        self.assertIn('f"HEAD:refs/heads/{branch}"', src)   # the one refspec: never a `+` one
 
 
 class TestBuildPreconditions(LifecycleBase):
@@ -659,7 +657,6 @@ class TestBuildPreconditions(LifecycleBase):
         self.assertIn("plugin:build: MISSING", msg)
         self.assertIn("nothing was written", msg)
         self.assertEqual(_tree(self.root), before)
-
 
 
 class TestTheOwnerLearnsWhenTheRulesLoad(LifecycleBase):
@@ -1140,6 +1137,13 @@ class TestAdaptersCarryNoSteps(unittest.TestCase):
         self.assertNotIn('"git"', hook)
         self.assertIn("rice.py\" bootstrap", (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8"))
         self.assertIn("uninstall.py", (REPO / "skills" / "rice-uninstall" / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_the_bootstrap_skill_leaves_the_update_save_to_the_command(self):
+        """RICE-UPDATE-PRESAVE-001: the engine saves; the adapter only keeps
+        its hands off git until then."""
+        skill = (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertRegex(skill, r"(?is)do\s+not\s+stage,\s+commit,\s+stash\s+or\s+push")
+        self.assertNotIn("git add", skill)
 
     def test_the_bootstrap_skill_presents_the_engine_directive_verbatim(self):
         src = (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8")

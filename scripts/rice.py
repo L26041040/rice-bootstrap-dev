@@ -31,7 +31,9 @@ parse evidence, rebuild a verdict, or repair anything itself:
     repair     owns which failure identity maps to which lossless restore
 
 What this module owns instead is sequence -- which of those runs when --
-and every decision that follows from it (RICE-BOOTSTRAP-044/-044B):
+and every decision that follows from it (RICE-BOOTSTRAP-044/-044B), plus
+one step of its own on an update: saving the OWNER's work with git before
+rice's first write, and where that push goes (RICE-UPDATE-PRESAVE-001):
 
 - whether rice is even loaded here, and whether the install is the
   supported one;
@@ -223,8 +225,8 @@ def bootstrap(repo_root, *, archive=None, output_style=UNSET, **probes) -> Outco
     Rice must be loaded before any of this means anything, so that is asked
     first and nothing is written when it is not. On an update the OWNER's
     work is then saved -- committed and pushed -- before rice's first write
-    (I24). Then the OWNER's answers are
-    written once if absent, rice-owned state is reconciled, and Gate A goes
+    (I24). Then the OWNER's answers are written once if absent, rice-owned
+    state is reconciled, and Gate A goes
     through the canonical flow. On a Gate A pass the repo enters the pending
     state -- and if Matt's artifacts are already present (a re-bootstrap, or
     a repo that had them all along), final verification happens here and now
@@ -287,23 +289,71 @@ def _configure(repo_root: Path, *, archive, output_style, **probes) -> Outcome:
 # credential prompt no one can answer.
 SAVE_PUSH_TIMEOUT_SECONDS = 60
 
-# an operation in progress is the OWNER's to finish: saving would complete or lose it
-_IN_PROGRESS = (("MERGE_HEAD", "a merge"), ("CHERRY_PICK_HEAD", "a cherry-pick"), ("REVERT_HEAD", "a revert"),
-                ("rebase-merge", "a rebase"), ("rebase-apply", "a rebase or am"))
+# git operations left unfinished are the OWNER's: saving would complete or lose them
+_UNFINISHED_GIT_OPERATIONS = (("MERGE_HEAD", "a merge"), ("CHERRY_PICK_HEAD", "a cherry-pick"),
+                              ("REVERT_HEAD", "a revert"), ("rebase-merge", "a rebase"),
+                              ("rebase-apply", "a rebase or am"))
+
+
+def _git(repo_root: Path, *args, **kw):
+    import archive_hook  # local: the archive sync's git runner, as evidence uses its helpers
+    return archive_hook.run(["git", "-C", str(repo_root), *args], **kw)
+
+
+def _git_reason(r) -> str:
+    """Git's own words: its last lines carry the reason (a remote's rejection
+    comes before the final "failed to push"); hints are not it."""
+    out = [l.strip() for l in f"{r.stdout}\n{r.stderr}".splitlines()
+           if l.strip() and not l.strip().startswith("hint:")]
+    return " / ".join(out[-4:]) if out else f"exit {r.returncode}"
+
+
+def _push_destination(repo_root: Path, branch: str) -> tuple[str, bool, str]:
+    """(remote, tracked, refusal): where git itself would push `branch` --
+    `branch.<b>.pushRemote`, else `remote.pushDefault`, else its upstream's
+    remote, else `origin` -- whether it has an upstream, and why not to push
+    at all: an upstream of another name, which git's own push.default=simple
+    refuses too. The save pushes a branch only under its own name."""
+    def config(key: str) -> str:
+        return _git(repo_root, "config", "--get", key).stdout.strip()
+    upstream_remote, merge = config(f"branch.{branch}.remote"), config(f"branch.{branch}.merge")
+    remote = config(f"branch.{branch}.pushRemote") or config("remote.pushDefault") or upstream_remote or "origin"
+    tracked = bool(upstream_remote and merge)
+    refusal = ""
+    if tracked and remote == upstream_remote and merge != f"refs/heads/{branch}":
+        refusal = (f"its upstream is {upstream_remote}/{merge.removeprefix('refs/heads/')}, a branch of"
+                   " another name -- rice pushes a branch only under its own name")
+    return remote, tracked, refusal
+
+
+def _give_back_rices_writes(repo_root: Path, index: str) -> None:
+    """Rice's own writes from an earlier run of this same update -- a new
+    session's first run stops for the git-deny probe after writing -- are
+    rice's commit to make, not the OWNER's work: staged back to how the
+    OWNER's own index (`index`, a tree) had them."""
+    staged = _git(repo_root, "diff", "--cached", "--name-only", "-z").stdout.split("\0")
+    rices = [rel for rel in staged if rel in reconcile.RICE_WRITES
+             and reconcile.only_rices_change(repo_root, rel, _committed_text(repo_root, rel))]
+    if rices:
+        _git(repo_root, "restore", "--staged", f"--source={index}", "--", *rices)
+
+
+def _committed_text(repo_root: Path, rel: str) -> str | None:
+    """`rel` as HEAD has it, None when HEAD has no such file."""
+    r = _git(repo_root, "show", f"HEAD:{rel}")
+    return r.stdout if r.returncode == 0 else None
 
 
 def _save_before_update(repo_root: Path) -> tuple[Outcome | None, list[str]]:
     """RICE-UPDATE-PRESAVE-001: on a real update -- this repo finalized by an
     older rice than this build -- the OWNER running bootstrap is their
     authorization to save everything first: `git add -A` (`.gitignore`
-    applies), less rice's own pending writes from an earlier run of this same
-    update, a commit when that staged anything, then a plain push of the
-    current branch, unpushed commits included, to the remote git itself would
-    push to and always under the branch's own name (a branch never pushed is
-    published so; one whose upstream has another name stops, as git's own
-    push.default=simple does). First installs and same-version re-runs save
-    nothing. Called only once the preconditions passed, so a session that may
-    not change this repo never commits or pushes it either.
+    applies), less rice's own pending writes, a commit when that staged
+    anything, then a plain push of the current branch, unpushed commits
+    included, to where git itself would push it, under its own name. First
+    installs and same-version re-runs save nothing. Called only once the
+    preconditions passed, so a session that may not change this repo never
+    commits or pushes it either.
 
     Returns (blocked outcome, []) when a step fails -- nothing of rice's is
     written then, and the work stays in the tree with the OWNER's own index,
@@ -311,103 +361,66 @@ def _save_before_update(repo_root: Path) -> tuple[Outcome | None, list[str]]:
     recorded, build, order = verify.version_order(repo_root)
     if order != -1:
         return None, []
-    import archive_hook  # local: the archive sync's git helpers, as evidence and the guard use them
 
-    def git(*args, **kw):
-        return archive_hook.run(["git", "-C", str(repo_root), *args], **kw)
-
-    def config(key: str) -> str:
-        return git("config", "--get", key).stdout.strip()
-
-    def stop(step: str, why: str, kept: str, then: str):
+    def stop(step: str, reason: str, kept: str, then: str):
         return Outcome(stage="blocked", blocked=True, directive=[
             f"rice did not update this repo ({recorded} -> {build}): saving your work first failed,"
             " so nothing of rice's was written.",
-            f"  - {step}: {why}",
+            f"  - {step}: {reason}",
             kept,
             "",
             f"Report this to the OWNER and stop. {then} Then /rice:bootstrap saves and updates again.",
         ]), []
 
-    def why(r) -> str:
-        """Git's own words: its last lines carry the reason (a remote's
-        rejection comes before the final "failed to push"); hints are not it."""
-        out = [l.strip() for l in f"{r.stdout}\n{r.stderr}".splitlines()
-               if l.strip() and not l.strip().startswith("hint:")]
-        return " / ".join(out[-4:]) if out else f"exit {r.returncode}"
-
     as_left = "Your changes are as you left them."
+    import archive_hook  # local: the archive sync's branch helper, as evidence uses it
     branch = archive_hook._current_branch(repo_root)
     if not branch:
         return stop("the current branch", "HEAD is not on a branch with commits (detached, unborn,"
                     " or not a git repository)", as_left, "Check out the branch you work on.")
-    gitdir = Path(repo_root) / git("rev-parse", "--git-dir").stdout.strip()
-    for marker, what in _IN_PROGRESS:
-        if (gitdir / marker).exists():
+    gitdir = Path(repo_root) / _git(repo_root, "rev-parse", "--git-dir").stdout.strip()
+    for state_file, what in _UNFINISHED_GIT_OPERATIONS:
+        if (gitdir / state_file).exists():
             return stop("the working tree", f"{what} is in progress", as_left, f"Finish or abort {what} first.")
-    index = git("write-tree")  # the OWNER's own staging, to give back exactly
+    index = _git(repo_root, "write-tree")  # the OWNER's own staging, to give back exactly
     if index.returncode != 0:
-        return stop("the index", why(index), as_left, "Resolve the conflicts first.")
-    upstream_remote, merge = config(f"branch.{branch}.remote"), config(f"branch.{branch}.merge")
-    remote = config(f"branch.{branch}.pushRemote") or config("remote.pushDefault") or upstream_remote or "origin"
-    own = f"refs/heads/{branch}"
-    tracked = bool(upstream_remote and merge)
-    if tracked and remote == upstream_remote and merge != own:
-        # git's own default (push.default=simple) refuses this push; so does the save
-        return stop(f"pushing {branch}", f"its upstream is {upstream_remote}/{merge.removeprefix('refs/heads/')},"
-                    " a branch of another name -- rice pushes a branch only under its own name", as_left,
-                    "Push this branch under its own name yourself.")
+        return stop("the index", _git_reason(index), as_left, "Resolve the conflicts first.")
+    index = index.stdout.strip()
+    remote, tracked, refusal = _push_destination(repo_root, branch)
+    if refusal:
+        return stop(f"pushing {branch}", refusal, as_left, "Push this branch under its own name yourself.")
 
-    def give_back_the_index():
-        git("read-tree", index.stdout.strip())  # index only: the files themselves are untouched
-
-    r = git("add", "-A")
+    r = _git(repo_root, "add", "-A")
     if r.returncode != 0:
-        give_back_the_index()
-        return stop("git add -A", why(r), as_left, "Fix what stopped `git add`.")
-    # rice's own writes from an earlier run of this same update (a new session's
-    # first run stops for the git-deny probe after writing) are rice's commit to
-    # make, not the OWNER's work: back to how the OWNER had them staged
-    staged = git("diff", "--cached", "--name-only", "-z").stdout.split("\0")
-    rices = [rel for rel in staged if rel in reconcile.RICE_WRITES
-             and reconcile.only_rices_change(repo_root, rel, _committed_text(git, rel))]
-    if rices:
-        git("restore", "--staged", f"--source={index.stdout.strip()}", "--", *rices)
+        _git(repo_root, "read-tree", index)  # index only: the files themselves are untouched
+        return stop("git add -A", _git_reason(r), as_left, "Fix what stopped `git add`.")
+    _give_back_rices_writes(repo_root, index)
     subject = f"rice: save work before updating rice {recorded} -> {build}"
-    pending = git("diff", "--cached", "--quiet").returncode
-    if pending not in (0, 1):
-        give_back_the_index()
-        return stop("git diff --cached", f"exit {pending}", as_left, "Check the repository.")
+    pending = _git(repo_root, "diff", "--cached", "--quiet").returncode
     if pending == 1:
-        r = git("commit", "-q", "-m", subject)
-        if r.returncode != 0:
-            give_back_the_index()
-            return stop("git commit", why(r), as_left, "Fix what stopped the commit.")
-    sha = git("rev-parse", "--short", "HEAD").stdout.strip()
-    ahead = git("rev-list", "--count", "@{push}..HEAD")
-    pushed = False
-    if ahead.returncode != 0 or ahead.stdout.strip() != "0":
-        push = ["push", *(() if tracked else ("-u",)), remote, f"HEAD:{own}"]
-        r = git(*push, timeout=SAVE_PUSH_TIMEOUT_SECONDS, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+        r = _git(repo_root, "commit", "-q", "-m", subject)
+    if pending not in (0, 1) or (pending == 1 and r.returncode != 0):
+        _git(repo_root, "read-tree", index)
+        return stop("git commit", _git_reason(r) if pending == 1 else f"git diff --cached exited {pending}",
+                    as_left, "Fix what stopped the commit.")
+    sha = _git(repo_root, "rev-parse", "--short", "HEAD").stdout.strip()
+    ahead = _git(repo_root, "rev-list", "--count", "@{push}..HEAD")
+    pushed = ahead.returncode != 0 or ahead.stdout.strip() != "0"
+    if pushed:
+        push = ["push", *(() if tracked else ("-u",)), remote, f"HEAD:refs/heads/{branch}"]
+        r = _git(repo_root, *push, timeout=SAVE_PUSH_TIMEOUT_SECONDS, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
         if r.returncode != 0:
             kept = (f"Your changes are committed locally as {sha}, not pushed." if pending == 1
                     else "Your commits are still here, not pushed.")
-            return stop("git " + " ".join(push), why(r), kept,
+            return stop("git " + " ".join(push), _git_reason(r), kept,
                         "Push it yourself (with no remote, `git remote add origin <url>` first).")
-        pushed = True
     # the save commit is this run's, or an earlier run's of this same update
-    saved = git("log", "-1", "--format=%s").stdout.strip() == subject
+    saved = _git(repo_root, "log", "-1", "--format=%s").stdout.strip() == subject
     if not (saved or pushed):
         return None, []
     did = [f"your changes are committed as {sha}"] if saved else []
     did.append(f"{branch} is pushed to {remote}")
     return None, [f"Before updating rice {recorded} -> {build}: {' and '.join(did)}."]
-
-
-def _committed_text(git, rel: str) -> str | None:
-    """`rel` as HEAD has it, None when HEAD has no such file."""
-    r = git("show", f"HEAD:{rel}")
-    return r.stdout if r.returncode == 0 else None
 
 
 def continue_after_matt(repo_root, **probes) -> Outcome | None:
@@ -466,7 +479,8 @@ def _matt_handoff_directive(verdict: str) -> list[str]:
 # What a bootstrap and Matt's setup write; every other working-tree change is
 # the OWNER's. Told to commit "the changes in the working tree", a real
 # session ran `git add -A` and pushed the OWNER's unrelated work with rice's
-# (RICE-FINAL-UX-REVIEW-001).
+# (RICE-FINAL-UX-REVIEW-001). On an update the engine's own save (I24) has
+# already committed that work by the time the agent commits rice's.
 _COMMIT_PATHS = (".claude/", "CLAUDE.md", "AGENTS.md", f"{Path(evidence.MATT_REQUIRED_DOCS[0]).parent}/")
 COMMIT_ONLY = ("stage only " + ", ".join(f"`{p}`" for p in _COMMIT_PATHS) + ", by name -- never `git add -A`"
                " or `git add .` -- and leave every other working-tree change uncommitted for the OWNER,"

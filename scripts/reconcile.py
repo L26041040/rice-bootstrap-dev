@@ -656,7 +656,7 @@ def project_agents_md(text: str) -> str | None:
 
 # Every path a bootstrap can write in a repo (the verified-version file aside: only the
 # verifier's stamp writes it, after any save).
-RICE_WRITES = (".claude/rice.md", f".claude/{MARKER_NAME}", "CLAUDE.md", "AGENTS.md", ".claude/settings.json")
+RICE_WRITES = (*OWNED_FILES, "CLAUDE.md", "AGENTS.md", ".claude/settings.json")
 
 
 def only_rices_change(repo_root, rel: str, before: str | None) -> bool:

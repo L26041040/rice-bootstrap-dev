@@ -34,7 +34,11 @@ plugins).
      continuation stamping that release's final verdict, a commit.
   2. Each later release on the path, and finally the candidate, re-runs its
      own `rice.py bootstrap` with no OWNER answers, as the README's update
-     path says (I15), and must verify final before the next hop.
+     path says (I15), and must verify final before the next hop; each older
+     hop is committed, as the agent does. The project tracks a bare origin,
+     so the candidate's update saves and pushes for real (I24) -- and since
+     the tree was clean when it arrived, any commit it makes is rice's own
+     writes saved as the OWNER's work.
   3. The result is compared with a fresh candidate install of the same
      project; the candidate's bootstrap is run once more, on a copy, and
      must change nothing; both repos as the candidate left them are
@@ -49,8 +53,10 @@ Verdict per row, worst first; the first three block a release:
 
   PROJECT DATA CHANGED   a project-owned byte or setting did not survive
   HARMFUL RESIDUE        the upgraded repo differs from a fresh install, a
-                         second bootstrap changes a byte, or uninstall
-                         leaves rice state behind; when the candidate still
+                         second bootstrap changes a byte, the candidate's
+                         update commits rice's own writes as the OWNER's
+                         work, or uninstall leaves rice state behind; when
+                         the candidate still
                          verified final, that is a verifier or migration
                          defect, never a success
   BLOCKED                a lifecycle step did not reach its verdict
@@ -357,7 +363,8 @@ def _seed(sb: Sandbox, shape: str) -> None:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text, encoding="utf-8")
     origin = sb.work.parent / "origin.git"
-    _run(["git", "init", "-q", "--bare", str(origin)])
+    _run(["git", "init", "-q", "--bare", str(origin)],
+         env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": str(sb.tools / "gitconfig")})
     sb.git("init", "-q")
     sb.git("add", "-A")
     sb.git("commit", "-q", "-m", "project")
@@ -620,7 +627,7 @@ def _path(row: Row, builds: list[Build], candidate: Build, shape: str, base: Pat
         return
     for build in (*builds[1:], candidate):
         before = sb.settings()  # what the next build finds; after the loop, what the candidate found
-        head = sb.git("rev-parse", "HEAD")[1].strip()
+        rc_head, head = sb.git("rev-parse", "HEAD")  # likewise: after the loop, HEAD as the candidate found it
         out = sb.bootstrap(build, [])
         if not sb.finished(build, out):
             reached.append(f"rice {build.version} did not reach {FINAL}: {_last(out)}")
@@ -634,9 +641,11 @@ def _path(row: Row, builds: list[Build], candidate: Build, shape: str, base: Pat
     # The tree was clean when the candidate arrived, so its update had nothing
     # of the OWNER's to save: any commit it made is rice's own writes saved as
     # the OWNER's work (RICE-UPDATE-PRESAVE-001).
-    saved = sb.git("diff", "--name-only", head, "HEAD")[1].split()
-    if saved:
-        row.findings.append(Finding(RESIDUE, f"{shape}: the candidate's update committed {saved} as the "
+    rc_diff, saved = sb.git("diff", "--name-only", head.strip(), "HEAD")
+    if rc_head or rc_diff:  # fail closed: an unreadable history is never a clean one
+        row.findings.append(Finding(BLOCKED, f"{shape}: could not read what the candidate's update committed"))
+    elif saved.split():
+        row.findings.append(Finding(RESIDUE, f"{shape}: the candidate's update committed {saved.split()} as the "
                                              "OWNER's work -- rice's own writes belong to rice's commit"))
     row.lifecycle[shape] = " -> ".join(reached)
     if fresh is None:

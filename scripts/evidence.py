@@ -325,7 +325,7 @@ def archive_behaves(repo_root, current_settings: dict | None = None) -> ItemResu
     branch's upstream? PASS only from that git-state evidence -- never from
     local file evidence alone, which would be a false PASS whenever a
     commit is sitting unpushed."""
-    import archive_hook  # local: only this diagnostic needs the hook's git helpers
+    import archive_hook  # local: the hook's git helpers, needed only here in this module
 
     repo_root = Path(repo_root)
     if current_settings is None:

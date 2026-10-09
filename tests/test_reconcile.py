@@ -498,8 +498,6 @@ def _init_archive_repo(root: Path, remote: Path) -> None:
     _git_r(root, "push", "-q", "-u", "origin", "main")
 
 
-
-
 class TestOnlyRicesChange(unittest.TestCase):
     """RICE-UPDATE-PRESAVE-001: which uncommitted changes are rice's own
     pending writes -- decided by the same ownership projections uninstall
@@ -537,6 +535,17 @@ class TestOnlyRicesChange(unittest.TestCase):
         self.assertTrue(reconcile.only_rices_change(self.root, ".claude/settings.json", before))
         self._now(".claude/settings.json", json.dumps({"permissions": {"deny": ["Bash(wget *)", rule]}}))
         self.assertFalse(reconcile.only_rices_change(self.root, ".claude/settings.json", before))
+
+    def test_agents_md_with_only_the_pointer_added_is_rices(self):
+        reconcile.apply(self.root)
+        mine = "# agents\n"
+        text = (self.root / "AGENTS.md").read_text(encoding="utf-8")
+        self._now("AGENTS.md", mine + "\n" + text)
+        self.assertTrue(reconcile.only_rices_change(self.root, "AGENTS.md", mine))
+        self.assertFalse(reconcile.only_rices_change(self.root, "AGENTS.md", "# theirs, edited\n"))
+
+    def test_the_pending_marker_is_rices(self):
+        self.assertTrue(reconcile.only_rices_change(self.root, f".claude/{reconcile.MARKER_NAME}", None))
 
     def test_any_other_file_is_never_rices(self):
         self._now("README.md", "x\n")
