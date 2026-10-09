@@ -3,12 +3,32 @@
 All notable changes to the `rice` plugin. The top entry's version must equal
 `.claude-plugin/plugin.json`'s `version` (a release check).
 
-## [Unreleased]
+## [0.1.7] - 2026-10-09
 
-Update safety (RICE-UPDATE-SPEC-001; the RICE-SPEC-001 entries for this
-release are added when it is cut, #40). Rice still has no update verb: the
+Branches that converge, a CLAUDE.md that stays clean, a session archive that
+stays closed, and updates that are safe. Rice still has no update verb: the
 platform updates the plugin, and re-running `/rice:bootstrap` in a new
 session brings a repo up to date.
+
+Git convergence, CLAUDE.md governance, session history (RICE-SPEC-001):
+
+- **「合併回主枝」.** When the OWNER says it, the agent converges the session's
+  branch onto the default branch in a fixed, provable order (fast-forward,
+  push, prove it landed) and then removes the remote session branch with
+  rice's privileged helper -- and only then. Nothing is merged or deleted on
+  the agent's own judgement.
+- **CLAUDE.md stays routing-only.** A plugin `PreToolUse` guard refuses any
+  agent write to `CLAUDE.md` once the repo's bootstrap has finished; the
+  agent is told to put the content in an ordinary project file instead.
+  Rice's import line and Matt's block, written during bootstrap, need no
+  exception.
+- **`session-history/` is closed by default.** The agent cannot read the
+  archive until the OWNER types `/rice:history`; that key covers the current
+  `/clear` segment and closes at the next `/clear`.
+- All three are plugin-level: a repo bootstrapped by an older build picks
+  them up as soon as a session loads 0.1.7. No repo state is added.
+
+Update safety (RICE-UPDATE-SPEC-001):
 
 - **Build precondition.** `/rice:bootstrap` and the Stop continuation check
   `plugin:build` before their first repo write. A session that has not loaded

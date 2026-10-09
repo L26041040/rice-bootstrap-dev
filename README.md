@@ -21,7 +21,7 @@ claude plugin install rice@rice-bootstrap
 User scope, one time per machine. On Claude Code on the web, put these two
 lines in the Cloud Environment's setup script (an OWNER-only step in the web
 UI); every new session from that Environment then has the latest release.
-To pin a version instead: `claude plugin marketplace add L26041040/rice-bootstrap@release/0.1.6`.
+To pin a version instead: `claude plugin marketplace add L26041040/rice-bootstrap@release/0.1.7`.
 A pinned Environment stays on that release until you change the pin; unpinned
 is the default and follows the latest release. On your own machine, update
 with `claude plugin marketplace update rice-bootstrap`, then
