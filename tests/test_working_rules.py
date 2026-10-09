@@ -109,12 +109,14 @@ class TestReadme(unittest.TestCase):
 
 
 class TestChangelogDraft(unittest.TestCase):
-    def test_the_update_safety_lines_wait_unreleased_without_moving_the_version(self):
+    def test_the_release_that_carries_update_safety_says_so_at_the_top(self):
+        """The update-safety lines waited under [Unreleased] until #40 cut
+        0.1.7; now they are the top entry's, which is plugin.json's version."""
         log = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
-        draft = _section(log, "## [Unreleased]")
-        for behaviour in ("rice-version:not-newer", "nothing is written", "/rice:bootstrap"):
-            self.assertIn(behaviour, draft)
         self.assertEqual(release.changelog_top_version(REPO), release.plugin_version(REPO))
+        top = _section(log, f"## [{release.plugin_version(REPO)}]")
+        for behaviour in ("rice-version:not-newer", "nothing is written", "/rice:bootstrap"):
+            self.assertIn(behaviour, top)
 
 
 if __name__ == "__main__":
