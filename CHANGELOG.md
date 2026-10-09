@@ -57,6 +57,11 @@ What real sessions showed (RICE-FINAL-UX-REVIEW-001):
 - **The staleness line reaches the OWNER.** Claude Code now shows it at
   session start (a hook `systemMessage`); as context alone, no agent passed
   it on. The agent's copy marks `/rice:bootstrap` as the OWNER's to type.
+- **Only rice's changes are committed.** Bootstrap and uninstall now tell
+  the agent to stage `.claude/`, `CLAUDE.md`, `AGENTS.md` (and Matt's
+  `docs/agents/`) by name, never `git add -A`, and to leave the OWNER's
+  other work uncommitted. Told to commit "the changes in the working tree",
+  an agent had pushed the OWNER's unrelated work-in-progress with rice's.
 - **Update instructions.** The README names `/reload-plugins` and the two
   commands that update a machine; a session whose build is not the
   installed one is told `/reload-plugins` works as well as a new session.

@@ -16,8 +16,10 @@ The script decides everything. Only its last line `RICE-UNINSTALLED` means
 the repo is clean; `RICE-UNINSTALL FAIL (...)` lists what is still there.
 
 1. Confirm the trigger, run the script.
-2. Quote its last line verbatim. On `RICE-UNINSTALLED`: commit and push.
-   On FAIL: report the listed items; never hand-fix around the script,
+2. Quote its last line verbatim. On `RICE-UNINSTALLED`: commit and push
+   only what it changed — stage `.claude/`, `CLAUDE.md` and `AGENTS.md` by
+   name, never `git add -A` or `git add .`; leave every other working-tree
+   change uncommitted for the OWNER and name it. On FAIL: report the listed items; never hand-fix around the script,
    never claim success.
 3. **Stop.** Repo-scoped intent means this repo only. Do not ask about the
    user-level `rice@rice-bootstrap` plugin or the `rice-bootstrap`

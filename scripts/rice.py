@@ -319,6 +319,15 @@ def _matt_handoff_directive(verdict: str) -> list[str]:
     ]
 
 
+# What a bootstrap and Matt's setup write; every other working-tree change is
+# the OWNER's. Told to commit "the changes in the working tree", a real
+# session ran `git add -A` and pushed the OWNER's unrelated work with rice's
+# (RICE-FINAL-UX-REVIEW-001).
+_COMMIT_PATHS = (".claude/", "CLAUDE.md", "AGENTS.md", f"{Path(evidence.MATT_REQUIRED_DOCS[0]).parent}/")
+COMMIT_ONLY = ("stage only " + ", ".join(f"`{p}`" for p in _COMMIT_PATHS) + ", by name -- never `git add -A`"
+               " or `git add .` -- and leave every other working-tree change uncommitted for the OWNER,"
+               " naming it in your report")
+
 # CLAUDE.md imports `.claude/rice.md` when a session starts, so the session
 # that bootstrapped keeps the rules it started with (RICE-FINAL-UX-REVIEW-001)
 RULES_LOAD = ("Rice's working rules (`.claude/rice.md`) load when a session starts: this session keeps"
@@ -329,9 +338,9 @@ def _finalized_directive(verdict: str) -> list[str]:
     return [
         f"`{verdict}`",
         "",
-        "The verifier has stamped the verified-version file. Commit and push the"
-        " changes in the working tree and quote that line verbatim. This repo needs"
-        " no Matt hand-off: the setup is already there.",
+        f"The verifier has stamped the verified-version file. Commit and push this bootstrap's"
+        f" changes ({COMMIT_ONLY}) and quote that line verbatim. This repo needs no Matt"
+        " hand-off: the setup is already there.",
         "",
         RULES_LOAD,
     ]
@@ -413,7 +422,7 @@ def continuation_message(repo_root, outcome: Outcome) -> str:
         return (
             f"rice: {outcome.verdict}. The verifier has stamped the verified-version file "
             f"and cleared the pending marker.{repaired} Commit and push the bootstrap, "
-            f"Matt and finalization changes in the working tree, then report `{outcome.verdict}` "
+            f"Matt and finalization changes ({COMMIT_ONLY}), then report `{outcome.verdict}` "
             f"to the OWNER, adding: {RULES_LOAD}"
         )
     done = outcome.repaired

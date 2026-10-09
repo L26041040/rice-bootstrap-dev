@@ -380,6 +380,35 @@ class TestTheOwnerLearnsWhenTheRulesLoad(LifecycleBase):
         self._says_the_boundary(rice.continuation_message(self.root, outcome))
 
 
+class TestOnlyWhatRiceAndMattWroteIsCommitted(LifecycleBase):
+    """RICE-FINAL-UX-REVIEW-001: told to commit "the changes in the working
+    tree", the agent in a real session ran `git add -A` and pushed the
+    OWNER's unrelated work-in-progress with rice's. Every commit instruction
+    names the paths a bootstrap (or uninstall) writes and forbids the rest."""
+
+    def _commits_only_rices(self, text):
+        self.assertNotIn("changes in the working tree", text)
+        self.assertIn("never `git add -A`", text)
+        for path in (".claude/", "CLAUDE.md", "AGENTS.md", "docs/agents/"):
+            self.assertIn(f"`{path}`", text)
+
+    def test_finishing_inside_the_one_invocation(self):
+        _matt_artifacts(self.root)
+        outcome = self.bootstrap()
+        self.assertEqual(outcome.stage, "finalized", outcome.lines)
+        self._commits_only_rices("\n".join(outcome.directive))
+
+    def test_the_stop_continuation(self):
+        self.bootstrap()
+        _matt_artifacts(self.root)
+        outcome = rice.continue_after_matt(self.root, **PROBES)
+        self._commits_only_rices(rice.continuation_message(self.root, outcome))
+
+    def test_uninstall(self):
+        skill = (REPO / "skills" / "rice-uninstall" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("never `git add -A`", skill)
+
+
 class TestTheOwnerIsAskedOnlyWhatIsUnanswered(LifecycleBase):
     """RICE-FINAL-UX-REVIEW-001: Step 1 asks exactly the choices bootstrap
     would still write. A re-run asks nothing -- in a real session the skill
