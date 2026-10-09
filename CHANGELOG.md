@@ -54,9 +54,9 @@ What real sessions showed (RICE-FINAL-UX-REVIEW-001):
 - **When the rules load.** Both ways a bootstrap finishes now say that
   `.claude/rice.md` loads when a session starts: the current rules apply
   after `/clear` or in a new session.
-- **The staleness line reaches the OWNER.** It tells the agent to tell the
-  OWNER that `/rice:bootstrap` brings the repo up to date, and not to run it
-  itself.
+- **The staleness line reaches the OWNER.** Claude Code now shows it at
+  session start (a hook `systemMessage`); as context alone, no agent passed
+  it on. The agent's copy marks `/rice:bootstrap` as the OWNER's to type.
 - **Update instructions.** The README names `/reload-plugins` and the two
   commands that update a machine; a session whose build is not the
   installed one is told `/reload-plugins` works as well as a new session.

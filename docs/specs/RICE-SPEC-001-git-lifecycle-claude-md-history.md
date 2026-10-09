@@ -191,8 +191,9 @@ behaviour up the moment a session loads the new build.
   ⇒ normal. The comparison is the existing SemVer shape and a three-integer
   tuple; no state, file, migration table or version history is added.
 - I18 Staleness context. The SessionStart context MUST add exactly one
-  actionable line — telling the agent to tell the OWNER, never to run
-  bootstrap itself — when, and only when, rice is installed here, both versions
+  actionable line — shown to the OWNER by Claude Code itself
+  (`systemMessage`), and in the agent's context marked as theirs to type —
+  when, and only when, rice is installed here, both versions
   are SemVer, the running build is newer than `.claude/rice-version`, and the
   waiting marker is absent. In every other case — not a rice repo, after
   uninstall, missing or malformed version, equal versions, a repo newer than
@@ -645,10 +646,13 @@ helper line, printed only when all of: rice installed here (the existing
 reconcile question), `.claude/rice-version` present and SemVer, running build
 SemVer, build > repo, waiting marker absent. Text (wording MAY vary):
 `rice: this repo was finalized by rice <repo>; this session runs rice <build>.
-Tell the OWNER once that typing /rice:bootstrap brings it up to date; do not
-run it yourself.` Any exception ⇒ silence. (RICE-FINAL-UX-REVIEW-001: the
-earlier "Run /rice:bootstrap once" was addressed to no one; in a real
-session it reached neither the OWNER nor a run.)
+Run /rice:bootstrap to bring it up to date.` Any exception ⇒ silence.
+RICE-FINAL-UX-REVIEW-001: as plain context the line reached no one in real
+sessions — not addressed to anyone, nor when it told the agent to tell the
+OWNER. The hook therefore prints, for this case only, a JSON object:
+`systemMessage` is the line (Claude Code shows it at session start), and
+`additionalContext` is the helper line plus the line marked as the OWNER's
+to type. Every other case prints the helper line as plain text, unchanged.
 
 Why the marker silences it: a repo mid-bootstrap is already being driven by
 the hand-off directive and the Stop continuation; two voices would conflict.

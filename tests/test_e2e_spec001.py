@@ -86,7 +86,8 @@ def _context(work: Path) -> list[str]:
     with mock.patch.object(sys, "stdin", io.StringIO(json.dumps({"cwd": str(work)}))), \
             contextlib.redirect_stdout(out):
         session_context.main()
-    return out.getvalue().splitlines()
+    text = out.getvalue()  # a JSON object when it also shows the OWNER a line
+    return (json.loads(text)["hookSpecificOutput"]["additionalContext"] if text.startswith("{") else text).splitlines()
 
 
 def _tree(root: Path) -> dict[str, bytes]:

@@ -178,6 +178,16 @@ class TestSessionContext(unittest.TestCase):
             self.assertIn(rel, export_public.ALLOWLIST)
 
 
+def session_context_output(out: str) -> tuple[list[str], str | None]:
+    """The hook's stdout as Claude Code reads it: plain text is context; a
+    JSON object carries context in `additionalContext` and a line shown to
+    the OWNER in `systemMessage`."""
+    if not out.lstrip().startswith("{"):
+        return out.splitlines(), None
+    data = json.loads(out)
+    return data["hookSpecificOutput"]["additionalContext"].splitlines(), data.get("systemMessage")
+
+
 class TestStalenessLine(unittest.TestCase):
     """RICE-SPEC-001 I18 / §14.4: one more line only when the running rice is
     newer than the version this repo was finalized at; otherwise nothing."""
@@ -189,7 +199,8 @@ class TestStalenessLine(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _lines(self, recorded=None, build="0.1.7") -> list[str]:
+    def _run(self, recorded=None, build="0.1.7") -> tuple[list[str], str | None]:
+        """(the context lines the agent gets, the line shown to the OWNER)."""
         if recorded is not None:
             (self.root / verify.VERSION_FILE).write_text(recorded + "\n", encoding="utf-8")
         out = io.StringIO()
@@ -197,20 +208,29 @@ class TestStalenessLine(unittest.TestCase):
                 mock.patch.object(sys, "stdin", io.StringIO(json.dumps({"cwd": str(self.root)}))), \
                 redirect_stdout(out):
             self.assertEqual(session_context.main(), 0)
-        return out.getvalue().splitlines()
+        return session_context_output(out.getvalue())
+
+    def _lines(self, recorded=None, build="0.1.7") -> list[str]:
+        return self._run(recorded, build)[0]
 
     def test_an_older_repo_gets_the_helper_line_then_one_actionable_line(self):
-        lines = self._lines("0.1.6")
+        lines, shown = self._run("0.1.6")
         self.assertEqual(len(lines), 2, lines)
         self.assertIn(str(session_context.HELPER), lines[0])
         for word in ("0.1.6", "0.1.7", "/rice:bootstrap"):
             self.assertIn(word, lines[1])
-        # RICE-FINAL-UX-REVIEW-001: in a real session an unaddressed "Run
-        # /rice:bootstrap" reached neither the OWNER nor a run -- it is the
-        # OWNER's to type, so the line says so
-        self.assertIn("Tell the OWNER", lines[1])
         self.assertIn("do not run it yourself", lines[1])
         self.assertEqual(len(self._lines("0.1.9", build="0.1.10")), 2)  # numeric, not lexical
+
+    def test_the_owner_is_shown_the_staleness_line_by_claude_code_itself(self):
+        """RICE-FINAL-UX-REVIEW-001: in real sessions a context-only line --
+        addressed to no one, then to the agent -- never reached the OWNER.
+        `systemMessage` is shown in the session itself (a real session showed
+        it), so the line no longer depends on the model relaying it."""
+        _, shown = self._run("0.1.6")
+        for word in ("0.1.6", "0.1.7", "/rice:bootstrap"):
+            self.assertIn(word, shown)
+        self.assertIsNone(self._run("0.1.7")[1])  # an up-to-date repo shows nothing
 
     def test_every_other_case_adds_nothing(self):
         cases = {"equal": ("0.1.7", "0.1.7"), "repo newer": ("0.1.8", "0.1.7"),
