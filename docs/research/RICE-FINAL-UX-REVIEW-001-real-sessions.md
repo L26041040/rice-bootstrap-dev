@@ -47,6 +47,13 @@ tests that pin each fix cite this note.
   calls, `FINAL-VERIFIED 0.1.7`, and the block said when the rules load.
 - Fresh repo: both questions, one prompt.
 - The README's two update commands, run verbatim, moved 0.1.6 to 0.1.7.
+- Final build, stale repo with the OWNER's uncommitted work: the line shown,
+  zero questions, `FINAL-VERIFIED 0.1.7`, only `.claude/rice-version` and
+  `.claude/rice.md` committed and pushed, the OWNER's two changes left
+  uncommitted and named.
+- Final build, fresh repo through Matt's setup and the Stop hook:
+  `FINAL-VERIFIED 0.1.7`, the eight rice and Matt files staged by name,
+  committed and pushed, the rules-load sentence relayed, a clean tree.
 
 ## Not verified here
 
