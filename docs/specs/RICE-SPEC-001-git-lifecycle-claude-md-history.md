@@ -211,9 +211,11 @@ behaviour up the moment a session loads the new build.
   the repo finalized by an older rice than the running build, and only after
   I16 and I17 pass, it MUST save the OWNER's work before its first write:
   `git add -A` (`.gitignore` applies), a commit when that staged anything,
-  then a plain push of the current branch, unpushed commits included, to
-  its upstream — or, with none, to `origin` under the branch's own name,
-  setting it as the upstream. The OWNER running `/rice:bootstrap` to update
+  then a plain push of the current branch, unpushed commits included,
+  always under its own name: to its upstream of that name, or, with none,
+  to `origin`, setting it as the upstream. An upstream of another name
+  stops the update before anything is staged (git's own
+  `push.default=simple` refuses that push too). The OWNER running `/rice:bootstrap` to update
   is the authorization; nothing is asked. A first install, a same-version
   re-run, a newer or malformed repo, and the Stop continuation save nothing.
   Any failing step (detached HEAD, add, commit, push) stops the update with
@@ -724,7 +726,8 @@ first write, using only native git through the archive sync's existing
 helpers. The steps, each stopping the update on failure:
 
 1. `version_order` says older → newer; otherwise nothing happens.
-2. The current branch (detached HEAD stops).
+2. The current branch (detached HEAD stops; so does an upstream whose
+   branch has another name, before anything is staged).
 3. `git add -A`; when something is staged, `git commit -m "rice: save work
    before updating rice <old> -> <new>"` (a failed commit unstages again).
 4. When the branch has unpushed commits (or no upstream yet): `git push

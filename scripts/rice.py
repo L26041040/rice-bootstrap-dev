@@ -291,8 +291,9 @@ def _save_before_update(repo_root: Path) -> tuple[Outcome | None, list[str]]:
     older rice than this build -- the OWNER running bootstrap is their
     authorization to save everything first: `git add -A` (`.gitignore`
     applies), a commit when that staged anything, then a plain push of the
-    current branch, unpushed commits included (a branch without an upstream
-    is published under its own name). First installs and same-version
+    current branch, unpushed commits included -- always under its own name:
+    a branch without an upstream is published so, and one tracking another
+    name stops, as git's own push.default=simple does. First installs and same-version
     re-runs save nothing. Called only once the preconditions passed, so a
     session that may not change this repo never commits or pushes it either.
 
@@ -330,7 +331,12 @@ def _save_before_update(repo_root: Path) -> tuple[Outcome | None, list[str]]:
     remote = git("config", "--get", f"branch.{branch}.remote").stdout.strip()
     target = git("config", "--get", f"branch.{branch}.merge").stdout.strip()
     tracked = bool(remote and target)
-    remote, target = (remote, target) if tracked else ("origin", f"refs/heads/{branch}")
+    own = f"refs/heads/{branch}"
+    if tracked and target != own:
+        # git's own default (push.default=simple) refuses this push; so does the save
+        return stop(f"pushing {branch}", f"its upstream is {remote}/{target.removeprefix('refs/heads/')},"
+                    " a branch of another name -- rice pushes a branch only under its own name", as_left)
+    remote, target = (remote, target) if tracked else ("origin", own)
 
     r = git("add", "-A")
     if r.returncode != 0:

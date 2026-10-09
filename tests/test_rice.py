@@ -284,7 +284,7 @@ class GitLifecycleBase(LifecycleBase):
         return r.stdout.strip()
 
     def origin_head(self, branch="main") -> str:
-        r = subprocess.run(["git", "-C", str(self.origin), "rev-parse", f"refs/heads/{branch}"],
+        r = subprocess.run(["git", "-C", str(self.origin), "rev-parse", "--verify", "-q", f"refs/heads/{branch}"],
                            capture_output=True, text=True)
         return r.stdout.strip()
 
@@ -360,6 +360,21 @@ class TestAnUpdateSavesTheWorkFirst(GitLifecycleBase):
         self.assertEqual(outcome.stage, "finalized", outcome.lines)
         self.assertEqual(self.origin_head("claude/session-x"), self.git("rev-parse", "HEAD"))
         self.assertEqual(self.git("rev-parse", "--abbrev-ref", "@{upstream}"), "origin/claude/session-x")
+
+    def test_a_branch_tracking_another_name_is_never_pushed_onto_it(self):
+        """git's own default (push.default=simple) refuses a push whose
+        upstream has another name; so does the save -- a `feature` tracking
+        `origin/main` must not land the OWNER's work-in-progress on main."""
+        self.finalized_by_an_older_rice()
+        self.git("checkout", "-q", "-b", "feature", "--track", "origin/main")
+        main_before = self.origin_head()
+        self.owner_wip()
+        outcome = rice.bootstrap(self.root, **PROBES)
+        self._refused_with_nothing_of_rices_written(outcome)
+        self.assertIn("origin/main", "\n".join(outcome.directive))
+        self.assertEqual(self.origin_head(), main_before)
+        self.assertEqual(self.origin_head("feature"), "")
+        self.assertIn("?? notes.md", self.git("status", "--short"))   # nothing committed either
 
     def _refused_with_nothing_of_rices_written(self, outcome):
         self.assertEqual(outcome.stage, "blocked")
