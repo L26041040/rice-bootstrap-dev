@@ -305,6 +305,10 @@ class TestArchiveBehavesDiagnostic(ReconcileTestBase):
         st = {i.name: i.state for i in items}
         self.assertEqual(st["plugin:installed"], "PASS")
         self.assertEqual(st["plugin:build"], "FAIL")
+        # RICE-FINAL-UX-REVIEW-001: /reload-plugins switches a running session
+        # to the installed build as well as a new session does (real session)
+        detail = {i.name: i.detail for i in items}["plugin:build"]
+        self.assertIn("/reload-plugins", detail)
 
 
 class TestTheSplitHolds(unittest.TestCase):

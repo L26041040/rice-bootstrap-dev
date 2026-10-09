@@ -2,15 +2,18 @@
 """RICE-BOOTSTRAP-044: rice's lifecycle engine -- the one place that knows
 the ORDER of things.
 
-Three verbs, and nothing outside this module needs to know more than these:
+Four verbs, and nothing outside this module needs to know more than these:
 
     bootstrap  configure this repo from scratch, up to the Matt hand-off
     continue   finish a bootstrap after the OWNER's Matt setup (Stop hook)
     styles     the output-style values the OWNER may choose from
+    questions  the OWNER choices still unanswered here (none on a re-run)
 
 There is no update verb (RICE-FINAL-001). Rice has exactly two repo
 lifecycles -- bootstrap and uninstall -- and neither ever asks the OWNER to
-restart a session, migrate a ref, or reason about which build is "latest".
+migrate a ref or reason about which build is "latest". An update is the
+platform's: a new session (or /reload-plugins) loads it, and one re-run of
+bootstrap brings a repo up to date.
 
 Every verb runs the same canonical flow, which lives here and only here:
 
@@ -202,6 +205,16 @@ def styles(repo_root, **probes) -> list[dict]:
                                    self_plugin=(settings_template.PLUGIN_NAME, evidence.PLUGIN_ROOT))
 
 
+# the bootstrap flag each unanswered OWNER-defined key is asked for under
+_QUESTION_FLAGS = {"env.RICE_SESSION_ARCHIVE": "archive", "outputStyle": "output-style"}
+
+
+def questions(repo_root) -> list[str]:
+    """The OWNER's Step 1 choices bootstrap would still write, by flag name:
+    both on a fresh repo, none on a re-run (RICE-FINAL-UX-REVIEW-001)."""
+    return [_QUESTION_FLAGS[k] for k in reconcile.unanswered_owner_choices(repo_root)]
+
+
 def bootstrap(repo_root, *, archive=None, output_style=UNSET, **probes) -> Outcome:
     """A fresh repo, up to (and when possible past) the Matt hand-off.
 
@@ -213,7 +226,7 @@ def bootstrap(repo_root, *, archive=None, output_style=UNSET, **probes) -> Outco
     a repo that had them all along), final verification happens here and now
     rather than asking the OWNER for a setup they have already done. Either
     way the OWNER invokes bootstrap exactly once (RICE-BOOTSTRAP-028), in one
-    session, and never has to restart or update anything (RICE-FINAL-001)."""
+    session, with nothing to restart mid-flow (RICE-FINAL-001)."""
     repo_root = Path(repo_root)
     loaded = verify.run(repo_root, **probes)
     installed = loaded.item("plugin:installed")
@@ -306,6 +319,12 @@ def _matt_handoff_directive(verdict: str) -> list[str]:
     ]
 
 
+# CLAUDE.md imports `.claude/rice.md` when a session starts, so the session
+# that bootstrapped keeps the rules it started with (RICE-FINAL-UX-REVIEW-001)
+RULES_LOAD = ("Rice's working rules (`.claude/rice.md`) load when a session starts: this session keeps"
+              " the ones it started with, and the current rules apply after `/clear` or in a new session.")
+
+
 def _finalized_directive(verdict: str) -> list[str]:
     return [
         f"`{verdict}`",
@@ -313,6 +332,8 @@ def _finalized_directive(verdict: str) -> list[str]:
         "The verifier has stamped the verified-version file. Commit and push the"
         " changes in the working tree and quote that line verbatim. This repo needs"
         " no Matt hand-off: the setup is already there.",
+        "",
+        RULES_LOAD,
     ]
 
 
@@ -393,7 +414,7 @@ def continuation_message(repo_root, outcome: Outcome) -> str:
             f"rice: {outcome.verdict}. The verifier has stamped the verified-version file "
             f"and cleared the pending marker.{repaired} Commit and push the bootstrap, "
             f"Matt and finalization changes in the working tree, then report `{outcome.verdict}` "
-            "to the OWNER."
+            f"to the OWNER, adding: {RULES_LOAD}"
         )
     done = outcome.repaired
     repaired = "\n".join(f"  - {a}" for a in done.applied) if done and done.applied else "  - nothing was mechanically repairable"
@@ -420,18 +441,23 @@ def continuation_message(repo_root, outcome: Outcome) -> str:
 # --------------------------------------------------------------------------
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="rice lifecycle: bootstrap / continue / styles")
+    ap = argparse.ArgumentParser(description="rice lifecycle: bootstrap / continue / styles / questions")
     sub = ap.add_subparsers(dest="verb", required=True)
     b = sub.add_parser("bootstrap", help="configure this repo, up to (or past) the Matt hand-off")
     b.add_argument("repo_root", nargs="?", default=".")
     b.add_argument("--archive", choices=("0", "1"), help="the OWNER's session-archive choice (written only if absent)")
     b.add_argument("--output-style", help="the OWNER's style choice, or 'none' for Claude's default (written only if absent)")
     for verb, help_text in (("continue", "finish a bootstrap after the OWNER's Matt setup"),
-                            ("styles", "list the output styles the OWNER may choose")):
+                            ("styles", "list the output styles the OWNER may choose"),
+                            ("questions", "list the OWNER choices still unanswered in this repo")):
         sp = sub.add_parser(verb, help=help_text)
         sp.add_argument("repo_root", nargs="?", default=".")
     args = ap.parse_args(argv)
 
+    if args.verb == "questions":
+        for q in questions(args.repo_root):
+            print(q)
+        return 0
     probes = default_probes()
     if args.verb == "styles":
         for s in styles(args.repo_root, **probes):

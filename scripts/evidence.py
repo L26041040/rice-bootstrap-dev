@@ -192,9 +192,10 @@ def _plugin_items(plugin_probe) -> list[ItemResult]:
             "plugin:build", "FAIL",
             f"installed {sorted(versions)} but this session is running build {bv} -- they must be "
             "the same build. If the install is already the release you want, start a fresh "
-            "session so it is the one that loads; otherwise reinstall it "
+            "session (or run /reload-plugins) so it is the one that loads; otherwise reinstall it "
             f"(`claude plugin marketplace add {settings_template.MARKETPLACE_REPO}[@release/<x.y.z>]"
-            f" && claude plugin install {settings_template.PLUGIN_KEY}`) and start a fresh session",
+            f" && claude plugin install {settings_template.PLUGIN_KEY}`) and start a fresh session "
+            "or run /reload-plugins",
             kind=MATCHES,
         )
     return [installed, build]

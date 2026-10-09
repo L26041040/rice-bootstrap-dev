@@ -13,6 +13,8 @@ tests below pin that this module keeps none of it.
 
 Run: python3 -m unittest tests.test_rice -v
 """
+import contextlib
+import io
 import json
 import os
 import re
@@ -352,6 +354,73 @@ class TestBuildPreconditions(LifecycleBase):
         self.assertEqual(self.version_file.read_text().strip(), evidence.build_version())
         self.assertEqual((self.root / ".claude" / "rice.md").read_text(encoding="utf-8"),
                          reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8"))
+
+
+class TestTheOwnerLearnsWhenTheRulesLoad(LifecycleBase):
+    """RICE-FINAL-UX-REVIEW-001: CLAUDE.md's import of `.claude/rice.md` is
+    read when a session starts. In a real session the bootstrapping session
+    did not have the rules it had just written, and nothing said so; after
+    `/clear` it did. Both ways a bootstrap finishes say it."""
+
+    def _says_the_boundary(self, text):
+        for word in (".claude/rice.md", "/clear", "new session"):
+            self.assertIn(word, text)
+
+    def test_finishing_inside_the_one_invocation_says_it(self):
+        _matt_artifacts(self.root)
+        outcome = self.bootstrap()
+        self.assertEqual(outcome.stage, "finalized", outcome.lines)
+        self._says_the_boundary("\n".join(outcome.directive))
+
+    def test_the_stop_continuation_says_it(self):
+        self.bootstrap()
+        _matt_artifacts(self.root)
+        outcome = rice.continue_after_matt(self.root, **PROBES)
+        self.assertTrue(outcome.ok, outcome.lines)
+        self._says_the_boundary(rice.continuation_message(self.root, outcome))
+
+
+class TestTheOwnerIsAskedOnlyWhatIsUnanswered(LifecycleBase):
+    """RICE-FINAL-UX-REVIEW-001: Step 1 asks exactly the choices bootstrap
+    would still write. A re-run asks nothing -- in a real session the skill
+    re-asked both on an update and silently dropped the new answers, since
+    each is written only when its key is absent."""
+
+    def test_a_fresh_repo_is_asked_both(self):
+        self.assertEqual(rice.questions(self.root), ["archive", "output-style"])
+
+    def test_a_bootstrapped_repo_is_asked_nothing_even_with_claude_default_and_archive_off(self):
+        self.bootstrap(archive=False, output_style=None)
+        self.assertEqual(rice.questions(self.root), [])
+
+    def test_a_projects_own_output_style_is_never_asked_about(self):
+        (self.root / ".claude").mkdir(parents=True, exist_ok=True)
+        (self.root / ".claude" / "settings.json").write_text(json.dumps({"outputStyle": "Explanatory"}),
+                                                              encoding="utf-8")
+        self.assertEqual(rice.questions(self.root), ["archive"])
+
+    def test_a_lost_archive_answer_is_asked_again(self):
+        self.bootstrap(archive=True, output_style=None)
+        p = self.root / ".claude" / "settings.json"
+        s = json.loads(p.read_text(encoding="utf-8")); del s["env"]["RICE_SESSION_ARCHIVE"]
+        p.write_text(json.dumps(s), encoding="utf-8")
+        self.assertEqual(rice.questions(self.root), ["archive"])
+
+    def test_the_cli_prints_one_per_line_and_nothing_on_a_re_run(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(rice.main(["questions", str(self.root)]), 0)
+        self.assertEqual(out.getvalue(), "archive\noutput-style\n")
+        self.bootstrap()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(rice.main(["questions", str(self.root)]), 0)
+        self.assertEqual(out.getvalue(), "")
+
+    def test_the_skill_asks_only_what_questions_prints(self):
+        skill = (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn('scripts/rice.py" questions <repo_root>', skill)
+        self.assertRegex(skill, r"(?is)prints nothing.*ask nothing")
 
 
 class TestTheSubagentModelIsTheProjects(LifecycleBase):

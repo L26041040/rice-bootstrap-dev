@@ -205,6 +205,11 @@ class TestStalenessLine(unittest.TestCase):
         self.assertIn(str(session_context.HELPER), lines[0])
         for word in ("0.1.6", "0.1.7", "/rice:bootstrap"):
             self.assertIn(word, lines[1])
+        # RICE-FINAL-UX-REVIEW-001: in a real session an unaddressed "Run
+        # /rice:bootstrap" reached neither the OWNER nor a run -- it is the
+        # OWNER's to type, so the line says so
+        self.assertIn("Tell the OWNER", lines[1])
+        self.assertIn("do not run it yourself", lines[1])
         self.assertEqual(len(self._lines("0.1.9", build="0.1.10")), 2)  # numeric, not lexical
 
     def test_every_other_case_adds_nothing(self):

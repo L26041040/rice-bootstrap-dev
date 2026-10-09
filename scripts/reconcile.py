@@ -483,6 +483,21 @@ def check_owned(repo_root) -> list[ItemResult]:
 UNSET = object()  # "the OWNER was not asked", as distinct from None
 
 
+def unanswered_owner_choices(repo_root) -> list[str]:
+    """The OWNER-defined keys `write_owner_choices` would still write -- the
+    only questions worth asking, since an answer to any other is dropped.
+    `outputStyle` may be absent BY ANSWER (Claude's default), so once rice is
+    installed here its absence is that answer, never a question."""
+    repo_root = Path(repo_root)
+    current = _current_settings(repo_root)
+    keys = []
+    if _get_path(current, "env.RICE_SESSION_ARCHIVE") is _MISSING:
+        keys.append("env.RICE_SESSION_ARCHIVE")
+    if _get_path(current, "outputStyle") is _MISSING and not rice_installed_here(repo_root):
+        keys.append("outputStyle")
+    return keys
+
+
 def write_owner_choices(repo_root, *, archive=None, output_style=UNSET) -> list[ItemResult]:
     """Bootstrap's first -- and only -- write of the OWNER-defined keys.
 

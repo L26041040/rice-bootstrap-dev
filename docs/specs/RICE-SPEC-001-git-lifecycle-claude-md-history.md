@@ -5,7 +5,8 @@ final decisions (amended by RICE-TO-TICKET-002: the CLAUDE.md guard activates on
 bootstrap completion instead of carrying a Matt exception; patched by
 RICE-UPDATE-SPEC-001: update safety, §14, I15–I19, from RICE-UPDATE-RESEARCH-001
 and RICE-UPDATE-GRILL-001; and by RICE-UPGRADE-MATRIX-001 / RICE-UPGRADE-PATH-001:
-upgrade compatibility, §15, I20–I23; corrected by RICE-OWNERSHIP-FIX-001). This document freezes an approved design; it does not reopen it.
+upgrade compatibility, §15, I20–I23; corrected by RICE-OWNERSHIP-FIX-001; and by
+RICE-FINAL-UX-REVIEW-001: I15, I18 and §14.4–14.5 as real sessions showed them). This document freezes an approved design; it does not reopen it.
 Base: rice 0.1.6 (private main `4e7f210`).
 
 Keywords MUST / MUST NOT / MAY are normative.
@@ -171,7 +172,13 @@ behaviour up the moment a session loads the new build.
   the new plugin build (`claude plugin update rice@rice-bootstrap`, or a new
   Cloud session from an unpinned Environment) → a session boundary (a new
   session, or the OWNER's own `/reload-plugins`) → the OWNER re-runs
-  `/rice:bootstrap` in each repo. That re-run is the whole repo update.
+  `/rice:bootstrap` in each repo. That re-run is the whole repo update, and
+  it asks the OWNER nothing: the bootstrap skill asks only the choices
+  `rice.py questions` prints, none on a repo rice already configured
+  (RICE-FINAL-UX-REVIEW-001; the answers are written only when absent, so a
+  re-asked question's answer was silently dropped). Both ways a bootstrap
+  finishes say that rice's working rules load when a session starts: the
+  current ones apply after `/clear` or in a new session.
 - I16 Build precondition. Both lifecycle entry points (`/rice:bootstrap` and
   the Stop continuation) MUST confirm `plugin:build` is PASS before the first
   repo mutation (OWNER choices, apply, repair, the waiting marker, the version
@@ -184,7 +191,8 @@ behaviour up the moment a session loads the new build.
   ⇒ normal. The comparison is the existing SemVer shape and a three-integer
   tuple; no state, file, migration table or version history is added.
 - I18 Staleness context. The SessionStart context MUST add exactly one
-  actionable line when, and only when, rice is installed here, both versions
+  actionable line — telling the agent to tell the OWNER, never to run
+  bootstrap itself — when, and only when, rice is installed here, both versions
   are SemVer, the running build is newer than `.claude/rice-version`, and the
   waiting marker is absent. In every other case — not a rice repo, after
   uninstall, missing or malformed version, equal versions, a repo newer than
@@ -637,7 +645,10 @@ helper line, printed only when all of: rice installed here (the existing
 reconcile question), `.claude/rice-version` present and SemVer, running build
 SemVer, build > repo, waiting marker absent. Text (wording MAY vary):
 `rice: this repo was finalized by rice <repo>; this session runs rice <build>.
-Run /rice:bootstrap once to bring it up to date.` Any exception ⇒ silence.
+Tell the OWNER once that typing /rice:bootstrap brings it up to date; do not
+run it yourself.` Any exception ⇒ silence. (RICE-FINAL-UX-REVIEW-001: the
+earlier "Run /rice:bootstrap once" was addressed to no one; in a real
+session it reached neither the OWNER nor a run.)
 
 Why the marker silences it: a repo mid-bootstrap is already being driven by
 the hand-off directive and the Stop continuation; two voices would conflict.
@@ -649,7 +660,11 @@ nag every session of a deliberately pinned Environment.
 
 README: the pin sentence gains "stays on that release until you change the
 pin"; one sentence under *Bootstrap a repo* says how an update reaches a
-repo (new session, re-run `/rice:bootstrap`). CHANGELOG entry for the
+repo (new session or `/reload-plugins`, re-run `/rice:bootstrap`), how a
+machine updates (`claude plugin marketplace update rice-bootstrap`, then
+`claude plugin update rice@rice-bootstrap`: in a real session the update
+alone answered "already at the latest version"), and that rice's working
+rules take effect after `/clear` or in a new session. CHANGELOG entry for the
 release carrying this. The README release-contract gate is unaffected (it
 only requires that the sole release branch named is the build's own).
 

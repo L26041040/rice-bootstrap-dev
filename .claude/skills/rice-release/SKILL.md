@@ -40,15 +40,20 @@ into the public commit as provenance (`rice <version> (source <sha>)`).
 Legacy `v0.1.1` tags may still exist from before this changed; none is read,
 required, or maintained by anything below.
 
-There is no update lifecycle to release *into*: rice never updates itself in
-a repo, so a new release reaches an OWNER only when they point an
-Environment (or a machine) at the new branch themselves.
+Rice never updates itself. A release reaches the OWNER through the platform:
+an unpinned Environment installs it in every new session, a machine runs
+`claude plugin marketplace update rice-bootstrap` then `claude plugin update
+rice@rice-bootstrap`, and a pinned Environment stays put until its pin
+changes. Each repo catches up when the OWNER re-runs `/rice:bootstrap` in a
+new session (or after `/reload-plugins`), as the README says.
 
 ## Flow
 
 1. **Metadata.** Update `CHANGELOG.md` (top `## [x.y.z]` entry = the
    version being released; note the date), `.claude-plugin/plugin.json`
-   `version` if it changes, and `README.md` if the OWNER asked. Commit.
+   `version` if it changes, and `README.md`: its pin example must name
+   this release (the README gate fails on any other `release/<x.y.z>`), plus
+   whatever the OWNER asked. Commit.
 2. **Gates.** `python3 scripts/release.py check --version <x.y.z>`. Read
    every `FAIL` line, fix exactly what it names, commit, re-run. Repeat
    until the last line is `RELEASE-CHECKS PASS <x.y.z>`. The gates are:
@@ -98,10 +103,11 @@ Environment (or a machine) at the new branch themselves.
    provide its URL / push credential.
 4. **Report.** Quote the script's last line verbatim. If it is not
    `RELEASE-PUBLISHED <x.y.z> ...`, the release did not happen — say so.
-   Remind the OWNER that an Environment's setup line needs no change: it
-   installs from `main`, which is now this release. A new container or
-   session picks it up; nothing updates on its own, and no bootstrapped repo
-   changes because of this release.
+   Remind the OWNER that an unpinned Environment's setup line needs no
+   change: it installs from `main`, which is now this release, in every new
+   session. Rice's hooks and skills change in every repo as soon as a session
+   loads the release; each repo's `.claude/rice.md` and `.claude/rice-version`
+   catch up only when the OWNER runs `/rice:bootstrap` there.
 
 ## Never
 

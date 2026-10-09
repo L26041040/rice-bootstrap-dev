@@ -45,6 +45,22 @@ install, and uninstall leaves only the project.
   `false`, or the enablement of a same-named marketplace that is not rice's,
   is left alone.
 
+What real sessions showed (RICE-FINAL-UX-REVIEW-001):
+
+- **A re-run asks nothing.** `/rice:bootstrap` asks only the choices
+  `rice.py questions` prints: both on a fresh repo, none on one rice already
+  configured. An update used to re-ask both and silently drop the answers,
+  since each is written only when absent.
+- **When the rules load.** Both ways a bootstrap finishes now say that
+  `.claude/rice.md` loads when a session starts: the current rules apply
+  after `/clear` or in a new session.
+- **The staleness line reaches the OWNER.** It tells the agent to tell the
+  OWNER that `/rice:bootstrap` brings the repo up to date, and not to run it
+  itself.
+- **Update instructions.** The README names `/reload-plugins` and the two
+  commands that update a machine; a session whose build is not the
+  installed one is told `/reload-plugins` works as well as a new session.
+
 ## [0.1.6] - 2026-09-13
 
 A privileged channel for the one git write rice denies the agent.
