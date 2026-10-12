@@ -21,7 +21,7 @@ claude plugin install rice@rice-bootstrap
 User scope, one time per machine. On Claude Code on the web, put these two
 lines in the Cloud Environment's setup script (an OWNER-only step in the web
 UI); every new session from that Environment then has the latest release.
-To pin a version instead: `claude plugin marketplace add L26041040/rice-bootstrap@release/0.1.7`.
+To pin a version instead: `claude plugin marketplace add L26041040/rice-bootstrap@release/0.1.8`.
 A pinned Environment stays on that release until you change the pin; unpinned
 is the default and follows the latest release. On your own machine, update
 with `claude plugin marketplace update rice-bootstrap`, then
@@ -43,6 +43,12 @@ pushes everything in your working tree (running it is your go-ahead;
 `.gitignore` applies), then brings the repo up to date. If that save fails
 (a merge in progress, a rejected push, no remote), nothing is updated.
 Rice's working rules take effect after `/clear` or in a new session.
+
+If Matt's setup chose GitHub Issues, rice creates Matt's triage labels on
+the repository before `FINAL-VERIFIED`. That needs `origin` to be a valid
+GitHub repository and a credential allowed to manage its issues (`GH_TOKEN`
+or `GITHUB_TOKEN`, `git` or `gh` signed in, or the web session's GitHub
+connection); without one rice stops and says so once. No `gh` is required.
 
 Work happens on the session's branch; when you say 「合併回主枝」 the agent
 fast-forwards it onto the default branch, proves it landed, then removes

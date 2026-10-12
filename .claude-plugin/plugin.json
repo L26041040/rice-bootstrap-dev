@@ -1,6 +1,6 @@
 {
   "name": "rice",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "One-instruction bootstrap for common Claude Code project configuration.",
   "author": {
     "name": "L26041040"

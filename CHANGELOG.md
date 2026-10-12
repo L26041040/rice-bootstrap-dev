@@ -3,7 +3,7 @@
 All notable changes to the `rice` plugin. The top entry's version must equal
 `.claude-plugin/plugin.json`'s `version` (a release check).
 
-## [Unreleased]
+## [0.1.8] - 2026-10-12
 
 First-bootstrap fixes (RICE-BOOTSTRAP-UX-FIX-001):
 
@@ -12,8 +12,9 @@ First-bootstrap fixes (RICE-BOOTSTRAP-UX-FIX-001):
   `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`, or the
   OWNER's own names) are created on the repository if missing -- never twice
   -- and FINAL-VERIFIED waits until GitHub has them. No gh CLI is needed; a
-  missing permission is one clear instruction, never a pretended pass.
-  Other trackers are left alone.
+  missing permission is one clear instruction, never a pretended pass; the
+  README now says it needs a valid GitHub `origin` and a credential allowed
+  to manage issues. Other trackers are left alone.
 - **Formal reports in one code block.** The bootstrap report, the summary
   after Matt's setup and the finalization now follow rice.md's numbering and
   single-block rules in the very session that bootstraps, before rice.md is
