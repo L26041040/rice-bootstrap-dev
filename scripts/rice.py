@@ -588,7 +588,8 @@ def continuation_message(repo_root, outcome: Outcome) -> str:
     lifecycle: finish the job in this same turn, and never write Matt's
     content or send the OWNER back to rice."""
     if outcome.blocked and outcome.directive:
-        return "rice: " + "\n".join(outcome.directive) + "\nThis hook stays quiet for the rest of this turn."
+        return ("rice: " + "\n".join(outcome.directive) + "\nThis hook stays quiet for the rest of this turn."
+                + f"\n\n{output_rules()}")
     if outcome.ok:
         repaired = ""
         if outcome.repaired and outcome.repaired.applied:
@@ -617,8 +618,9 @@ def continuation_message(repo_root, outcome: Outcome) -> str:
         "write Matt setup content yourself -- a Matt artifact listed above must be "
         "reported to the OWNER as missing, by name, because only the official Matt "
         "setup can produce it. Then finish the job in this same turn by running "
-        f"`python3 {VERIFIER} {repo_root} --final` yourself. This hook stays quiet "
-        "for the rest of this turn."
+        f"`python3 {VERIFIER} {repo_root} --final` yourself. Whatever is the OWNER's to do -- a "
+        "missing Matt artifact, a GitHub credential -- goes to them once, as one formal report. This "
+        f"hook stays quiet for the rest of this turn.\n\n{output_rules()}"
     )
 
 

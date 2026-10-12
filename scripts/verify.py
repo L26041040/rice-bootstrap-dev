@@ -134,7 +134,7 @@ def gate_passes(items, required) -> tuple[bool, list[str]]:
     return (not reasons), reasons
 
 
-def _collect(repo_root, **probes):
+def _collect(repo_root, *, final: bool = False, **probes):
     """The rubric, from its collectors: what rice owns in this repo
     (`reconcile`), what is true about the environment (`evidence`), and how
     the version this module recorded compares with the running build (here,
@@ -144,7 +144,7 @@ def _collect(repo_root, **probes):
     Every exception inside collection becomes an ERROR item rather than a
     crash -- and ERROR is not PASS, so the gate fails closed."""
     try:
-        return (reconcile.check_owned(repo_root) + evidence.collect(repo_root, **probes)
+        return (reconcile.check_owned(repo_root) + evidence.collect(repo_root, final=final, **probes)
                 + [version_not_newer_item(repo_root)])
     except Exception as exc:  # noqa: BLE001 - fail closed on anything
         return [reconcile.ItemResult("verifier", "ERROR", f"{type(exc).__name__}: {exc}", kind="ERROR")]
@@ -190,7 +190,7 @@ def version_not_newer_item(repo_root):
 def run(repo_root, *, final: bool = False, **probes) -> Report:
     repo_root = Path(repo_root)
     build = evidence.build_version()
-    items = _collect(repo_root, **probes)
+    items = _collect(repo_root, final=final, **probes)
     a_ok, a_reasons = gate_passes(items, GATE_A)
     lines = [f"[{'B' if i.name in GATE_B_EXTRA else 'A'}] {i.kind:<7} {i.state:<12} {i.name}"
              + (f" -- {i.detail}" if i.detail else "") for i in items]

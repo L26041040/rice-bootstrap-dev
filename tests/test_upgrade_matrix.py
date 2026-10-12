@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import evidence  # noqa: E402
 import export_public  # noqa: E402
+import github_labels  # noqa: E402
 import release  # noqa: E402
 import settings_template  # noqa: E402
 import upgrade_matrix  # noqa: E402
@@ -384,6 +385,21 @@ class TestProbeRecord(unittest.TestCase):
                 self.assertEqual(evidence._git_deny_evidence_item(sb.work).state, "NOT_VERIFIED")
                 sb.deny_git_probe()
                 self.assertEqual(evidence._git_deny_evidence_item(sb.work).state, "PASS")
+
+
+class TestTheMattStandInStaysOffline(unittest.TestCase):
+    def test_the_rows_never_name_a_github_tracker_so_no_row_asks_github(self):
+        """RICE-BOOTSTRAP-UX-FIX-001: the labels item (I25) applies only to a
+        GitHub tracker; the matrix's Matt stand-in is not one, so every row's
+        final verification stays offline. The labels flow is pinned by
+        tests/test_github_labels.py, never by a matrix row."""
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            sb = upgrade_matrix.Sandbox(d / "sb", upgrade_matrix._tools(d))
+            upgrade_matrix._matt_setup(sb)
+            calls = []
+            check = github_labels.check(sb.work, lambda *a: calls.append(a) or (500, {}))
+            self.assertEqual((check.applies, calls), (False, []))
 
 
 class TestReleaseGate(unittest.TestCase):

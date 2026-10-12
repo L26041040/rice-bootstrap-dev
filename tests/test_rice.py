@@ -735,7 +735,7 @@ class TestFormalReportsFollowRicesOutputRules(LifecycleBase):
         agent, _, owner = out.getvalue().partition("--- present this to the OWNER verbatim ---")
         self.assertIn(self._section("## Single-block output"), agent)
         self.assertNotIn(self._section("## Single-block output"), owner)
-        self.assertIn("Matt", agent)               # the summary after the OWNER's Matt setup too
+        self.assertIn("the summary after the OWNER's Matt setup", agent)  # that report too, before rice.md loads
 
     def test_the_stop_continuation_asks_for_one_code_block(self):
         self.bootstrap()

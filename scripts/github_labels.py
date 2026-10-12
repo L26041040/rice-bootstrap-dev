@@ -22,8 +22,10 @@ import shutil
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -32,6 +34,7 @@ import evidence  # noqa: E402
 
 TRACKER_DOC = evidence.MATT_REQUIRED_DOCS[0]
 GITHUB_TRACKER_HEADING = "# Issue tracker: GitHub"  # the first line of Matt's GitHub template
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")      # a git proxy in front of github.com (Claude Code on the web)
 TIMEOUT_SECONDS = 15
 
 AUTHORIZE = ("give rice a GitHub credential that may manage issues on {repo} -- set GH_TOKEN (or "
@@ -56,8 +59,10 @@ def vocabulary(repo_root) -> list[tuple[str, str]] | None:
     tracker, triage = repo_root / TRACKER_DOC, repo_root / evidence.MATT_TRIAGE_DOC
     if not (tracker.is_file() and triage.is_file()):
         return None
-    first = next((l.strip() for l in tracker.read_text(encoding="utf-8").splitlines() if l.strip()), "")
-    if first != GITHUB_TRACKER_HEADING:
+    # Matt's template opens with `# Issue tracker: GitHub`; an agent adapting it
+    # may vary the case or add a word, never the tracker's name
+    first = next((l.strip() for l in tracker.read_text(encoding="utf-8").splitlines() if l.strip()), "").lower()
+    if not (first.startswith("# issue tracker:") and "github" in first):
         return None
     rows, seen = [], set()
     for line in triage.read_text(encoding="utf-8").splitlines():
@@ -72,30 +77,47 @@ def vocabulary(repo_root) -> list[tuple[str, str]] | None:
 
 
 def repository(repo_root) -> tuple[str, str] | None:
-    """(API base, owner/name) of `origin`, or None when it is not a GitHub URL."""
+    """(API base, owner/name) of `origin`, or None when it is not a GitHub
+    URL: https / ssh / scp-style github.com (or a GitHub Enterprise host),
+    and the local git proxy Claude Code on the web puts in front of
+    github.com (`http://...@127.0.0.1:<port>/git/<owner>/<repo>`)."""
     r = subprocess.run(["git", "-C", str(repo_root), "remote", "get-url", "origin"], capture_output=True, text=True)
-    m = re.match(r"^(?:https?://(?:[^@/]+@)?|ssh://git@|git@)([^/:]+)[/:]([^/]+)/([^/]+?)(?:\.git)?/?$",
-                 r.stdout.strip()) if r.returncode == 0 else None
-    if not m:
+    url = r.stdout.strip() if r.returncode == 0 else ""
+    m = re.match(r"^(?:[a-z+]+://)?(?:.*@)?([^/:@]+)(?::(\d+))?[/:](.+?)(?:\.git)?/?$", url)
+    if not m or url.startswith("/"):
         return None
-    host, owner, name = m.groups()
+    host, _port, path = m.groups()
+    parts = [p for p in path.split("/") if p]
+    if host in LOCAL_HOSTS:
+        if len(parts) >= 3 and parts[-3] == "git":
+            return "https://api.github.com", f"{parts[-2]}/{parts[-1]}"
+        return None
+    if len(parts) != 2:
+        return None
     api = "https://api.github.com" if host == "github.com" else f"https://{host}/api/v3"
-    return api, f"{owner}/{name}"
+    return api, f"{parts[0]}/{parts[1]}"
 
 
-def _token() -> str | None:
-    for var in ("GH_TOKEN", "GITHUB_TOKEN"):
-        if os.environ.get(var):
-            return os.environ[var]
-    quiet = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "SSH_ASKPASS": ""}
+@lru_cache(maxsize=None)
+def _token(host: str = "github.com", cwd: str | None = None) -> str | None:
+    """A credential the environment already holds, for `host` only: the
+    GH_TOKEN / GITHUB_TOKEN environment for github.com, else git's own
+    credential helper for that host (never interactive), else `gh auth
+    token` when gh is installed -- once per run."""
+    if host == "github.com":
+        for var in ("GH_TOKEN", "GITHUB_TOKEN"):
+            if os.environ.get(var):
+                return os.environ[var]
+    quiet = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never", "GIT_ASKPASS": "", "SSH_ASKPASS": ""}
     try:
-        r = subprocess.run(["git", "credential", "fill"], input="protocol=https\nhost=github.com\n\n",
-                           capture_output=True, text=True, env=quiet, timeout=10)
+        r = subprocess.run(["git", "-c", "credential.interactive=false", "credential", "fill"],
+                           input=f"protocol=https\nhost={host}\n\n", capture_output=True, text=True,
+                           env=quiet, cwd=cwd, timeout=10)
         for line in r.stdout.splitlines() if r.returncode == 0 else []:
             if line.startswith("password=") and line[9:]:
                 return line[9:]
         if shutil.which("gh"):
-            r = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=10)
+            r = subprocess.run(["gh", "auth", "token", "--hostname", host], capture_output=True, text=True, timeout=10)
             if r.returncode == 0 and r.stdout.strip():
                 return r.stdout.strip()
     except (OSError, subprocess.TimeoutExpired):
@@ -107,7 +129,8 @@ def default_probe(method: str, url: str, body: dict | None = None) -> tuple[int,
     """One GitHub REST call: (HTTP status, parsed JSON or text); status 0 when
     GitHub could not be reached at all."""
     headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
-    token = _token()
+    host = urllib.parse.urlsplit(url).hostname or ""
+    token = _token("github.com" if host == "api.github.com" else host)  # a credential goes only to its own host
     if token:
         headers["Authorization"] = f"Bearer {token}"
     data = json.dumps(body).encode() if body is not None else None
@@ -141,8 +164,10 @@ def check(repo_root, probe=None) -> Check:
     """Which of Matt's triage labels the repository lacks. Reads only."""
     probe = probe or default_probe
     wanted = vocabulary(repo_root)
-    if not wanted:
+    if wanted is None:
         return Check()
+    if not wanted:
+        return Check(applies=True, error=f"no label could be read from {evidence.MATT_TRIAGE_DOC}")
     where = repository(repo_root)
     if where is None:
         return Check(applies=True, wanted=wanted,

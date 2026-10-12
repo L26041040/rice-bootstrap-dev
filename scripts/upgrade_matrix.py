@@ -129,6 +129,9 @@ MATT_BLOCK = (
     "\n"
     "Single-context. See `docs/agents/domain.md`.\n"
 )
+# Placeholder docs, not Matt's GitHub template: the rows never name a GitHub
+# tracker, so the triage-labels item (I25) passes without a network call and
+# the matrix stays offline. Labels are pinned by tests/test_github_labels.py.
 MATT_DOCS = {rel: f"# {Path(rel).stem}\n" for rel in (*evidence.MATT_REQUIRED_DOCS, evidence.MATT_TRIAGE_DOC)}
 
 # The two project shapes. `files` are what the project has before rice;

@@ -464,7 +464,7 @@ def _rtk_item(rtk_probe) -> ItemResult:
 
 
 
-def collect(repo_root, *, rtk_probe=None, plugin_probe=None, github_probe=None) -> list[ItemResult]:
+def collect(repo_root, *, rtk_probe=None, plugin_probe=None, github_probe=None, final=False) -> list[ItemResult]:
     """Every environment fact the rubric needs, as items. No verdict, no
     gate, no write -- see this module's docstring.
 
@@ -484,6 +484,8 @@ def collect(repo_root, *, rtk_probe=None, plugin_probe=None, github_probe=None) 
     items.append(_continuation_hook_item())
     items.append(_git_deny_evidence_item(repo_root))
     items.append(_matt_item(repo_root, plugin_probe))
-    items.append(_labels_item(repo_root, github_probe))
+    # GitHub is asked only when the labels gate anything: final verification
+    items.append(_labels_item(repo_root, github_probe) if final else
+                 ItemResult("matt:labels", "NOT_VERIFIED", "checked by final verification only", kind=EXISTS))
     items.append(_rtk_item(rtk_probe))
     return items

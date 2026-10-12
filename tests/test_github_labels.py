@@ -16,8 +16,10 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import evidence  # noqa: E402
 import github_labels  # noqa: E402
 import repair  # noqa: E402
+import rice  # noqa: E402
 import verify  # noqa: E402
 
 MATT = Path("/root/.claude/plugins/marketplaces/mattpocock/skills/engineering/setup-matt-pocock-skills")
@@ -40,13 +42,13 @@ DEFAULTS = ["needs-triage", "needs-info", "ready-for-agent", "ready-for-human", 
 class FakeGitHub:
     """The REST calls rice makes, against an in-memory repository."""
 
-    def __init__(self, labels=(), refuse=None):
-        self.labels, self.refuse, self.calls = list(labels), refuse, []
+    def __init__(self, labels=(), refuse=None, refuse_writes=None):
+        self.labels, self.refuse, self.refuse_writes, self.calls = list(labels), refuse, refuse_writes, []
 
     def __call__(self, method, url, body=None):
         self.calls.append((method, url, body))
-        if self.refuse:
-            return self.refuse, {"message": "Resource not accessible by integration"}
+        if self.refuse or (method == "POST" and self.refuse_writes):
+            return self.refuse or self.refuse_writes, {"message": "Resource not accessible by integration"}
         if method == "GET":
             return 200, [{"name": n} for n in self.labels]
         if any(n.lower() == body["name"].lower() for n in self.labels):
@@ -106,6 +108,29 @@ class TestTheVocabularyIsMatts(LabelsBase):
                 self.assertIsNone(github_labels.vocabulary(self.root))
                 self.assertFalse(github_labels.check(self.root, FakeGitHub()).applies)
 
+    def test_matts_heading_may_vary_in_case_and_words(self):
+        for heading in ("# Issue Tracker: GitHub Issues", "# issue tracker: github"):
+            with self.subTest(heading):
+                self.tracker(heading + "\n")
+                self.assertEqual(len(github_labels.vocabulary(self.root)), 5)
+
+    def test_an_unreadable_vocabulary_is_never_a_pass(self):
+        self.triage("# Triage Labels\n\nsomething else entirely\n")
+        c = github_labels.check(self.root, FakeGitHub())
+        self.assertTrue(c.applies)
+        self.assertIn("no label could be read", c.error)
+
+    def test_proxied_and_unusual_origins(self):
+        cases = {"http://local_proxy@127.0.0.1:4567/git/owner/project": ("https://api.github.com", "owner/project"),
+                 "ssh://git@github.com:22/owner/project.git": ("https://api.github.com", "owner/project"),
+                 "https://user:p@ss@github.com/owner/project": ("https://api.github.com", "owner/project"),
+                 "https://git.example.com/owner/project.git": ("https://git.example.com/api/v3", "owner/project"),
+                 "/srv/git/project.git": None, "http://127.0.0.1:4567/owner/project": None}
+        for url, want in cases.items():
+            with self.subTest(url):
+                subprocess.run(["git", "-C", str(self.root), "remote", "set-url", "origin", url], check=True)
+                self.assertEqual(github_labels.repository(self.root), want)
+
     def test_the_repository_comes_from_origin(self):
         for url in ("https://github.com/owner/project.git", "git@github.com:owner/project.git",
                     "ssh://git@github.com/owner/project", "https://x-access-token@github.com/owner/project"):
@@ -138,20 +163,64 @@ class TestOnlyTheMissingAreCreated(LabelsBase):
         self.assertIn("not a GitHub repository", c.error)
 
     def test_no_gh_is_needed(self):
-        """Without gh (and without any credential) the token is simply
-        absent: reads go anonymous, nothing crashes, gh is never called."""
+        """A token in the environment is used as is -- no subprocess at all;
+        without one (and with no git credential) gh is asked only if it is
+        installed, and its absence is no error."""
+        github_labels._token.cache_clear()
+        with mock.patch.dict(os.environ, {"GH_TOKEN": "t0ken"}), \
+                mock.patch.object(github_labels.subprocess, "run") as run:
+            self.assertEqual(github_labels._token(), "t0ken")
+        run.assert_not_called()
+        github_labels._token.cache_clear()
         failed = subprocess.CompletedProcess([], 1, stdout="", stderr="")
         with mock.patch.dict(os.environ, {"GH_TOKEN": "", "GITHUB_TOKEN": ""}), \
                 mock.patch.object(github_labels.shutil, "which", return_value=None), \
                 mock.patch.object(github_labels.subprocess, "run", return_value=failed) as run:
             self.assertIsNone(github_labels._token())
-        self.assertEqual([c.args[0][:2] for c in run.call_args_list], [["git", "credential"]])
-        self.assertNotIn('"gh", "api"', Path(github_labels.__file__).read_text(encoding="utf-8"))
+        self.assertEqual([c.args[0][-2:] for c in run.call_args_list], [["credential", "fill"]])
+        self.assertEqual(run.call_args.kwargs["env"]["GCM_INTERACTIVE"], "never")   # never a sign-in window
+        github_labels._token.cache_clear()
+
+    def test_the_credential_goes_only_to_its_own_host(self):
+        seen = []
+
+        def capture(req, timeout):
+            seen.append((req.full_url, req.get_header("Authorization")))
+            raise github_labels.urllib.error.URLError("offline")
+        github_labels._token.cache_clear()
+        failed = subprocess.CompletedProcess([], 1, stdout="", stderr="")
+        with mock.patch.dict(os.environ, {"GH_TOKEN": "t0ken"}), \
+                mock.patch.object(github_labels.shutil, "which", return_value=None), \
+                mock.patch.object(github_labels.subprocess, "run", return_value=failed), \
+                mock.patch.object(github_labels.urllib.request, "urlopen", side_effect=capture):
+            github_labels.default_probe("GET", "https://api.github.com/repos/o/r/labels")
+            status, why = github_labels.default_probe("GET", "https://git.example.com/api/v3/repos/o/r/labels")
+        github_labels._token.cache_clear()
+        self.assertEqual(seen, [("https://api.github.com/repos/o/r/labels", "Bearer t0ken"),
+                                ("https://git.example.com/api/v3/repos/o/r/labels", None)])
+        self.assertEqual(status, 0)
+        self.assertNotIn("t0ken", str(why))
+
+    def test_pages_are_followed(self):
+        class Paged(FakeGitHub):
+            def __call__(self, method, url, body=None):
+                if method == "GET":
+                    self.calls.append((method, url, body))
+                    page = int(url.rsplit("page=", 1)[1])
+                    return 200, ([{"name": f"other-{i}"} for i in range(100)] if page == 1 else [{"name": "wontfix"}])
+                return super().__call__(method, url, body)
+        gh = Paged()
+        self.assertEqual(github_labels.check(self.root, gh).missing, DEFAULTS[:4])
 
 
 class TestTheVerifierAndRepairUseIt(LabelsBase):
     def _item(self, gh):
-        return {i.name: i for i in verify._collect(self.root, github_probe=gh)}["matt:labels"]
+        return {i.name: i for i in verify._collect(self.root, final=True, github_probe=gh)}["matt:labels"]
+
+    def test_only_final_verification_asks_github(self):
+        gh = FakeGitHub()
+        item = {i.name: i for i in verify._collect(self.root, github_probe=gh)}["matt:labels"]
+        self.assertEqual((item.state, gh.calls), ("NOT_VERIFIED", []))
 
     def test_the_item_fails_until_the_labels_exist(self):
         self.assertEqual(self._item(FakeGitHub(labels=["wontfix"])).state, "FAIL")
@@ -175,14 +244,101 @@ class TestTheVerifierAndRepairUseIt(LabelsBase):
                                           "ready-for-human on owner/project"])
         self.assertEqual(self._item(gh).state, "PASS")
 
-    def test_repair_reports_a_refusal_unresolved(self):
-        gh = FakeGitHub(refuse=403)
+    def _repair(self, gh):
         report = verify.Report(build="x", items=[self._item(gh)], gate_a=True, gate_b=False,
                                version_written=None, verdict="v")
         with mock.patch.object(verify.Report, "failing", new=property(lambda self: self.items)):
-            result = repair.repair(self.root, report, github_probe=gh)
+            return report, repair.repair(self.root, report, github_probe=gh)
+
+    def test_a_refused_create_is_the_one_authorization_instruction(self):
+        _, result = self._repair(FakeGitHub(labels=["wontfix"], refuse_writes=403))
         self.assertEqual(result.applied, [])
-        self.assertTrue(result.unresolved[0].startswith("matt:labels: GitHub answered HTTP 403"))
+        self.assertEqual(len(result.unresolved), 1)
+        self.assertIn("GH_TOKEN", result.unresolved[0])
+
+    def test_an_unreadable_repository_is_said_once_by_the_verifier_alone(self):
+        report, result = self._repair(FakeGitHub(refuse=403))
+        self.assertIn("GH_TOKEN", report.items[0].detail)
+        self.assertEqual(result.unresolved, [])
+
+
+class _R:
+    def __init__(self, rc, out):
+        self.returncode, self.stdout = rc, out
+
+
+class TestTheLifecycleWithAGitHubTracker(unittest.TestCase):
+    """Bootstrap, Matt's setup choosing GitHub Issues, then the Stop
+    continuation: the labels are created before FINAL-VERIFIED, a re-run
+    creates none, and a refusal reaches the OWNER exactly once."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name).resolve()
+        self.work, remote = tmp / "work", tmp / "remote.git"
+        self._env = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(tmp / "cfg")})
+        self._env.start()
+        git = lambda *a: subprocess.run(["git", "-C", str(self.work), *a], check=True, capture_output=True)
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+        self.work.mkdir()
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "t@example.com"); git("config", "user.name", "T")
+        # fetched from GitHub, pushed to a local bare repo: nothing leaves the machine
+        git("remote", "add", "origin", "https://github.com/owner/project.git")
+        git("remote", "set-url", "--push", "origin", str(remote))
+        (self.work / "README.md").write_text("project\n")
+        git("add", "README.md"); git("commit", "-q", "-m", "init")
+        tdir = evidence.transcript_dir(self.work); tdir.mkdir(parents=True)
+        ts = "2099-01-01T00:00:00.000Z"
+        (tdir / "s.jsonl").write_text("\n".join(json.dumps(r) for r in (
+            {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": evidence.GIT_DENY_PROBE}}]}},
+            {"type": "user", "timestamp": ts, "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "Permission to use Bash has been denied."}]}},
+        )) + "\n")
+        self.probes = {
+            "rtk_probe": lambda cmd: _R(0, "rtk 0.46.0\n"),
+            "plugin_probe": lambda cmd: _R(0, json.dumps([{"id": "rice@rice-bootstrap", "scope": "user",
+                                                           "version": evidence.build_version(), "enabled": True}])),
+        }
+        self.assertEqual(rice.bootstrap(self.work, archive=False, output_style=None, **self.probes).stage,
+                         "waiting-for-matt")
+        # Matt's setup: the OWNER chose GitHub Issues and the default vocabulary
+        claude_md = self.work / "CLAUDE.md"
+        claude_md.write_text(claude_md.read_text() + "\n## Agent skills\n\nGitHub Issues.\n")
+        agents = self.work / "docs" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "issue-tracker.md").write_text("# Issue tracker: GitHub\n\nIssues live in GitHub Issues.\n")
+        (agents / "triage-labels.md").write_text(TRIAGE_TEMPLATE)
+        (agents / "domain.md").write_text("owner answers\n")
+
+    def tearDown(self):
+        self._env.stop()
+        self._tmp.cleanup()
+
+    def test_the_labels_exist_before_final_verified_and_a_re_run_creates_none(self):
+        gh = FakeGitHub(labels=["wontfix", "bug"])
+        final = rice.continue_after_matt(self.work, github_probe=gh, **self.probes)
+        self.assertTrue(final.ok, final.lines)
+        self.assertEqual(gh.created(), ["needs-triage", "needs-info", "ready-for-agent", "ready-for-human"])
+        self.assertIn("created needs-triage", rice.continuation_message(self.work, final))
+        again = verify.run(self.work, final=True, github_probe=gh, **self.probes)
+        self.assertTrue(again.ok)
+        self.assertEqual(len(gh.created()), 4)  # nothing created twice
+
+    def test_a_refusal_is_one_instruction_to_the_owner_and_never_final_verified(self):
+        for gh in (FakeGitHub(labels=["wontfix"], refuse_writes=403), FakeGitHub(refuse=404)):
+            outcome = rice.continue_after_matt(self.work, github_probe=gh, **self.probes)
+            self.assertFalse(outcome.ok)
+            self.assertFalse((self.work / verify.VERSION_FILE).exists())
+            message = rice.continuation_message(self.work, outcome)
+            self.assertEqual(message.count("set GH_TOKEN"), 1, message)
+
+    def test_a_local_markdown_tracker_never_asks_github(self):
+        (self.work / "docs" / "agents" / "issue-tracker.md").write_text("# Issue tracker: Local Markdown\n")
+        gh = FakeGitHub()
+        self.assertTrue(rice.continue_after_matt(self.work, github_probe=gh, **self.probes).ok)
+        self.assertEqual(gh.calls, [])
 
 
 if __name__ == "__main__":

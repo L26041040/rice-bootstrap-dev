@@ -152,7 +152,7 @@ def repair(repo_root, report, *, plugin_probe=None, github_probe=None, **_unused
             created, repo, why = github_labels.create_missing(repo_root, github_probe)
             if created:
                 result.applied.append(f"{LABELS}: created {', '.join(created)} on {repo}")
-            if why:
+            if why and i.state != "NOT_VERIFIED":  # else the verifier's own line already says it, once
                 result.unresolved.append(f"{LABELS}: {why}")
         else:
             result.unresolved.append(f"{i.name}: {i.state}" + (f" -- {i.detail}" if i.detail else ""))

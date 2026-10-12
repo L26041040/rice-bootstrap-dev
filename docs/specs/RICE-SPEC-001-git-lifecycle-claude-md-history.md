@@ -234,7 +234,7 @@ behaviour up the moment a session loads the new build.
 
 - I25 Triage labels on GitHub (RICE-BOOTSTRAP-UX-FIX-001). When Matt's setup
   wrote a GitHub issue tracker (`docs/agents/issue-tracker.md` opens with
-  Matt's `# Issue tracker: GitHub`) and a triage vocabulary
+  Matt's `# Issue tracker: GitHub`, case and extra words aside) and a triage vocabulary
   (`docs/agents/triage-labels.md`), every label that vocabulary names MUST
   exist on the `origin` repository before FINAL-VERIFIED: Gate B item
   `matt:labels`. The names and descriptions come from Matt's file — never
@@ -242,8 +242,15 @@ behaviour up the moment a session loads the new build.
   ones (GitHub's case-insensitive names; a re-run creates nothing) through
   the REST API with the credential the environment already has (GH_TOKEN /
   GITHUB_TOKEN, git's credential helper, `gh auth token` when gh exists — gh
-  is never required). A refusal is NOT_VERIFIED / unresolved with one
-  authorization instruction, never a pass. Any other tracker: nothing runs.
+  is never required); a credential is sent only to its own host. `origin`
+  may be github.com (https, ssh, scp-style), a GitHub Enterprise host, or
+  the local git proxy Claude Code on the web puts in front of github.com.
+  Only final verification asks GitHub; Gate A runs never touch the network.
+  A refusal, an unreachable GitHub, a non-GitHub `origin` or a vocabulary
+  with no readable label is NOT_VERIFIED with its reason — on a refusal,
+  one authorization instruction — said once, by the verifier or by repair,
+  never both, and never a pass.
+  Any other tracker: nothing runs.
 - I26 One code block per formal report (RICE-BOOTSTRAP-UX-FIX-001). The
   bootstrapping session never loaded `.claude/rice.md`, so rice hands its
   "Conversation numbering" and "Single-block output" sections, in rice.md's
@@ -903,7 +910,21 @@ agent's summary of Matt's setup only through rules already in context.
 
 Flow, labels: Gate B reads the repository's labels (`github_labels.check`);
 missing ⇒ FAIL ⇒ repair creates them (`github_labels.create_missing`) ⇒
-Gate B again ⇒ FINAL-VERIFIED only once they exist on the remote. The
-upgrade matrix's Matt stand-in writes no GitHub tracker, so its rows are
-unaffected.
+Gate B again ⇒ FINAL-VERIFIED only once they exist on the remote. When
+GitHub refuses, the Stop continuation relays the one instruction to the
+OWNER as a formal report and the version file stays untouched. The
+upgrade matrix's Matt stand-in writes no GitHub tracker, so its rows stay
+offline and unaffected (pinned in `tests/test_upgrade_matrix.py`); the
+labels flow is pinned end to end in `tests/test_github_labels.py`.
+
+Flow, formatting: `rice.py bootstrap` prints rice.md's two output-rule
+sections to the agent (not inside the OWNER's verbatim block) whenever it
+hands over a directive, and every Stop continuation — passed, failed or
+blocked — carries them too, so the Matt summary and the finalization
+follow them before rice.md is loaded.
+
+Not verified in a real session: a Claude Code TUI with no `gh` at all —
+Claude Code on the web re-injects its own `gh` client into every session.
+Rice's path never called it there (the credential was GH_TOKEN); the
+unit tests pin the path with `gh` absent.
 
