@@ -73,6 +73,7 @@ PRECONDITIONS = ("plugin:build", VERSION_ITEM)
 
 GATE_B_EXTRA = (
     "matt:artifacts",
+    "matt:labels",
     "rtk",
 )
 

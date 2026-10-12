@@ -24,6 +24,11 @@ What is mechanically repairable here, and from where:
   guessing is exactly what this module refuses to do. Such an artifact is
   reported as unresolved, for the model to explain to the OWNER.
 
+- Matt's triage labels on GitHub (`matt:labels`) -- created from the
+  vocabulary Matt's setup wrote, only the ones the repository lacks
+  (`github_labels.create_missing`); a refusal is unresolved, with the one
+  authorization the OWNER has to give.
+
 Everything else the verifier can fail (`plugin:*`, `output-style:*`, the
 hook registrations of the build, `git-deny:behaves`, owner-defined settings
 keys, `rtk`) needs the environment, the OWNER, or a real execution; it is
@@ -40,6 +45,7 @@ import evidence  # noqa: E402
 import reconcile  # noqa: E402
 
 MATT = "matt:artifacts"
+LABELS = "matt:labels"
 
 
 @dataclass
@@ -111,7 +117,7 @@ def _restore_matt(repo_root: Path, plugin_probe) -> tuple[list[str], list[str]]:
 # the repair boundary
 # --------------------------------------------------------------------------
 
-def repair(repo_root, report, *, plugin_probe=None, **_unused) -> RepairResult:
+def repair(repo_root, report, *, plugin_probe=None, github_probe=None, **_unused) -> RepairResult:
     """Apply the known repair for every failure in `report.failing` -- the
     items the verifier required for the gate it just evaluated and did not
     get as PASS. Returns what was done and what could not be; says nothing
@@ -141,6 +147,13 @@ def repair(repo_root, report, *, plugin_probe=None, **_unused) -> RepairResult:
             applied, unresolved = _restore_matt(repo_root, plugin_probe)
             result.applied += applied
             result.unresolved += unresolved
+        elif i.name == LABELS:
+            import github_labels  # local: only this repair talks to GitHub
+            created, repo, why = github_labels.create_missing(repo_root, github_probe)
+            if created:
+                result.applied.append(f"{LABELS}: created {', '.join(created)} on {repo}")
+            if why:
+                result.unresolved.append(f"{LABELS}: {why}")
         else:
             result.unresolved.append(f"{i.name}: {i.state}" + (f" -- {i.detail}" if i.detail else ""))
     return result

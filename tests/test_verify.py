@@ -333,7 +333,7 @@ class TestVersionNotNewer(VerifierRunBase):
             "rice.md", "CLAUDE.md:import-line", "AGENTS.md:rice-pointer", "archive-hook:exists",
             "archive-sync-hook:exists", "continuation-hook:exists", "git-deny:behaves")
         self.assertEqual(verify.GATE_A, shipped_016 + (self.ITEM,))
-        self.assertEqual(verify.GATE_B_EXTRA, ("matt:artifacts", "rtk"))
+        self.assertEqual(verify.GATE_B_EXTRA, ("matt:artifacts", "matt:labels", "rtk"))
         self.assertEqual(len(settings_template.RICE_DENY_ENTRIES), 28)
         self.assertEqual(set(reconcile.OWNED_FILES), {".claude/rice.md", f".claude/{reconcile.MARKER_NAME}"})
 

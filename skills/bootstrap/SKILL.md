@@ -56,8 +56,12 @@ The output ends with a block marked
 --- present this to the OWNER verbatim ---
 ```
 
-Reply with exactly that block and **nothing after it** — no settings detail,
-no RTK line, no artifact list, no commit counts, no summary. Then do only
+Reply with your conversation number, then exactly that block inside one
+fenced code block, and **nothing outside it** — no settings detail, no RTK
+line, no artifact list, no commit counts, no summary. The command's output
+also carries rice's output rules for every formal report of this bootstrap
+(the summary after Matt's setup included); native choice prompts stay
+native. Then do only
 what it asks of *you*: commit and push when told; fix exactly what a blocker
 line names and run the same command again.
 

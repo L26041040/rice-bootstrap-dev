@@ -37,6 +37,7 @@ ALLOWLIST = (
     "scripts/delete_remote_branch.py",
     "scripts/session_context.py",
     "scripts/guard.py",
+    "scripts/github_labels.py",
     "output-styles/laodi.md",
     "resources/rice.md",
     "README.md",

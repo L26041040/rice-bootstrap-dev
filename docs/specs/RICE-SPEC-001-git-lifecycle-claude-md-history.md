@@ -9,7 +9,8 @@ upgrade compatibility, §15, I20–I23; corrected by RICE-OWNERSHIP-FIX-001; and
 RICE-FINAL-UX-REVIEW-001: I15, I18 and §14.4–14.5 as real sessions showed
 them, evidence in `docs/research/RICE-FINAL-UX-REVIEW-001-real-sessions.md`;
 and by RICE-UPDATE-PRESAVE-001: an update saves the OWNER's work first, I24
-and §14.8, evidence in `docs/research/RICE-UPDATE-PRESAVE-001-real-sessions.md`).
+and §14.8, evidence in `docs/research/RICE-UPDATE-PRESAVE-001-real-sessions.md`;
+and by RICE-BOOTSTRAP-UX-FIX-001: first-bootstrap UX, I25–I26 and §16).
 This document freezes an approved design; it does not reopen it.
 Base: rice 0.1.6 (private main `4e7f210`).
 
@@ -230,6 +231,27 @@ behaviour up the moment a session loads the new build.
   again. A repo with no remote at all cannot be saved, so it is not updated
   until one is added. Never a force push, history rewrite, branch deletion,
   stash, pull or merge; no setting, state file or git framework is added.
+
+- I25 Triage labels on GitHub (RICE-BOOTSTRAP-UX-FIX-001). When Matt's setup
+  wrote a GitHub issue tracker (`docs/agents/issue-tracker.md` opens with
+  Matt's `# Issue tracker: GitHub`) and a triage vocabulary
+  (`docs/agents/triage-labels.md`), every label that vocabulary names MUST
+  exist on the `origin` repository before FINAL-VERIFIED: Gate B item
+  `matt:labels`. The names and descriptions come from Matt's file — never
+  guessed, no colors (Matt defines none). Repair creates only the missing
+  ones (GitHub's case-insensitive names; a re-run creates nothing) through
+  the REST API with the credential the environment already has (GH_TOKEN /
+  GITHUB_TOKEN, git's credential helper, `gh auth token` when gh exists — gh
+  is never required). A refusal is NOT_VERIFIED / unresolved with one
+  authorization instruction, never a pass. Any other tracker: nothing runs.
+- I26 One code block per formal report (RICE-BOOTSTRAP-UX-FIX-001). The
+  bootstrapping session never loaded `.claude/rice.md`, so rice hands its
+  "Conversation numbering" and "Single-block output" sections, in rice.md's
+  own words, to the agent wherever it speaks during a bootstrap: the
+  command's output (before the verbatim block) and the Stop continuation.
+  The bootstrap skill presents the engine's block as the conversation
+  number plus one fenced code block, nothing outside it. Native choice
+  prompts and ordinary chat are untouched; Matt's skill is not modified.
 
 ---
 
@@ -855,3 +877,33 @@ them rice's, and rice does not guess project-owned state):
   container is read as rice's, the rule uninstall has always applied).
 - Uninstall leaves the blank line apply put before the import line when
   Matt's block follows it (whitespace only; fresh installs alike).
+
+---
+
+## 16. First-bootstrap UX (patch RICE-BOOTSTRAP-UX-FIX-001)
+
+Source: the OWNER's first install of 0.1.7. Two existing requirements were
+not met; neither adds a setting, state file or framework. Normative: I25,
+I26.
+
+Root cause, labels: Matt's official setup only writes the label vocabulary
+(`docs/agents/triage-labels.md`); it creates nothing on GitHub, and rice's
+verifier checked only that the file exists. Nothing owned the labels.
+
+Root cause, formatting: the rules live in `.claude/rice.md`, which CLAUDE.md
+imports when a session starts — the bootstrapping session started before
+the file existed (RICE-FINAL-UX-REVIEW-001). Rice's own instructions then
+pointed the other way: the skill said "reply with exactly that block", the
+Stop continuation "report FINAL-VERIFIED", neither naming the format.
+
+Where control lies: rice owns its skill, its command's output, its Stop
+continuation, its verifier and repair. Matt's skill, its questions and its
+own summary wording are Matt's and stay unmodified; rice reaches the
+agent's summary of Matt's setup only through rules already in context.
+
+Flow, labels: Gate B reads the repository's labels (`github_labels.check`);
+missing ⇒ FAIL ⇒ repair creates them (`github_labels.create_missing`) ⇒
+Gate B again ⇒ FINAL-VERIFIED only once they exist on the remote. The
+upgrade matrix's Matt stand-in writes no GitHub tracker, so its rows are
+unaffected.
+

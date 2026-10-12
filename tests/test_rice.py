@@ -712,6 +712,44 @@ class TestOnlyWhatRiceAndMattWroteIsCommitted(LifecycleBase):
         self.assertIn("never `git add -A`", skill)
 
 
+class TestFormalReportsFollowRicesOutputRules(LifecycleBase):
+    """RICE-BOOTSTRAP-UX-FIX-001: rice.md's output rules (a conversation
+    number, one code block per formal report) live in a file the
+    bootstrapping session never loaded. Rice hands them, from rice.md itself,
+    to the agent wherever it speaks during a bootstrap -- the command's own
+    output, the Stop continuation -- and the skill asks for the block."""
+
+    def _section(self, heading):
+        text = reconcile.RICE_MD_RESOURCE.read_text(encoding="utf-8")
+        body = text.split(heading + "\n", 1)[1].split("\n## ", 1)[0]
+        return body.strip()
+
+    def test_the_rules_are_rice_mds_own_words(self):
+        for heading in ("## Conversation numbering", "## Single-block output"):
+            self.assertIn(self._section(heading), rice.output_rules())
+
+    def test_the_bootstrap_command_hands_them_to_the_agent_not_the_owner(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rice.main(["bootstrap", str(self.root), "--archive", "1", "--output-style", "none"])
+        agent, _, owner = out.getvalue().partition("--- present this to the OWNER verbatim ---")
+        self.assertIn(self._section("## Single-block output"), agent)
+        self.assertNotIn(self._section("## Single-block output"), owner)
+        self.assertIn("Matt", agent)               # the summary after the OWNER's Matt setup too
+
+    def test_the_stop_continuation_asks_for_one_code_block(self):
+        self.bootstrap()
+        _matt_artifacts(self.root)
+        msg = rice.continuation_message(self.root, rice.continue_after_matt(self.root, **PROBES))
+        self.assertIn("one fenced code block", msg)
+        self.assertIn(self._section("## Conversation numbering"), msg)
+
+    def test_the_skill_presents_the_block_inside_one_code_block(self):
+        skill = (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertRegex(skill, r"(?is)conversation\s+number.*one\s+fenced\s+code\s+block")
+        self.assertRegex(skill, r"(?is)native\s+choice")    # menus stay native
+
+
 class TestTheOwnerIsAskedOnlyWhatIsUnanswered(LifecycleBase):
     """RICE-FINAL-UX-REVIEW-001: Step 1 asks exactly the choices bootstrap
     would still write. A re-run asks nothing -- in a real session the skill

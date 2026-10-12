@@ -106,6 +106,24 @@ def _matt_item(repo_root: Path, plugin_probe) -> ItemResult:
     return ItemResult("matt:artifacts", "PASS", "present: " + ", ".join([f"`{MATT_HEADING}`", *required]), kind=EXISTS)
 
 
+def _labels_item(repo_root: Path, github_probe) -> ItemResult:
+    """RICE-BOOTSTRAP-UX-FIX-001: when Matt's setup chose GitHub Issues, the
+    triage labels its vocabulary names exist on the repository. Read-only;
+    creating them is repair's."""
+    import github_labels  # local: it reads this module's Matt constants
+    c = github_labels.check(repo_root, github_probe)
+    if not c.applies:
+        return ItemResult("matt:labels", "PASS", "the issue tracker is not GitHub Issues (or names no triage "
+                          "labels): nothing to create", kind=EXISTS)
+    if c.error:
+        return ItemResult("matt:labels", "NOT_VERIFIED", f"triage labels on {c.repo or 'GitHub'}: {c.error}",
+                          kind=EXISTS)
+    if c.missing:
+        return ItemResult("matt:labels", "FAIL", f"triage labels missing on {c.repo}: {', '.join(c.missing)}",
+                          kind=EXISTS)
+    return ItemResult("matt:labels", "PASS", f"all {len(c.wanted)} triage labels present on {c.repo}", kind=EXISTS)
+
+
 def _default_rtk_probe(cmd):
     return subprocess.run(cmd, capture_output=True, text=True)
 
@@ -446,7 +464,7 @@ def _rtk_item(rtk_probe) -> ItemResult:
 
 
 
-def collect(repo_root, *, rtk_probe=None, plugin_probe=None) -> list[ItemResult]:
+def collect(repo_root, *, rtk_probe=None, plugin_probe=None, github_probe=None) -> list[ItemResult]:
     """Every environment fact the rubric needs, as items. No verdict, no
     gate, no write -- see this module's docstring.
 
@@ -466,5 +484,6 @@ def collect(repo_root, *, rtk_probe=None, plugin_probe=None) -> list[ItemResult]
     items.append(_continuation_hook_item())
     items.append(_git_deny_evidence_item(repo_root))
     items.append(_matt_item(repo_root, plugin_probe))
+    items.append(_labels_item(repo_root, github_probe))
     items.append(_rtk_item(rtk_probe))
     return items

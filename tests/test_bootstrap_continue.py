@@ -346,7 +346,7 @@ class TestSingleInvocationContract(unittest.TestCase):
         The skill's contract is to pass it on verbatim and add nothing."""
         skill = (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("present this to the OWNER verbatim", skill)
-        self.assertIn("nothing after it", skill)
+        self.assertIn("nothing outside it", skill)   # one code block, nothing before or after it
 
     def test_readme_describes_no_second_rice_invocation(self):
         readme = (REPO / "README.md").read_text(encoding="utf-8")

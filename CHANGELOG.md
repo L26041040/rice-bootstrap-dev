@@ -3,6 +3,22 @@
 All notable changes to the `rice` plugin. The top entry's version must equal
 `.claude-plugin/plugin.json`'s `version` (a release check).
 
+## [Unreleased]
+
+First-bootstrap fixes (RICE-BOOTSTRAP-UX-FIX-001):
+
+- **GitHub triage labels are created.** When Matt's setup chose GitHub
+  Issues, the labels its triage vocabulary names (`needs-triage`,
+  `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`, or the
+  OWNER's own names) are created on the repository if missing -- never twice
+  -- and FINAL-VERIFIED waits until GitHub has them. No gh CLI is needed; a
+  missing permission is one clear instruction, never a pretended pass.
+  Other trackers are left alone.
+- **Formal reports in one code block.** The bootstrap report, the summary
+  after Matt's setup and the finalization now follow rice.md's numbering and
+  single-block rules in the very session that bootstraps, before rice.md is
+  loaded. Native choice prompts are unchanged.
+
 ## [0.1.7] - 2026-10-09
 
 Branches that converge, a CLAUDE.md that stays clean, a session archive that
