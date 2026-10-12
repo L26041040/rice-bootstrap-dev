@@ -12,8 +12,9 @@ GitHub REST API with whatever credential the environment already has:
 GH_TOKEN / GITHUB_TOKEN, git's own credential helper, or `gh auth token`
 when gh happens to be installed -- gh is never required.
 
-Nothing here is a verdict: `evidence` asks `check`, `repair` calls
-`create_missing`, and the verifier alone decides.
+Nothing here is a verdict: final verification asks `item`, `repair` calls
+`create_missing`, and the verifier alone decides. The credential lookup
+lives inside `default_probe`, so a test replaces the whole network side.
 """
 import json
 import os
@@ -31,10 +32,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import evidence  # noqa: E402
+from reconcile import EXISTS, ItemResult  # noqa: E402
 
 TRACKER_DOC = evidence.MATT_REQUIRED_DOCS[0]
 GITHUB_TRACKER_HEADING = "# Issue tracker: GitHub"  # the first line of Matt's GitHub template
-LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")      # a git proxy in front of github.com (Claude Code on the web)
+WEB_GIT_PROXY_HOSTS = ("localhost", "127.0.0.1", "::1")  # Claude Code on the web's git proxy for github.com
 TIMEOUT_SECONDS = 15
 
 AUTHORIZE = ("give rice a GitHub credential that may manage issues on {repo} -- set GH_TOKEN (or "
@@ -46,6 +48,7 @@ AUTHORIZE = ("give rice a GitHub credential that may manage issues on {repo} -- 
 class Check:
     applies: bool = False                          # a GitHub tracker with a triage vocabulary
     repo: str = ""                                 # owner/name
+    api: str = ""                                  # its REST API base
     wanted: list = field(default_factory=list)     # [(name, meaning)] from Matt's file
     missing: list = field(default_factory=list)    # names not on the repository
     error: str = ""                                # why the repository could not be read
@@ -59,10 +62,10 @@ def vocabulary(repo_root) -> list[tuple[str, str]] | None:
     tracker, triage = repo_root / TRACKER_DOC, repo_root / evidence.MATT_TRIAGE_DOC
     if not (tracker.is_file() and triage.is_file()):
         return None
-    # Matt's template opens with `# Issue tracker: GitHub`; an agent adapting it
-    # may vary the case or add a word, never the tracker's name
+    # an agent adapting Matt's template may vary the case or add a word, never the tracker's name
+    heading, name = GITHUB_TRACKER_HEADING.lower().split(":")
     first = next((l.strip() for l in tracker.read_text(encoding="utf-8").splitlines() if l.strip()), "").lower()
-    if not (first.startswith("# issue tracker:") and "github" in first):
+    if not (first.startswith(heading + ":") and name.strip() in first):
         return None
     rows, seen = [], set()
     for line in triage.read_text(encoding="utf-8").splitlines():
@@ -88,7 +91,7 @@ def repository(repo_root) -> tuple[str, str] | None:
         return None
     host, _port, path = m.groups()
     parts = [p for p in path.split("/") if p]
-    if host in LOCAL_HOSTS:
+    if host in WEB_GIT_PROXY_HOSTS:
         if len(parts) >= 3 and parts[-3] == "git":
             return "https://api.github.com", f"{parts[-2]}/{parts[-1]}"
         return None
@@ -99,7 +102,7 @@ def repository(repo_root) -> tuple[str, str] | None:
 
 
 @lru_cache(maxsize=None)
-def _token(host: str = "github.com", cwd: str | None = None) -> str | None:
+def _token(host: str = "github.com") -> str | None:
     """A credential the environment already holds, for `host` only: the
     GH_TOKEN / GITHUB_TOKEN environment for github.com, else git's own
     credential helper for that host (never interactive), else `gh auth
@@ -112,7 +115,7 @@ def _token(host: str = "github.com", cwd: str | None = None) -> str | None:
     try:
         r = subprocess.run(["git", "-c", "credential.interactive=false", "credential", "fill"],
                            input=f"protocol=https\nhost={host}\n\n", capture_output=True, text=True,
-                           env=quiet, cwd=cwd, timeout=10)
+                           env=quiet, timeout=10)
         for line in r.stdout.splitlines() if r.returncode == 0 else []:
             if line.startswith("password=") and line[9:]:
                 return line[9:]
@@ -177,13 +180,35 @@ def check(repo_root, probe=None) -> Check:
     while True:
         status, payload = probe("GET", f"{api}/repos/{repo}/labels?per_page=100&page={page}")
         if status != 200 or not isinstance(payload, list):
-            return Check(applies=True, repo=repo, wanted=wanted, error=_refusal(status, payload, repo))
+            return Check(applies=True, repo=repo, api=api, wanted=wanted, error=_refusal(status, payload, repo))
         names |= {str(l.get("name", "")).lower() for l in payload if isinstance(l, dict)}
         if len(payload) < 100:
             break
         page += 1
-    return Check(applies=True, repo=repo, wanted=wanted,
+    return Check(applies=True, repo=repo, api=api, wanted=wanted,
                  missing=[n for n, _ in wanted if n.lower() not in names])
+
+
+def item(repo_root, probe=None) -> ItemResult:
+    """The `matt:labels` fact for final verification: when Matt's setup
+    chose GitHub Issues, the labels its vocabulary names exist on the
+    repository. Read-only; creating them is repair's."""
+    c = check(repo_root, probe)
+    if not c.applies:
+        return ItemResult("matt:labels", "PASS", "the issue tracker is not GitHub Issues (or names no triage "
+                          "labels): nothing to create", kind=EXISTS)
+    if c.error:
+        return ItemResult("matt:labels", "NOT_VERIFIED", f"triage labels on {c.repo or 'GitHub'}: {c.error}",
+                          kind=EXISTS)
+    if c.missing:
+        return ItemResult("matt:labels", "FAIL", f"triage labels missing on {c.repo}: {', '.join(c.missing)}",
+                          kind=EXISTS)
+    return ItemResult("matt:labels", "PASS", f"all {len(c.wanted)} triage labels present on {c.repo}", kind=EXISTS)
+
+
+def _already_exists(payload) -> bool:
+    errors = payload.get("errors", []) if isinstance(payload, dict) else []
+    return any(isinstance(e, dict) and e.get("code") == "already_exists" for e in errors)
 
 
 def create_missing(repo_root, probe=None) -> tuple[list[str], str, str]:
@@ -195,13 +220,12 @@ def create_missing(repo_root, probe=None) -> tuple[list[str], str, str]:
     c = check(repo_root, probe)
     if not c.applies or c.error:
         return [], c.repo, c.error
-    api, _ = repository(repo_root)
     meanings, created = dict(c.wanted), []
     for name in c.missing:
-        status, payload = probe("POST", f"{api}/repos/{c.repo}/labels",
+        status, payload = probe("POST", f"{c.api}/repos/{c.repo}/labels",
                                 {"name": name, "description": meanings.get(name, "")[:100]})
         if status == 201:
             created.append(name)
-        elif not (status == 422 and "already_exists" in json.dumps(payload)):
+        elif not (status == 422 and _already_exists(payload)):
             return created, c.repo, _refusal(status, payload, c.repo)
     return created, c.repo, ""

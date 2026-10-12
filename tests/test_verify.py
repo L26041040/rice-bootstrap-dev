@@ -85,7 +85,7 @@ class TestGateInvariant(unittest.TestCase):
             root = Path(d)
             _make_correct_repo(root)
             with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(root / "cfg")}):
-                items = _rubric(root, rtk_probe=_ok_rtk, plugin_probe=_installed)
+                items = verify._collect(root, final=True, rtk_probe=_ok_rtk, plugin_probe=_installed)
         names = {i.name for i in items}
         self.assertEqual(names - set(verify.GATE_B), set(), "unrequired items exist")
         self.assertEqual(set(verify.GATE_B) - names, set(), "required items the rubric never produces")

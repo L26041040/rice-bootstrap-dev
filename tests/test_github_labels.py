@@ -219,8 +219,8 @@ class TestTheVerifierAndRepairUseIt(LabelsBase):
 
     def test_only_final_verification_asks_github(self):
         gh = FakeGitHub()
-        item = {i.name: i for i in verify._collect(self.root, github_probe=gh)}["matt:labels"]
-        self.assertEqual((item.state, gh.calls), ("NOT_VERIFIED", []))
+        names = {i.name for i in verify._collect(self.root, github_probe=gh)}
+        self.assertEqual(("matt:labels" in names, gh.calls), (False, []))
 
     def test_the_item_fails_until_the_labels_exist(self):
         self.assertEqual(self._item(FakeGitHub(labels=["wontfix"])).state, "FAIL")

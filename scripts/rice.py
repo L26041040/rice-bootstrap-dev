@@ -586,10 +586,14 @@ def continuation_message(repo_root, outcome: Outcome) -> str:
     """What the Stop hook hands back to the model. The verifier's own verdict
     and reasons, verbatim, plus the one instruction that belongs to this
     lifecycle: finish the job in this same turn, and never write Matt's
-    content or send the OWNER back to rice."""
+    content or send the OWNER back to rice -- and, whatever the outcome,
+    rice's output rules for the report that follows."""
+    return f"{_continuation(repo_root, outcome)}\n\n{output_rules()}"
+
+
+def _continuation(repo_root, outcome: Outcome) -> str:
     if outcome.blocked and outcome.directive:
-        return ("rice: " + "\n".join(outcome.directive) + "\nThis hook stays quiet for the rest of this turn."
-                + f"\n\n{output_rules()}")
+        return "rice: " + "\n".join(outcome.directive) + "\nThis hook stays quiet for the rest of this turn."
     if outcome.ok:
         repaired = ""
         if outcome.repaired and outcome.repaired.applied:
@@ -601,7 +605,7 @@ def continuation_message(repo_root, outcome: Outcome) -> str:
             f"Matt and finalization changes ({COMMIT_ONLY}), then report `{outcome.verdict}` "
             f"to the OWNER as one formal report -- your conversation number, then one fenced code block"
             f" holding the verdict, what you committed and pushed, and this line: {WHEN_RULES_LOAD} --"
-            f" and nothing outside it.\n\n{output_rules()}"
+            f" and nothing outside it."
         )
     done = outcome.repaired
     repaired = "\n".join(f"  - {a}" for a in done.applied) if done and done.applied else "  - nothing was mechanically repairable"
@@ -620,7 +624,7 @@ def continuation_message(repo_root, outcome: Outcome) -> str:
         "setup can produce it. Then finish the job in this same turn by running "
         f"`python3 {VERIFIER} {repo_root} --final` yourself. Whatever is the OWNER's to do -- a "
         "missing Matt artifact, a GitHub credential -- goes to them once, as one formal report. This "
-        f"hook stays quiet for the rest of this turn.\n\n{output_rules()}"
+        "hook stays quiet for the rest of this turn."
     )
 
 
