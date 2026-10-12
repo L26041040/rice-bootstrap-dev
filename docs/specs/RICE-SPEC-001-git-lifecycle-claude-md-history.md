@@ -255,7 +255,10 @@ behaviour up the moment a session loads the new build.
   bootstrapping session never loaded `.claude/rice.md`, so rice hands its
   "Conversation numbering" and "Single-block output" sections, in rice.md's
   own words, to the agent wherever it speaks during a bootstrap: the
-  command's output (before the verbatim block) and the Stop continuation.
+  command's output (before the verbatim block), every Stop continuation,
+  and -- while the waiting marker exists -- each OWNER prompt, through a
+  UserPromptSubmit hook (`session_context.py --prompt`) that is silent at
+  any other time.
   The bootstrap skill presents the engine's block as the conversation
   number plus one fenced code block, nothing outside it. Native choice
   prompts and ordinary chat are untouched; Matt's skill is not modified.
@@ -920,8 +923,12 @@ labels flow is pinned end to end in `tests/test_github_labels.py`.
 Flow, formatting: `rice.py bootstrap` prints rice.md's two output-rule
 sections to the agent (not inside the OWNER's verbatim block) whenever it
 hands over a directive, and every Stop continuation — passed, failed or
-blocked — carries them too, so the Matt summary and the finalization
-follow them before rice.md is loaded.
+blocked — carries them too. In a real session that was not enough for the
+summary of Matt's setup (one run of three wrote it outside a code block),
+so while the bootstrap waits for Matt, rice's UserPromptSubmit hook adds
+the same sections to each OWNER prompt (the Matt command, Matt's own
+follow-up answers); outside that window it prints nothing. Matt's draft
+for approval is Matt's own interaction, not a formal report.
 
 Not verified in a real session: a Claude Code TUI with no `gh` at all —
 Claude Code on the web re-injects its own `gh` client into every session.

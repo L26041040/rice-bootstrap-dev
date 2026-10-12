@@ -34,6 +34,7 @@ import export_public  # noqa: E402
 import reconcile  # noqa: E402
 import repair  # noqa: E402
 import rice  # noqa: E402
+import session_context  # noqa: E402
 import settings_template  # noqa: E402
 import verify  # noqa: E402
 
@@ -743,6 +744,29 @@ class TestFormalReportsFollowRicesOutputRules(LifecycleBase):
         msg = rice.continuation_message(self.root, rice.continue_after_matt(self.root, **PROBES))
         self.assertIn("one fenced code block", msg)
         self.assertIn(self._section("## Conversation numbering"), msg)
+
+    def _prompt_context(self, root):
+        out = io.StringIO()
+        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps({"cwd": str(root)}))), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(session_context.main(["--prompt"]), 0)
+        return out.getvalue()
+
+    def test_every_prompt_of_the_matt_window_carries_them_and_no_other_prompt_does(self):
+        """In a real session the agent's summary of Matt's setup ignored the
+        rules it was handed once, at the hand-off; while the bootstrap waits
+        for Matt, each of the OWNER's prompts carries them again."""
+        self.assertEqual(self._prompt_context(self.root), "")             # before rice
+        self.bootstrap()
+        self.assertIn(self._section("## Single-block output"), self._prompt_context(self.root))
+        _matt_artifacts(self.root)
+        self.assertTrue(rice.continue_after_matt(self.root, **PROBES).ok)
+        self.assertEqual(self._prompt_context(self.root), "")             # finalized: ordinary chat
+
+    def test_the_prompt_hook_is_wired(self):
+        item = evidence._hook_wired_item("prompt-context", "UserPromptSubmit", None,
+                                         "session_context.py", "session_context.py", "--prompt")
+        self.assertEqual(item.state, "PASS", item.detail)
 
     def test_the_skill_presents_the_block_inside_one_code_block(self):
         skill = (REPO / "skills" / "bootstrap" / "SKILL.md").read_text(encoding="utf-8")

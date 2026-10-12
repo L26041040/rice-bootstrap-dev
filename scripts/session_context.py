@@ -15,6 +15,13 @@ in real sessions a context-only line never reached them
 verified, anything not MAJOR.MINOR.PATCH, a waiting bootstrap -- adds
 nothing, and the line keeps no state: it is a pure function of the two
 versions and the existing waiting marker.
+
+With `--prompt` it is rice's UserPromptSubmit context instead
+(RICE-BOOTSTRAP-UX-FIX-001): while a bootstrap waits for the OWNER's Matt
+setup -- the window in which the bootstrapping session has still not loaded
+`.claude/rice.md` -- every prompt carries rice's output rules, so the
+summary of Matt's setup follows them; in a real session the rules given
+once, at the hand-off, were not enough. Silent outside that window.
 """
 import json
 import sys
@@ -48,6 +55,14 @@ def staleness(repo_root) -> str | None:
             "Run /rice:bootstrap to bring it up to date (it first commits and pushes your work).")
 
 
+def prompt_context(repo_root) -> str | None:
+    """rice's output rules while a bootstrap waits for Matt's setup, else None."""
+    if not reconcile.is_waiting_for_matt(repo_root):
+        return None
+    import rice  # local: only this window needs the lifecycle module
+    return rice.output_rules()
+
+
 def _cwd() -> Path:
     try:
         payload = json.loads(sys.stdin.read())
@@ -57,10 +72,15 @@ def _cwd() -> Path:
     return Path(cwd) if cwd else Path.cwd()
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
     try:
         repo_root = _cwd()
-        if HELPER.exists() and reconcile.rice_installed_here(repo_root):
+        if "--prompt" in argv:
+            rules = prompt_context(repo_root)
+            if rules:
+                print(rules)
+        elif HELPER.exists() and reconcile.rice_installed_here(repo_root):
             helper_line = context(repo_root)
             try:
                 line = staleness(repo_root)

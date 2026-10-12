@@ -17,7 +17,10 @@ First-bootstrap fixes (RICE-BOOTSTRAP-UX-FIX-001):
 - **Formal reports in one code block.** The bootstrap report, the summary
   after Matt's setup and the finalization now follow rice.md's numbering and
   single-block rules in the very session that bootstraps, before rice.md is
-  loaded. Native choice prompts are unchanged.
+  loaded: the bootstrap command and every Stop continuation carry them, and
+  while a bootstrap waits for Matt's setup each prompt does too (a new
+  UserPromptSubmit hook, silent at any other time). Native choice prompts
+  are unchanged.
 
 ## [0.1.7] - 2026-10-09
 
