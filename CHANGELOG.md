@@ -3,7 +3,7 @@
 All notable changes to the `rice` plugin. The top entry's version must equal
 `.claude-plugin/plugin.json`'s `version` (a release check).
 
-## [Unreleased]
+## [0.1.9] - 2026-10-13
 
 One-command update (RICE-ONE-COMMAND-UPDATE-001):
 
