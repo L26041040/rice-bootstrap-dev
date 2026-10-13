@@ -15,10 +15,12 @@ You are the adapter for one command. Every decision belongs to
 python3 "<plugin root>/scripts/update.py" <repo_root>
 ```
 
-It can take a few minutes (a marketplace refresh, then the update itself):
-give the command a long timeout, and let it finish. Run nothing else before
-it: no `git`, no `claude plugin ...`, no probing. It asks the OWNER nothing
-and saves their work itself.
+`<plugin root>` is the directory two levels above this skill's base
+directory; `<repo_root>` is the git top-level of the working directory. It
+can take a few minutes (a marketplace refresh, the update, then the repo):
+give the command a timeout of 600000 ms and let it finish. Run nothing else
+before it: no `git`, no `claude plugin ...`, no probing. It asks the OWNER
+nothing and saves their work itself.
 
 ## 2 — Pass its words on
 

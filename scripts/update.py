@@ -2,8 +2,10 @@
 """rice update (RICE-ONE-COMMAND-UPDATE-001): the plugin and this repo, to the
 latest release, from one command in the running session.
 
-Facts this rests on, each probed in a real interactive session (see
-docs/research/RICE-ONE-COMMAND-UPDATE-001-feasibility.md):
+Facts this rests on, each probed in a real interactive Claude Code session
+(auto permission mode, inside a Claude Code on the web container, against a
+local git marketplace -- see docs/research/RICE-ONE-COMMAND-UPDATE-001-feasibility.md
+for what was and was not verified):
 
   * `claude plugin marketplace update` + `claude plugin update`, run from
     the Bash tool, install the new build under its own version directory
@@ -42,6 +44,7 @@ PLUGIN_KEY = settings_template.PLUGIN_KEY
 MARKETPLACE = settings_template.MARKETPLACE_NAME
 SCOPE = evidence.CANONICAL_SCOPE
 CLI_TIMEOUT_SECONDS = 150           # the CLI's own clone/refresh timeouts are 120s
+ENGINE_TIMEOUT_SECONDS = 900        # the repo update: a save (its push gives up at 60s), then the gates
 VERBATIM = "--- present this to the OWNER verbatim ---"   # the engine's own marker
 MANUAL = (f"claude plugin marketplace update {MARKETPLACE}; claude plugin update {PLUGIN_KEY}; "
           "then /reload-plugins (or a new session) and /rice:bootstrap")
@@ -66,7 +69,7 @@ def default_run(cmd, timeout=CLI_TIMEOUT_SECONDS) -> Run:
 
 def _brief(text: str, limit: int = 200) -> str:
     """One line of a CLI's explanation, its end kept: the cause comes last."""
-    one = " ".join(str(text).split())
+    one = " ".join(str(text).replace("`", "'").split())      # a CLI's text must not close the OWNER's code block
     return one if len(one) <= limit else "..." + one[-(limit - 3):]
 
 
@@ -82,18 +85,19 @@ def _json_line(text: str) -> dict:
     return {}
 
 
-def _installed(run) -> tuple[dict | None, str]:
+def _installed(run) -> tuple[dict | None, str, bool]:
     """(the canonical rice install as `claude plugin list --json` reports it,
-    why there is none). What a supported install is stays
-    `evidence.classify_install`'s decision; the entry itself is
-    `evidence.installed_entries`'."""
+    why there is none, whether the by-hand update is the remedy). What a
+    supported install is stays `evidence.classify_install`'s decision -- its
+    own detail already carries the commands for a duplicate install -- and
+    the entry itself is `evidence.installed_entries`'."""
     listing = run(["claude", "plugin", "list", "--json"])
     probe = lambda cmd: listing                                    # noqa: E731 - one list call, both reads
     _, state, detail, _ = evidence.classify_install(probe)
     if state != "PASS":
-        return None, detail
+        return None, detail, state != "FAIL"
     entries, _ = evidence.installed_entries(probe)
-    return next((e for e in entries if e.get("scope") == SCOPE), None), "no user-scope rice install"
+    return next((e for e in entries if e.get("scope") == SCOPE), None), "no user-scope rice install", True
 
 
 @dataclass
@@ -108,12 +112,12 @@ def _stop(why: str, *more: str) -> Outcome:
     return Outcome(False, [why, *more, "Nothing in this repo was changed."])
 
 
-def update(repo_root, *, run=default_run, bootstrap=None) -> Outcome:
+def update(repo_root, *, run=default_run, engine=None) -> Outcome:
     repo_root = Path(repo_root)
-    bootstrap = bootstrap or _bootstrap
-    before, why = _installed(run)
+    engine = engine or _engine
+    before, why, by_hand = _installed(run)
     if before is None:
-        return _stop(f"rice cannot be updated from here: {why}", f"By hand: {MANUAL}.")
+        return _stop(f"rice cannot be updated from here: {why}", *([f"By hand: {MANUAL}."] if by_hand else []))
     old = str(before.get("version"))
 
     refresh = run(["claude", "plugin", "marketplace", "update", MARKETPLACE, "--json"])
@@ -126,10 +130,12 @@ def update(repo_root, *, run=default_run, bootstrap=None) -> Outcome:
     if step.returncode != 0 or result.get("outcome") != "ok":
         reason = _brief(result.get("message") or step.stderr or f"exit {step.returncode}")
         return _stop(f"The rice plugin could not be updated: {reason}",
-                     *([f"(the marketplace could not be refreshed either: {refresh_why})"] if refresh_why else []))
+                     *([f"(the marketplace could not be refreshed either: {refresh_why})"] if refresh_why else []),
+                     *(["The plugin may be half-updated; running this command again checks and finishes it."]
+                       if step.returncode == 124 else []))
 
     # read back what is installed -- never trust the update's own message
-    after, why = _installed(run)
+    after, why, _ = _installed(run)
     if after is None:
         return _stop(f"The plugin update ran, but the install can no longer be read: {why}")
     new, root = str(after.get("version")), Path(str(after.get("installPath")))
@@ -153,25 +159,37 @@ def update(repo_root, *, run=default_run, bootstrap=None) -> Outcome:
         # repo's first attempt may have asked for a re-run, which must not read as "nothing was updated"
         plugin = f"rice plugin: {new} is installed (this session started on {loaded})."
     elif refreshed:
-        plugin = f"rice plugin: already at the latest release ({new})."
+        # a pinned marketplace is "no newer release offered" too, never "latest"
+        plugin = f"rice plugin: no newer release is offered; rice {new} stays installed."
     else:
         plugin = (f"rice plugin: could not check for a newer release ({refresh_why}); "
                   f"staying on the installed {new}.")
     notes = [plugin]
     if loaded != new:
-        notes.append(f"This session's hooks and skills are still rice {loaded}; "
-                     f"/reload-plugins (or a new session) loads {new}. Nothing else depends on it.")
+        notes.append(f"This session's hooks and skills are still rice {loaded}; /reload-plugins (or a new "
+                     f"session) loads {new}.")
 
     if not reconcile.rice_installed_here(repo_root):
         return Outcome(True, [*notes, "This repo is not set up for rice yet: run /rice:bootstrap once to set it up."])
-    out, rc = bootstrap(root, repo_root)
+    open_choices, _ = engine("questions", root, repo_root)
+    if open_choices.strip():
+        return Outcome(False, [*notes, "This repo's rice setup has unanswered choices "
+                              f"({', '.join(open_choices.split())}), which only /rice:bootstrap asks: run it "
+                              "after /reload-plugins or in a new session. The repo was not updated."])
+    out, rc = engine("bootstrap", root, repo_root)
+    if rc != 0 and VERBATIM not in out:
+        notes.append(f"The repo update FAILED (exit {rc}) without a report of its own; nothing is recorded as "
+                     "updated. Run this command again.")
     return Outcome(rc == 0, notes, out, rc)
 
 
-def _bootstrap(root: Path, repo_root: Path) -> tuple[str, int]:
-    """The installed build's own bootstrap -- the repo update -- run by path."""
-    r = subprocess.run([sys.executable, str(root / "scripts" / "rice.py"), "bootstrap", str(repo_root)],
-                       capture_output=True, text=True)
+def _engine(verb: str, root: Path, repo_root: Path) -> tuple[str, int]:
+    """The installed build's own engine verb -- the repo update -- run by path."""
+    try:
+        r = subprocess.run([sys.executable, str(root / "scripts" / "rice.py"), verb, str(repo_root)],
+                           capture_output=True, text=True, timeout=ENGINE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return f"rice {verb} timed out after {ENGINE_TIMEOUT_SECONDS}s", 124
     return r.stdout + (r.stderr if r.returncode else ""), r.returncode
 
 

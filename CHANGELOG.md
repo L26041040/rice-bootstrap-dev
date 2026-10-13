@@ -10,9 +10,9 @@ One-command update (RICE-ONE-COMMAND-UPDATE-001):
 - **`/rice:update`.** One command, in the running session: it refreshes the
   marketplace, updates the plugin, reads back what is installed, then runs
   the installed build's bootstrap on the repo (saving your work first) and
-  ends in the verifier's verdict. It asks nothing, never says "latest" without
-  having checked, refuses a build that declares no version, and can simply be
-  run again after a failure. The session's own hooks load the new build after
+  ends in the verifier's verdict. It asks nothing, never says a newer release
+  is not offered without having checked, refuses a build that declares no
+  version, and can simply be run again after a failure. The session's own hooks load the new build after
   `/reload-plugins` or in a new session, and the report says so. The staleness
   line at session start now points to `/rice:update`.
 

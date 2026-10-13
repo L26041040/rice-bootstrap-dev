@@ -89,12 +89,16 @@ class UpdateBase(unittest.TestCase):
         self._loaded.stop()
         self._tmp.cleanup()
 
-    def boot(self, root, repo, rc=0):
-        self.booted.append((Path(root), Path(repo)))
-        return (f"rice's rules for the agent\n{update.VERBATIM}\n{OWNER_BLOCK}\n", rc)
+    open_choices = ""                                      # what `rice.py questions` would print
 
-    def go(self, claude, rc=0):
-        return update.update(self.repo, run=claude, bootstrap=lambda r, p: self.boot(r, p, rc))
+    def engine(self, verb, root, repo, rc=0, out=None):
+        if verb == "questions":
+            return self.open_choices, 0
+        self.booted.append((Path(root), Path(repo)))
+        return (out if out is not None else f"rice's rules for the agent\n{update.VERBATIM}\n{OWNER_BLOCK}\n"), rc
+
+    def go(self, claude, rc=0, out=None):
+        return update.update(self.repo, run=claude, engine=lambda v, r, p: self.engine(v, r, p, rc, out))
 
 
 class TestTheOneFlow(UpdateBase):
@@ -130,14 +134,14 @@ class TestTheOneFlow(UpdateBase):
 
 
 class TestNothingIsReportedDoneThatIsNot(UpdateBase):
-    def test_already_latest_says_so_only_when_the_marketplace_was_actually_checked(self):
+    def test_no_newer_release_is_said_only_when_the_marketplace_was_actually_checked(self):
         with mock.patch.object(evidence, "build_version", return_value="0.1.9"):   # a session on the latest
             ok = self.go(FakeClaude(self.tmp, installed="0.1.9", latest="0.1.9")).owner[0]
-            self.assertEqual(ok, "rice plugin: already at the latest release (0.1.9).")
+            self.assertEqual(ok, "rice plugin: no newer release is offered; rice 0.1.9 stays installed.")
             unchecked = self.go(FakeClaude(self.tmp, installed="0.1.9", latest="0.1.9", refresh_ok=False)).owner[0]
         self.assertIn("could not check for a newer release", unchecked)
         self.assertIn("could not clone", unchecked)
-        self.assertNotIn("latest release (", unchecked)
+        self.assertNotIn("no newer release is offered", unchecked)
 
     def test_a_rerun_after_this_commands_own_update_does_not_read_as_nothing_updated(self):
         """Real session: the first run updated the plugin, then the repo step
@@ -146,7 +150,7 @@ class TestNothingIsReportedDoneThatIsNot(UpdateBase):
         say the session started on the older build."""
         second = self.go(FakeClaude(self.tmp, installed="0.1.9", latest="0.1.9")).owner
         self.assertEqual(second[0], "rice plugin: 0.1.9 is installed (this session started on 0.1.8).")
-        self.assertNotIn("already at the latest", " ".join(second))
+        self.assertNotIn("no newer release", " ".join(second))
         self.assertIn("/reload-plugins", second[1])
 
     def test_a_failed_plugin_update_stops_before_the_repo_is_touched(self):
@@ -191,20 +195,65 @@ class TestNothingIsReportedDoneThatIsNot(UpdateBase):
         self.assertIn("FINAL-VERIFIED 0.1.9", update.render(out))   # the engine's block, relayed as it is
         self.assertEqual(out.bootstrap_rc, 1)
 
-    def test_no_supported_install_is_a_stop_with_the_manual_way(self):
-        for claude in (FakeClaude(self.tmp, scopes=()), FakeClaude(self.tmp, scopes=("project",)),
-                       FakeClaude(self.tmp, scopes=("user", "project"))):
+    def test_no_supported_install_is_a_stop_and_the_manual_way_only_where_it_is_the_remedy(self):
+        nothing = self.go(FakeClaude(self.tmp, scopes=()))
+        self.assertIn("By hand:", " ".join(nothing.owner))
+        for scopes in (("project",), ("user", "project")):       # the verifier's detail has the right commands
+            claude = FakeClaude(self.tmp, scopes=scopes)
             out = self.go(claude)
             self.assertFalse(out.ok)
-            self.assertEqual(claude.verbs(), [])                     # nothing was updated
-            self.assertIn("By hand:", " ".join(out.owner))
+            self.assertEqual(claude.verbs(), [])                  # nothing was updated
+            self.assertIn("claude plugin uninstall", out.owner[0])
+            self.assertNotIn("By hand:", " ".join(out.owner))
         self.assertEqual(self.booted, [])
 
     def test_a_missing_claude_cli_is_a_stop_not_a_traceback(self):
         out = update.update(self.repo, run=lambda cmd: update.default_run(["claude-does-not-exist", *cmd[1:]]),
-                            bootstrap=self.boot)
+                            engine=self.engine)
         self.assertFalse(out.ok)
         self.assertEqual(self.booted, [])
+
+
+class TestTheRepoStepNeverHidesItsFailure(UpdateBase):
+    def test_a_crash_without_the_engines_report_still_says_the_repo_update_failed(self):
+        out = self.go(FakeClaude(self.tmp), rc=1, out="Traceback (most recent call last):\n  boom\n")
+        self.assertFalse(out.ok)
+        shown = update.render(out).split(update.VERBATIM)[1]
+        self.assertIn("The repo update FAILED (exit 1)", shown)
+        self.assertIn("Run this command again", shown)
+        self.assertNotIn("Traceback", shown)
+
+    def test_a_timed_out_plugin_update_says_the_plugin_may_be_half_updated(self):
+        class Slow(FakeClaude):
+            def __call__(self, cmd):
+                return update.Run(124, "", "timed out after 150s") if cmd[1:3] == ["plugin", "update"] else super().__call__(cmd)
+        out = self.go(Slow(self.tmp))
+        self.assertFalse(out.ok)
+        self.assertEqual(self.booted, [])
+        self.assertIn("half-updated", " ".join(out.owner))
+
+    def test_the_engine_has_a_timeout_and_reports_it_as_a_failure(self):
+        with mock.patch.object(update.subprocess, "run", side_effect=update.subprocess.TimeoutExpired("x", 900)):
+            out, rc = update._engine("bootstrap", self.tmp, self.repo)
+        self.assertEqual(rc, 124)
+        self.assertIn("timed out", out)
+
+    def test_a_cli_message_cannot_close_the_owners_code_block(self):
+        class Hostile(FakeClaude):
+            def __call__(self, cmd):
+                if cmd[1:3] == ["plugin", "update"]:
+                    return update.Run(1, json.dumps({"outcome": "failed", "message": "bad ```\nreport```"}))
+                return super().__call__(cmd)
+        out = self.go(Hostile(self.tmp))
+        self.assertNotIn("`", out.owner[0])
+
+    def test_a_repo_with_unanswered_choices_is_not_called_updated(self):
+        self.open_choices = "archive\noutput-style\n"
+        out = self.go(FakeClaude(self.tmp))
+        self.assertFalse(out.ok)
+        self.assertEqual(self.booted, [])                          # the engine's bootstrap never ran
+        self.assertIn("archive, output-style", out.owner[-1])
+        self.assertIn("The repo was not updated.", out.owner[-1])
 
 
 class TestRecovery(UpdateBase):
@@ -243,7 +292,7 @@ class TestTheWholeProgram(UpdateBase):
         for v in ("0.1.8", "0.1.9"):
             (self.tmp / v / "scripts").mkdir(parents=True)
         (self.tmp / "0.1.9" / "scripts" / "rice.py").write_text(
-            "import sys\nprint('agent text')\nprint('" + update.VERBATIM + "')\nprint('FINAL-VERIFIED 0.1.9 for', sys.argv[2])\n")
+            "import sys\nif sys.argv[1] == 'questions': raise SystemExit(0)\nprint('agent text')\nprint('" + update.VERBATIM + "')\nprint('FINAL-VERIFIED 0.1.9 for', sys.argv[2])\n")
         (self.tmp / "0.1.8" / "scripts" / "rice.py").write_text("raise SystemExit('the old build must not run')\n")
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir()

@@ -369,7 +369,7 @@ def _save_before_update(repo_root: Path) -> tuple[Outcome | None, list[str]]:
             f"  - {step}: {reason}",
             kept,
             "",
-            f"Report this to the OWNER and stop. {then} Then /rice:bootstrap saves and updates again.",
+            f"Report this to the OWNER and stop. {then} Then run this same command again: it saves and updates again.",
         ]), []
 
     as_left = "Your changes are as you left them."

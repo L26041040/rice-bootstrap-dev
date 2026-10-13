@@ -284,11 +284,17 @@ behaviour up the moment a session loads the new build.
   and ends in the verifier's verdict; a repo rice never set up is left for
   its first `/rice:bootstrap`. The OWNER-facing block starts with one line
   of what the plugin step did (`updated a -> b`, `b is installed (this
-  session started on a)`, `already at the latest release (b)` only when the
-  marketplace was actually checked, or `could not check ... staying on b`),
-  and says that this session's hooks and skills load the new build after
-  `/reload-plugins` or in a new session whenever the loaded build differs
-  from the installed one. The model MUST NOT reload plugins (it cannot) and
+  session started on a)`, `no newer release is offered` only when the
+  marketplace was actually checked — never "latest", since a pinned
+  marketplace offers nothing newer by design — or `could not check ...
+  staying on b`), and says that this session's hooks and skills load the
+  new build after `/reload-plugins` or in a new session whenever the loaded
+  build differs from the installed one. A repo whose rice choices are still
+  unanswered (`rice.py questions` prints any) is not updated and is not
+  called updated: only `/rice:bootstrap` can ask them. An engine failure
+  that leaves no report of its own is stated as a failed repo update. The
+  by-hand commands are offered only where they are the remedy (not for a
+  duplicate install, whose detail names the right ones). The model MUST NOT reload plugins (it cannot) and
   the command MUST NOT claim a reload. Re-running is the recovery: each step
   already done reports so and the next runs; no state is kept. The engine
   and verifier decide the repo's outcome; `update.py` writes nothing in the
@@ -976,7 +982,9 @@ the platform's update on itself. Normative: I15 (amended), I27. Evidence:
 `docs/research/RICE-ONE-COMMAND-UPDATE-001-feasibility.md`.
 
 Why the earlier objections no longer hold, each by a probe in a real
-interactive session:
+interactive Claude Code session (inside a Claude Code on the web container,
+auto permission mode, a local git marketplace; a brand-new web session from
+the web UI with the public marketplace is NOT VERIFIED):
 
 - "Undocumented whether a plugin may update itself from a session": the CLI
   updates the cache from the Bash tool of a running session (exit 0, JSON
@@ -1002,7 +1010,7 @@ written); the same command is the retry.
 Real-session finding folded in: the bootstrap's git-deny probe round asks the
 agent to re-run the command; the second run finds the plugin already
 installed, so its first line is `b is installed (this session started on a)`
-rather than "already at the latest release".
+rather than "no newer release is offered".
 
 Not built, and why: no automatic reload (impossible for the model: probed);
 no auto-update setting or background check (the platform has them, per
