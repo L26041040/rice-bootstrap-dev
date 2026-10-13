@@ -113,6 +113,23 @@ def _default_rtk_probe(cmd):
 _default_plugin_probe = _default_rtk_probe
 
 
+def on_web() -> bool:
+    """Is this a Claude Code on the web (remote) session? Claude Code sets
+    CLAUDE_CODE_REMOTE=true there. `/reload-plugins` does not work in such a
+    session (RICE-WEB-UPDATE-DOC-001): a new session is the only way a build
+    installed mid-session gets loaded."""
+    return os.environ.get("CLAUDE_CODE_REMOTE") == "true"
+
+
+def new_session_advice(*, parenthesised: bool = True) -> str:
+    """How to get an already-installed build loaded: where /reload-plugins
+    works, either of the two; on the web, a new session only."""
+    if on_web():
+        return ("start a fresh session (/reload-plugins does not work in Claude Code on the web)"
+                if parenthesised else "start a fresh session")
+    return "start a fresh session (or run /reload-plugins)" if parenthesised else "start a fresh session or run /reload-plugins"
+
+
 CANONICAL_SCOPE = "user"  # RICE-BOOTSTRAP-044C: rice is a user-scope plugin, like Matt's
 
 
@@ -191,11 +208,11 @@ def _plugin_items(plugin_probe) -> list[ItemResult]:
         build = ItemResult(
             "plugin:build", "FAIL",
             f"installed {sorted(versions)} but this session is running build {bv} -- they must be "
-            "the same build. If the install is already the release you want, start a fresh "
-            "session (or run /reload-plugins) so it is the one that loads; otherwise reinstall it "
+            f"the same build. If the install is already the release you want, {new_session_advice()} "
+            "so it is the one that loads; otherwise reinstall it "
             f"(`claude plugin marketplace add {settings_template.MARKETPLACE_REPO}[@release/<x.y.z>]"
-            f" && claude plugin install {settings_template.PLUGIN_KEY}`) and start a fresh session "
-            "or run /reload-plugins",
+            f" && claude plugin install {settings_template.PLUGIN_KEY}`) and "
+            f"{new_session_advice(parenthesised=False)}",
             kind=MATCHES,
         )
     return [installed, build]

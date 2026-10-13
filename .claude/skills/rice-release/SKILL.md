@@ -45,7 +45,7 @@ an unpinned Environment installs it in every new session, a machine runs
 `claude plugin marketplace update rice-bootstrap` then `claude plugin update
 rice@rice-bootstrap`, and a pinned Environment stays put until its pin
 changes. Each repo catches up when the OWNER re-runs `/rice:bootstrap` in a
-new session (or after `/reload-plugins`), as the README says.
+new session (or after `/reload-plugins`; on the web only a new session), as the README says.
 
 ## Flow
 

@@ -12,7 +12,7 @@ Four verbs, and nothing outside this module needs to know more than these:
 There is no update verb (RICE-FINAL-001). Rice has exactly two repo
 lifecycles -- bootstrap and uninstall -- and neither ever asks the OWNER to
 migrate a ref or reason about which build is "latest". An update is the
-platform's: a new session (or /reload-plugins) loads it, and one re-run of
+platform's: a new session (or /reload-plugins, which the web does not have) loads it, and one re-run of
 bootstrap brings a repo up to date.
 
 Every lifecycle verb runs the same canonical flow, which lives here and

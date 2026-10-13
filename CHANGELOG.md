@@ -3,6 +3,16 @@
 All notable changes to the `rice` plugin. The top entry's version must equal
 `.claude-plugin/plugin.json`'s `version` (a release check).
 
+## [Unreleased]
+
+- **Reload advice for Claude Code on the web.** `/reload-plugins` does not
+  work in a web (remote) session, though `/rice:update` still updates the
+  plugin and the repo there. In such a session (`CLAUDE_CODE_REMOTE=true`)
+  the report of `/rice:update`, its by-hand fallback, the verifier's
+  `plugin:build` line and the README now say to start a new session; where
+  `/reload-plugins` exists the wording is unchanged. Messages only: the
+  update logic is untouched.
+
 ## [0.1.9] - 2026-10-13
 
 One-command update (RICE-ONE-COMMAND-UPDATE-001):

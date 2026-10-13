@@ -12,7 +12,8 @@ and by RICE-UPDATE-PRESAVE-001: an update saves the OWNER's work first, I24
 and §14.8, evidence in `docs/research/RICE-UPDATE-PRESAVE-001-real-sessions.md`;
 and by RICE-BOOTSTRAP-UX-FIX-001: first-bootstrap UX, I25–I26 and §16;
 and by RICE-ONE-COMMAND-UPDATE-001: I15 amended, I27 and §17, evidence in
-`docs/research/RICE-ONE-COMMAND-UPDATE-001-feasibility.md`).
+`docs/research/RICE-ONE-COMMAND-UPDATE-001-feasibility.md`; and by
+RICE-WEB-UPDATE-DOC-001: I28, the reload advice on the web).
 This document freezes an approved design; it does not reopen it.
 Base: rice 0.1.6 (private main `4e7f210`).
 
@@ -185,7 +186,8 @@ behaviour up the moment a session loads the new build.
   rice@rice-bootstrap`, or a new Cloud session from an unpinned Environment)
   → the new build's `/rice:bootstrap` runs on each repo (by `/rice:update` at
   once, by installed path; by hand after a session boundary: a new session,
-  or the OWNER's own `/reload-plugins`). That run is the whole repo update,
+  or the OWNER's own `/reload-plugins` where the environment has it -- not
+  Claude Code on the web, I28). That run is the whole repo update,
   and it asks the OWNER nothing: the bootstrap skill asks only the choices
   `rice.py questions` prints, none on a repo rice already configured
   (RICE-FINAL-UX-REVIEW-001; the answers are written only when absent, so a
@@ -288,8 +290,9 @@ behaviour up the moment a session loads the new build.
   marketplace was actually checked — never "latest", since a pinned
   marketplace offers nothing newer by design — or `could not check ...
   staying on b`), and says that this session's hooks and skills load the
-  new build after `/reload-plugins` or in a new session whenever the loaded
-  build differs from the installed one. A repo whose rice choices are still
+  new build after `/reload-plugins` or in a new session -- on the web, in a
+  new session only (I28) -- whenever the loaded build differs from the
+  installed one. A repo whose rice choices are still
   unanswered (`rice.py questions` prints any) is not updated and is not
   called updated: only `/rice:bootstrap` can ask them. An engine failure
   that leaves no report of its own is stated as a failed repo update. The
@@ -302,6 +305,18 @@ behaviour up the moment a session loads the new build.
   refuses only to run a build that cannot be run). Every subprocess it
   starts is stdin-less and shares one 540 s budget, inside the skill's
   600 s Bash timeout, so its own report always arrives.
+
+- I28 Reload advice by environment (RICE-WEB-UPDATE-DOC-001). The OWNER
+  observed that a Claude Code on the web (remote) session does not support
+  `/reload-plugins`; `/rice:update` still updates the plugin and the repo
+  there. Wherever rice tells the OWNER how an installed build reaches the
+  running session — the `/rice:update` report, its by-hand fallback and its
+  unanswered-choices line, the verifier's `plugin:build` detail, the README
+  — the advice is environment-aware: where `CLAUDE_CODE_REMOTE=true` (set by
+  Claude Code in web sessions) it is "start a new session" and says
+  `/reload-plugins` does not work there; everywhere else it is unchanged
+  ("`/reload-plugins` or a new session"). One helper (`evidence.on_web`)
+  decides; the update logic, the gates and every verdict are untouched.
 
 ---
 
@@ -677,7 +692,8 @@ Normative: I15–I19. This section says how they land; it adds no state.
 ### 14.1 Facts the design rests on
 
 - Official Claude Code: `claude plugin update` loads the new build only in
-  the next session or after the OWNER's `/reload-plugins`; a plugin's
+  the next session or after the OWNER's `/reload-plugins` (not supported in
+  Claude Code on the web: I28); a plugin's
   manifest `version` is the version, so nothing moves until it is bumped;
   a marketplace added with `@ref` updates to that ref only; the old cache
   directory is kept 14 days, so a running session keeps its build. Install
@@ -766,7 +782,8 @@ nag every session of a deliberately pinned Environment.
 
 README: the pin sentence gains "stays on that release until you change the
 pin"; one sentence under *Bootstrap a repo* says how an update reaches a
-repo (new session or `/reload-plugins`, re-run `/rice:bootstrap`), how a
+repo (new session or `/reload-plugins` -- on the web only a new session --
+re-run `/rice:bootstrap`), how a
 machine updates (`claude plugin marketplace update rice-bootstrap`, then
 `claude plugin update rice@rice-bootstrap`: in a real session the update
 alone answered "already at the latest version"), and that rice's working
@@ -995,8 +1012,9 @@ the web UI with the public marketplace is NOT VERIFIED):
 - "It cannot take effect in the current session": the OWNER's session cannot
   load the new build without `/reload-plugins` — and the model cannot run it
   (the Skill tool answers "reload-plugins is a built-in CLI command, not a
-  skill. Ask the user to run /reload-plugins themselves") — but nothing the
-  repo update needs is in the loaded build. The installed build's scripts run
+  skill. Ask the user to run /reload-plugins themselves") — and in Claude
+  Code on the web it is not supported at all, so a new session is the only
+  way (I28) — but nothing the repo update needs is in the loaded build. The installed build's scripts run
   by path; `plugin:build` compares the installed version with the build that
   runs, so it holds for them.
 - "In Cloud the update dies with the container": still true, and stated:

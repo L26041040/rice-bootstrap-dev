@@ -104,6 +104,8 @@ class TestReadme(unittest.TestCase):
         self.assertRegex(bootstrap, r"(?is)commits\s+and\s+pushes.*\.gitignore")
         # the session keeps its old hooks until the OWNER reloads: said, not hidden
         self.assertRegex(bootstrap, r"(?is)hooks\s+load\s+the\s+new\s+build\s+after\s+`/reload-plugins`")
+        # RICE-WEB-UPDATE-DOC-001: /reload-plugins does not work on the web; the README says so
+        self.assertRegex(bootstrap, r"(?is)on\s+the\s+web,\s+only\s+a\s+new\s+session.*`/reload-plugins`\s+is\s+not\s+supported")
         # a rice without the command: refresh the marketplace first (alone, `plugin update` says "latest")
         self.assertRegex(bootstrap, r"(?is)without\s+`/rice:update`.*marketplace\s+update.*plugin\s+update"
                                     r".*`/rice:bootstrap`\s+in\s+a\s+new\s+session")

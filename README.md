@@ -41,10 +41,10 @@ To update, run `/rice:update` once: it refreshes the marketplace, updates the
 plugin, then updates this repo with the new build, asking nothing. First it
 commits and pushes your working tree (running it is your go-ahead; `.gitignore`
 applies) and updates nothing if that save fails. The session's own hooks load
-the new build after `/reload-plugins` or in a new session. Without
-`/rice:update` (before 0.1.9): `claude plugin marketplace update
-rice-bootstrap`, `claude plugin update rice@rice-bootstrap`, then
-`/rice:bootstrap` in a new session.
+the new build after `/reload-plugins` or in a new session (on the web, only a
+new session: `/reload-plugins` is not supported there). Without `/rice:update`
+(before 0.1.9): `claude plugin marketplace update rice-bootstrap`, `claude
+plugin update rice@rice-bootstrap`, then `/rice:bootstrap` in a new session.
 
 If Matt's setup chose GitHub Issues, rice creates Matt's triage labels before
 `FINAL-VERIFIED`: that needs a valid GitHub `origin` and a credential allowed

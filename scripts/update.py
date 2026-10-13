@@ -48,8 +48,16 @@ SCOPE = evidence.CANONICAL_SCOPE
 CLI_TIMEOUT_SECONDS = 150           # the CLI's own clone/refresh timeouts are 120s
 TOTAL_BUDGET_SECONDS = 540          # the skill's Bash call is killed at 600s: answer before that, in our own words
 VERBATIM = "--- present this to the OWNER verbatim ---"   # the engine's own marker
-MANUAL = (f"claude plugin marketplace update {MARKETPLACE}; claude plugin update {PLUGIN_KEY}; "
-          "then /reload-plugins (or a new session) and /rice:bootstrap")
+
+
+def _load_new_build() -> str:
+    """How the OWNER gets the session itself onto the installed build."""
+    return "a new session" if evidence.on_web() else "/reload-plugins (or a new session)"
+
+
+def _manual() -> str:
+    return (f"claude plugin marketplace update {MARKETPLACE}; claude plugin update {PLUGIN_KEY}; "
+            f"then {_load_new_build()} and /rice:bootstrap")
 
 
 @dataclass
@@ -123,7 +131,7 @@ def update(repo_root, *, run=default_run, engine=None) -> UpdateResult:
     engine = engine or _engine
     before, why, by_hand = _installed(run)
     if before is None:
-        return _stop(f"rice cannot be updated from here: {why}", *([f"By hand: {MANUAL}."] if by_hand else []))
+        return _stop(f"rice cannot be updated from here: {why}", *([f"By hand: {_manual()}."] if by_hand else []))
     old = str(before.get("version"))
 
     refresh = run(["claude", "plugin", "marketplace", "update", MARKETPLACE, "--json"])
@@ -170,8 +178,9 @@ def update(repo_root, *, run=default_run, engine=None) -> UpdateResult:
                   f"staying on the installed {new}.")
     notes = [plugin]
     if loaded != new:
-        notes.append(f"This session's hooks and skills are still rice {loaded}; /reload-plugins (or a new "
-                     f"session) loads {new}.")
+        notes.append(f"This session's hooks and skills are still rice {loaded}; "
+                     + (f"start a new session to load {new} (/reload-plugins does not work in Claude Code on "
+                        "the web)." if evidence.on_web() else f"/reload-plugins (or a new session) loads {new}."))
 
     if not reconcile.rice_installed_here(repo_root):
         return UpdateResult(True, [*notes, "This repo is not set up for rice yet: run /rice:bootstrap once to set it up."])
@@ -182,7 +191,8 @@ def update(repo_root, *, run=default_run, engine=None) -> UpdateResult:
     if open_choices.strip():
         return UpdateResult(False, [*notes, "This repo's rice setup has unanswered choices "
                               f"({', '.join(open_choices.split())}), which only /rice:bootstrap asks: run it "
-                              "after /reload-plugins or in a new session. The repo was not updated."])
+                              f"{'in a new session' if evidence.on_web() else 'after /reload-plugins or in a new session'}. "
+                              "The repo was not updated."])
     out, rc = engine("bootstrap", root, repo_root)
     if rc != 0 and VERBATIM not in out:
         notes.append(f"The repo update FAILED (exit {rc}) without a report of its own; nothing is recorded as "

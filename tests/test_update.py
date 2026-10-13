@@ -84,8 +84,12 @@ class UpdateBase(unittest.TestCase):
         self.booted = []
         self._loaded = mock.patch.object(evidence, "build_version", return_value="0.1.8")  # the loaded session
         self._loaded.start()
+        self._env = mock.patch.dict(os.environ)                # not the web, whatever runs the tests
+        self._env.start()
+        os.environ.pop("CLAUDE_CODE_REMOTE", None)
 
     def tearDown(self):
+        self._env.stop()
         self._loaded.stop()
         self._tmp.cleanup()
 
@@ -286,6 +290,49 @@ class TestTheRepoStepNeverHidesItsFailure(UpdateBase):
         self.assertEqual(self.booted, [])                          # the engine's bootstrap never ran
         self.assertIn("archive, output-style", out.owner[-1])
         self.assertIn("The repo was not updated.", out.owner[-1])
+
+
+class TestTheReloadAdviceFollowsTheEnvironment(UpdateBase):
+    """RICE-WEB-UPDATE-DOC-001: /reload-plugins does not work in a Claude
+    Code on the web session, so there the OWNER is told to start a new
+    session; elsewhere the wording is the original. Messages only."""
+
+    def notes_in(self, web: bool, **kw) -> str:
+        env = {"CLAUDE_CODE_REMOTE": "true"} if web else {}
+        with mock.patch.dict(os.environ, env):
+            return " ".join(self.go(FakeClaude(self.tmp, **kw)).owner)
+
+    def test_on_the_web_the_session_is_told_to_start_a_new_one(self):
+        text = self.notes_in(True)
+        self.assertIn("start a new session to load 0.1.9", text)
+        self.assertIn("/reload-plugins does not work in Claude Code on the web", text)
+        self.assertNotIn("(or a new session)", text)
+
+    def test_elsewhere_the_original_wording_stays(self):
+        text = self.notes_in(False)
+        self.assertIn("/reload-plugins (or a new session) loads 0.1.9.", text)
+        self.assertNotIn("does not work", text)
+
+    def test_the_update_itself_is_the_same_on_the_web(self):
+        """No logic changed: same commands, same engine call, same verdict."""
+        runs = {}
+        for web in (True, False):
+            claude = FakeClaude(self.tmp)
+            self.booted.clear()
+            with mock.patch.dict(os.environ, {"CLAUDE_CODE_REMOTE": "true"} if web else {}):
+                out = self.go(claude)
+            runs[web] = (out.ok, claude.calls, list(self.booted))
+        self.assertEqual(runs[True], runs[False])
+
+    def test_the_by_hand_fallback_and_the_unanswered_choices_line_follow_it_too(self):
+        with mock.patch.dict(os.environ, {"CLAUDE_CODE_REMOTE": "true"}):
+            by_hand = " ".join(self.go(FakeClaude(self.tmp, scopes=())).owner)
+            self.open_choices = "archive\n"
+            choices = self.go(FakeClaude(self.tmp)).owner[-1]
+        self.assertIn("then a new session and /rice:bootstrap", by_hand)
+        self.assertNotIn("/reload-plugins", by_hand)
+        self.assertIn("in a new session", choices)
+        self.assertNotIn("/reload-plugins", choices)
 
 
 class TestRecovery(UpdateBase):

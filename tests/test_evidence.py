@@ -307,8 +307,32 @@ class TestArchiveBehavesDiagnostic(ReconcileTestBase):
         self.assertEqual(st["plugin:build"], "FAIL")
         # RICE-FINAL-UX-REVIEW-001: /reload-plugins switches a running session
         # to the installed build as well as a new session does (real session)
-        detail = {i.name: i.detail for i in items}["plugin:build"]
-        self.assertIn("/reload-plugins", detail)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CLAUDE_CODE_REMOTE", None)
+            detail = {i.name: i.detail for i in _rubric(self.repo_root, rtk_probe=_ok_rtk_probe,
+                                                         plugin_probe=probe)}["plugin:build"]
+        self.assertIn("start a fresh session (or run /reload-plugins)", detail)
+        self.assertIn("start a fresh session or run /reload-plugins", detail)
+
+    def test_on_the_web_the_build_mismatch_asks_for_a_new_session_not_a_reload(self):
+        """RICE-WEB-UPDATE-DOC-001: /reload-plugins does not work in a Claude
+        Code on the web session, so it is never offered there."""
+        _make_correct_repo(self.repo_root)
+        probe = lambda cmd: _Result(0, '[{"id":"rice@rice-bootstrap","version":"0.0.1","scope":"user","enabled":true}]')
+        with mock.patch.dict(os.environ, {"CLAUDE_CODE_REMOTE": "true"}):
+            detail = {i.name: i.detail for i in _rubric(self.repo_root, rtk_probe=_ok_rtk_probe,
+                                                         plugin_probe=probe)}["plugin:build"]
+        self.assertIn("start a fresh session", detail)
+        self.assertIn("does not work in Claude Code on the web", detail)
+        self.assertNotIn("or run /reload-plugins", detail)
+
+    def test_only_the_value_true_means_the_web(self):
+        for value, web in (("true", True), ("false", False), ("1", False), ("", False)):
+            with mock.patch.dict(os.environ, {"CLAUDE_CODE_REMOTE": value}):
+                self.assertEqual(evidence.on_web(), web, value)
+        with mock.patch.dict(os.environ, {}):
+            os.environ.pop("CLAUDE_CODE_REMOTE", None)
+            self.assertFalse(evidence.on_web())
 
 
 class TestTheSplitHolds(unittest.TestCase):
