@@ -39,6 +39,8 @@ asking anything and without ever reporting an update that did not happen?
 | 9 | After `/reload-plugins`, `/rice:update` again. | Build B's hook live; "no newer release is offered; rice 0.1.9 stays installed"; nothing to commit; `FINAL-VERIFIED 0.1.9`. |
 | 10 | Marketplace host down. | Refresh fails; `plugin update` still answers from the local clone; the report says "could not check for a newer release (...); staying on the installed ..." — never "latest". |
 | 11 | Broken release (probe 6) through the command, then a fixed release. | Without the guard the command ran the broken build and the engine blocked it with `build ?`. With the guard it stops: "declares no MAJOR.MINOR.PATCH version ... broken", repo untouched. Once a fixed release (0.1.10) is out the same command updated `06f57ac0316d → 0.1.10` and finalized. |
+| 12 | Final build, repo finalized by the real 0.1.6 (rich project) with unsaved work; session on the previous build. One `/rice:update`. | Plugin 0.1.8 → 0.1.9 and repo 0.1.6 → 0.1.9 in one command: work saved (`README.md`, `notes.md`), rice's commit (`rice.md`, `rice-version`), pushed, tree clean, `FINAL-VERIFIED 0.1.9`; 0 `AskUserQuestion`; 5 Bash calls (the command, the git-deny probe, the command again, the commit). |
+| 13 | Final skill text, repo finalized by the final build with unsaved work. | One conversation number and one code block holding the plugin lines, both commits (save and rice's, with ids), `FINAL-VERIFIED 0.1.9`, "nothing left for you"; no instruction to the agent in it. (Before the skill said to finish its part first, one run reported "Commit and push ..." and committed afterwards.) |
 
 ## Conclusion
 
