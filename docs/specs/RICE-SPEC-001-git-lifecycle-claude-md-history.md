@@ -294,11 +294,14 @@ behaviour up the moment a session loads the new build.
   called updated: only `/rice:bootstrap` can ask them. An engine failure
   that leaves no report of its own is stated as a failed repo update. The
   by-hand commands are offered only where they are the remedy (not for a
-  duplicate install, whose detail names the right ones). The model MUST NOT reload plugins (it cannot) and
-  the command MUST NOT claim a reload. Re-running is the recovery: each step
-  already done reports so and the next runs; no state is kept. The engine
-  and verifier decide the repo's outcome; `update.py` writes nothing in the
-  repo and holds no verdict.
+  duplicate install, whose detail names the right ones). The model MUST NOT
+  reload plugins (it cannot) and the command MUST NOT claim a reload.
+  Re-running is the recovery: each step already done reports so and the next
+  runs; no state is kept. The engine and verifier decide the repo's outcome;
+  `update.py` writes nothing in the repo and holds no repo verdict (it
+  refuses only to run a build that cannot be run). Every subprocess it
+  starts is stdin-less and shares one 540 s budget, inside the skill's
+  600 s Bash timeout, so its own report always arrives.
 
 ---
 

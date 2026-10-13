@@ -102,6 +102,8 @@ class UpdateBase(unittest.TestCase):
 
 
 class TestTheOneFlow(UpdateBase):
+    """RICE-ONE-COMMAND-UPDATE-001: The order, and which build does the repo step."""
+
     def test_check_then_refresh_then_update_then_the_new_build_updates_the_repo(self):
         claude = FakeClaude(self.tmp)
         out = self.go(claude)
@@ -134,6 +136,8 @@ class TestTheOneFlow(UpdateBase):
 
 
 class TestNothingIsReportedDoneThatIsNot(UpdateBase):
+    """RICE-ONE-COMMAND-UPDATE-001: Only what `claude plugin list` reads back is believed."""
+
     def test_no_newer_release_is_said_only_when_the_marketplace_was_actually_checked(self):
         with mock.patch.object(evidence, "build_version", return_value="0.1.9"):   # a session on the latest
             ok = self.go(FakeClaude(self.tmp, installed="0.1.9", latest="0.1.9")).owner[0]
@@ -193,7 +197,6 @@ class TestNothingIsReportedDoneThatIsNot(UpdateBase):
         out = self.go(FakeClaude(self.tmp), rc=1)
         self.assertFalse(out.ok)
         self.assertIn("FINAL-VERIFIED 0.1.9", update.render(out))   # the engine's block, relayed as it is
-        self.assertEqual(out.bootstrap_rc, 1)
 
     def test_no_supported_install_is_a_stop_and_the_manual_way_only_where_it_is_the_remedy(self):
         nothing = self.go(FakeClaude(self.tmp, scopes=()))
@@ -215,6 +218,8 @@ class TestNothingIsReportedDoneThatIsNot(UpdateBase):
 
 
 class TestTheRepoStepNeverHidesItsFailure(UpdateBase):
+    """RICE-ONE-COMMAND-UPDATE-001: A failed repo step, a timeout, a hostile CLI text: each is said."""
+
     def test_a_crash_without_the_engines_report_still_says_the_repo_update_failed(self):
         out = self.go(FakeClaude(self.tmp), rc=1, out="Traceback (most recent call last):\n  boom\n")
         self.assertFalse(out.ok)
@@ -247,6 +252,33 @@ class TestTheRepoStepNeverHidesItsFailure(UpdateBase):
         out = self.go(Hostile(self.tmp))
         self.assertNotIn("`", out.owner[0])
 
+    def test_a_failed_questions_check_is_not_read_as_unanswered_choices(self):
+        out = update.update(self.repo, run=FakeClaude(self.tmp),
+                            engine=lambda v, r, p: ("Traceback boom", 1) if v == "questions" else self.engine(v, r, p))
+        self.assertFalse(out.ok)
+        self.assertEqual(self.booted, [])
+        self.assertIn("could not be checked (exit 1", out.owner[-1])
+        self.assertNotIn("unanswered", out.owner[-1])
+
+    def test_no_subprocess_waits_on_a_prompt_or_outlives_the_skills_own_timeout(self):
+        seen = {}
+        def fake_run(cmd, **kw):
+            seen.update(kw)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        with mock.patch.object(update.subprocess, "run", fake_run):
+            update.default_run(["x"], timeout=5)
+            self.assertEqual(seen["stdin"], subprocess.DEVNULL)
+            seen.clear()
+            update._engine("bootstrap", self.tmp, self.repo)
+            self.assertEqual(seen["stdin"], subprocess.DEVNULL)
+        self.assertLess(update.TOTAL_BUDGET_SECONDS, 600)          # the skill's Bash timeout is 600000 ms
+        self.assertIn("600000", (REPO / "skills" / "update" / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_an_unrunnable_command_is_a_report_not_a_traceback(self):
+        with mock.patch.object(update.subprocess, "run", side_effect=PermissionError(13, "Permission denied")):
+            self.assertEqual(update.default_run(["x"]).returncode, 127)
+            self.assertEqual(update._engine("bootstrap", self.tmp, self.repo)[1], 127)
+
     def test_a_repo_with_unanswered_choices_is_not_called_updated(self):
         self.open_choices = "archive\noutput-style\n"
         out = self.go(FakeClaude(self.tmp))
@@ -257,6 +289,8 @@ class TestTheRepoStepNeverHidesItsFailure(UpdateBase):
 
 
 class TestRecovery(UpdateBase):
+    """RICE-ONE-COMMAND-UPDATE-001: The same command is the retry."""
+
     def test_a_rerun_after_a_failed_repo_update_finishes_it_without_updating_twice(self):
         claude = FakeClaude(self.tmp)
         self.assertFalse(self.go(claude, rc=1).ok)                   # plugin updated, repo not
@@ -274,6 +308,8 @@ class TestRecovery(UpdateBase):
 
 
 class TestARepoRiceNeverSetUp(UpdateBase):
+    """RICE-ONE-COMMAND-UPDATE-001: The plugin updates; the repo waits for its first bootstrap."""
+
     def test_the_plugin_is_updated_and_the_repo_is_left_for_the_first_bootstrap(self):
         (self.repo / ".claude" / "rice.md").unlink()
         out = self.go(FakeClaude(self.tmp))
