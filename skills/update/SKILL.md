@@ -6,8 +6,7 @@ disable-model-invocation: true
 
 # rice update
 
-You are the adapter for one command. Every decision belongs to
-`scripts/update.py` and the lifecycle engine it runs.
+You are the adapter for one command; every decision is `scripts/update.py`'s.
 
 ## 1 — Run it
 
@@ -22,7 +21,7 @@ give the command a timeout of 600000 ms and let it finish. Run nothing else
 before it: no `git`, no `claude plugin ...`, no probing. It asks the OWNER
 nothing and saves their work itself.
 
-## 2 — Pass its words on
+## 2 — Finish what it asks of you, then report
 
 The output ends with a block marked
 
@@ -30,11 +29,12 @@ The output ends with a block marked
 --- present this to the OWNER verbatim ---
 ```
 
-Reply with your conversation number, then exactly that block inside one
-fenced code block, and **nothing outside it**. Then do only what it asks of
-*you*: commit and push when told; run the same command again after a
-blocker line says what was fixed.
+It may ask *you* to commit and push (by name, as it says), or to run the
+probe it names and then the same command again: do that **first**. Then
+reply with your conversation number and exactly one fenced code block,
+**nothing outside it**, holding the block's facts for the OWNER — the plugin
+lines, the verdict line, anything it names as left for them — plus what you
+committed and pushed. Leave out its instructions to you.
 
-Never report the plugin or the repo updated unless the block says so, and
-never type `/reload-plugins` or `/rice:bootstrap` for the OWNER: both are
-theirs, and the block says whether either is needed.
+Never report an update the block does not say happened, and never type
+`/reload-plugins` or `/rice:bootstrap` for the OWNER: both are theirs.

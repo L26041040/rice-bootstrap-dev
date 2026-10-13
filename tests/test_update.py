@@ -396,11 +396,20 @@ class TestTheSkillIsAThinKeyOnlyTheOwnerTurns(unittest.TestCase):
         for step in ("marketplace update", "plugin update", "Gate A", "--final", "reconcile", "verify.py"):
             self.assertNotIn(step, text, step)
 
+    def test_the_agent_finishes_its_part_before_it_reports(self):
+        """Real session: told to present the block, the agent reported the
+        engine's own instruction ("Commit and push ...") and only then
+        committed, so the OWNER never learned what was committed."""
+        text = self.SKILL.read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?is)commit\s+and\s+push.*\*\*first\*\*.*then\s+reply")
+        self.assertIn("what you\ncommitted and pushed", text)
+        self.assertIn("nothing outside it", text)
+
     def test_it_never_claims_a_reload_the_model_cannot_do(self):
         """Probed: `/reload-plugins` is a built-in command; the Skill tool
         refuses it ("Ask the user to run /reload-plugins themselves")."""
         text = self.SKILL.read_text(encoding="utf-8")
-        self.assertIn("never type `/reload-plugins`", text)
+        self.assertRegex(text, r"never\s+type\s+`/reload-plugins`")
 
 
 if __name__ == "__main__":
