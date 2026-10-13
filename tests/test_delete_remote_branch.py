@@ -217,7 +217,7 @@ class TestStalenessLine(unittest.TestCase):
         lines = self._lines("0.1.6")
         self.assertEqual(len(lines), 2, lines)
         self.assertIn(str(session_context.HELPER), lines[0])
-        for word in ("0.1.6", "0.1.7", "/rice:bootstrap"):
+        for word in ("0.1.6", "0.1.7", "/rice:update"):
             self.assertIn(word, lines[1])
         self.assertIn("do not run it yourself", lines[1])
         self.assertEqual(len(self._lines("0.1.9", build="0.1.10")), 2)  # numeric, not lexical
@@ -228,7 +228,7 @@ class TestStalenessLine(unittest.TestCase):
         `systemMessage` is shown in the session itself (a real session showed
         it), so the line no longer depends on the model relaying it."""
         _, shown = self._run("0.1.6")
-        for word in ("0.1.6", "0.1.7", "/rice:bootstrap"):
+        for word in ("0.1.6", "0.1.7", "/rice:update"):
             self.assertIn(word, shown)
         self.assertIsNone(self._run("0.1.7")[1])  # an up-to-date repo shows nothing
 

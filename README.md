@@ -23,9 +23,7 @@ lines in the Cloud Environment's setup script (an OWNER-only step in the web
 UI); every new session from that Environment then has the latest release.
 To pin a version instead: `claude plugin marketplace add L26041040/rice-bootstrap@release/0.1.8`.
 A pinned Environment stays on that release until you change the pin; unpinned
-is the default and follows the latest release. On your own machine, update
-with `claude plugin marketplace update rice-bootstrap`, then
-`claude plugin update rice@rice-bootstrap`.
+is the default and follows the latest release.
 
 ## Bootstrap a repo
 
@@ -36,24 +34,27 @@ with `claude plugin marketplace update rice-bootstrap`, then
 Run it once per repo. It ends with `RICE-VERIFIED <version>` and a hand-off
 to `/mattpocock-skills:setup-matt-pocock-skills`; after that setup, rice
 finishes on its own and reports `FINAL-VERIFIED <version>`, recorded in
-`.claude/rice-version`. Re-running is safe. When rice itself has been
-updated, start a new session (or run `/reload-plugins`) and run
-`/rice:bootstrap` once in each repo: it asks nothing, first commits and
-pushes everything in your working tree (running it is your go-ahead;
-`.gitignore` applies), then brings the repo up to date. If that save fails
-(a merge in progress, a rejected push, no remote), nothing is updated.
-Rice's working rules take effect after `/clear` or in a new session.
+`.claude/rice-version`. Re-running is safe. Rice's working rules take effect
+after `/clear` or in a new session.
 
-If Matt's setup chose GitHub Issues, rice creates Matt's triage labels on
-the repository before `FINAL-VERIFIED`. That needs `origin` to be a valid
-GitHub repository and a credential allowed to manage its issues (`GH_TOKEN`
-or `GITHUB_TOKEN`, `git` or `gh` signed in, or the web session's GitHub
-connection); without one rice stops and says so once. No `gh` is required.
+To update, run `/rice:update` once: it refreshes the marketplace, updates the
+plugin, then updates this repo with the new build, asking nothing. First it
+commits and pushes your working tree (running it is your go-ahead; `.gitignore`
+applies) and updates nothing if that save fails. The session's own hooks load
+the new build after `/reload-plugins` or in a new session. Without
+`/rice:update`: `claude plugin marketplace update rice-bootstrap`, `claude
+plugin update rice@rice-bootstrap`, then `/rice:bootstrap` in a new session.
 
-Work happens on the session's branch; when you say 「合併回主枝」 the agent
-fast-forwards it onto the default branch, proves it landed, then removes
-the remote branch. Past sessions in `session-history/` stay closed until
-you invoke `/rice:history`.
+If Matt's setup chose GitHub Issues, rice creates Matt's triage labels before
+`FINAL-VERIFIED`: that needs a valid GitHub `origin` and a credential allowed
+to manage its issues (`GH_TOKEN`/`GITHUB_TOKEN`, `git` or `gh` signed in, or
+the web session's GitHub connection). Without one rice stops and says so once;
+`gh` itself is not required.
+
+Work happens on the session's branch; say 「合併回主枝」 and the agent
+fast-forwards it onto the default branch, proves it landed, then removes the
+remote branch. Past sessions in `session-history/` stay closed until you
+invoke `/rice:history`.
 
 ## Uninstall from a repo
 
@@ -61,8 +62,7 @@ you invoke `/rice:history`.
 /rice:rice-uninstall
 ```
 
-Removes exactly what rice added to this repo. The plugin itself stays
-installed for other repos.
+Removes exactly what rice added to this repo; the plugin stays installed.
 
 ## What rice configures
 

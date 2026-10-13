@@ -16,6 +16,7 @@
   "skills": [
     "./skills/bootstrap",
     "./skills/rice-uninstall",
-    "./skills/history"
+    "./skills/history",
+    "./skills/update"
   ]
 }

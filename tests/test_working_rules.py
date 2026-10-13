@@ -93,18 +93,23 @@ class TestReadme(unittest.TestCase):
         self.assertEqual(release.gate_readme(REPO).state, "PASS")
 
     def test_it_says_how_an_update_reaches_a_repo_and_what_a_pin_means(self):
-        """RICE-SPEC-001 I15 / I19: platform update, new session, re-run
-        bootstrap; a pin never moves on its own; there is no update verb."""
+        """RICE-SPEC-001 I15 / I19 (amended by RICE-ONE-COMMAND-UPDATE-001):
+        one `/rice:update`; the hand-made way for a rice that predates it; a
+        pin never moves on its own."""
         readme = (REPO / "README.md").read_text(encoding="utf-8")
         bootstrap = _section(readme, "## Bootstrap a repo")
-        self.assertRegex(bootstrap, r"(?is)updated.*new session.*/rice:bootstrap")
-        self.assertIn("asks nothing", bootstrap)
+        self.assertIn("/rice:update", bootstrap)
+        self.assertIn("asking nothing", bootstrap)
         # RICE-UPDATE-PRESAVE-001: running it to update is the go-ahead to save first
         self.assertRegex(bootstrap, r"(?is)commits\s+and\s+pushes.*\.gitignore")
+        # the session keeps its old hooks until the OWNER reloads: said, not hidden
+        self.assertRegex(bootstrap, r"(?is)hooks\s+load\s+the\s+new\s+build\s+after\s+`/reload-plugins`")
+        # a rice without the command: refresh the marketplace first (alone, `plugin update` says "latest")
+        self.assertRegex(bootstrap, r"(?is)without\s+`/rice:update`.*marketplace\s+update.*plugin\s+update"
+                                    r".*`/rice:bootstrap`\s+in\s+a\s+new\s+session")
         install = _section(readme, "## Install once")
         self.assertRegex(install, r"(?is)pinned.*stays on that release until you change the pin")
         self.assertRegex(install, r"(?is)unpinned.*latest")
-        self.assertNotIn("rice:update", readme)
         self.assertNotIn("rice-update", readme)
 
 

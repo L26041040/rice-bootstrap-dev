@@ -240,7 +240,7 @@ class TestFreshRepoEndToEnd(unittest.TestCase):
         with mock.patch.object(evidence, "build_version", lambda: newer):
             lines = _context(w)
             self.assertEqual(len(lines), 2)
-            self.assertIn(newer, lines[1]); self.assertIn("/rice:bootstrap", lines[1])
+            self.assertIn(newer, lines[1]); self.assertIn("/rice:update", lines[1])
             updated = rice.bootstrap(w, **dict(PROBES, plugin_probe=_installed_at(newer)))  # no answers
             self.assertEqual(updated.stage, "finalized", updated.lines)
             self.assertEqual(verify.read_version(w), newer)

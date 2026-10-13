@@ -10,7 +10,9 @@ RICE-FINAL-UX-REVIEW-001: I15, I18 and §14.4–14.5 as real sessions showed
 them, evidence in `docs/research/RICE-FINAL-UX-REVIEW-001-real-sessions.md`;
 and by RICE-UPDATE-PRESAVE-001: an update saves the OWNER's work first, I24
 and §14.8, evidence in `docs/research/RICE-UPDATE-PRESAVE-001-real-sessions.md`;
-and by RICE-BOOTSTRAP-UX-FIX-001: first-bootstrap UX, I25–I26 and §16).
+and by RICE-BOOTSTRAP-UX-FIX-001: first-bootstrap UX, I25–I26 and §16;
+and by RICE-ONE-COMMAND-UPDATE-001: I15 amended, I27 and §17, evidence in
+`docs/research/RICE-ONE-COMMAND-UPDATE-001-feasibility.md`).
 This document freezes an approved design; it does not reopen it.
 Base: rice 0.1.6 (private main `4e7f210`).
 
@@ -174,13 +176,17 @@ behaviour up the moment a session loads the new build.
   preconditions move ahead of the first repo write, and on an update the
   OWNER's work is saved after them and before it (I24); nothing else
   changes.)
-- I15 Update model. Rice MUST NOT update, reinstall or reload itself, and
-  MUST NOT carry an `/rice:update` verb. An update is: the platform installs
-  the new plugin build (`claude plugin update rice@rice-bootstrap`, or a new
-  Cloud session from an unpinned Environment) → a session boundary (a new
-  session, or the OWNER's own `/reload-plugins`) → the OWNER re-runs
-  `/rice:bootstrap` in each repo. That re-run is the whole repo update, and
-  it asks the OWNER nothing: the bootstrap skill asks only the choices
+- I15 Update model (amended by RICE-ONE-COMMAND-UPDATE-001). Rice's engine
+  and hooks MUST NOT update, reinstall or reload rice, and the engine MUST
+  NOT carry an update verb. The one exception is the OWNER-typed
+  `/rice:update` (I27), an orchestrator beside the engine. An update is: the
+  platform installs the new plugin build (`/rice:update`, or by hand
+  `claude plugin marketplace update` then `claude plugin update
+  rice@rice-bootstrap`, or a new Cloud session from an unpinned Environment)
+  → the new build's `/rice:bootstrap` runs on each repo (by `/rice:update` at
+  once, by installed path; by hand after a session boundary: a new session,
+  or the OWNER's own `/reload-plugins`). That run is the whole repo update,
+  and it asks the OWNER nothing: the bootstrap skill asks only the choices
   `rice.py questions` prints, none on a repo rice already configured
   (RICE-FINAL-UX-REVIEW-001; the answers are written only when absent, so a
   re-asked question's answer was silently dropped). Both ways a bootstrap
@@ -262,6 +268,31 @@ behaviour up the moment a session loads the new build.
   The bootstrap skill presents the engine's block as the conversation
   number plus one fenced code block, nothing outside it. Native choice
   prompts and ordinary chat are untouched; Matt's skill is not modified.
+- I27 One-command update (RICE-ONE-COMMAND-UPDATE-001). `/rice:update`
+  (`skills/update`, OWNER-invoked only; `scripts/update.py`) MUST, in one
+  command and the running session: (1) read the canonical install
+  (`evidence.classify_install`; any unsupported or unreadable install stops
+  it, with the manual way, before anything runs); (2) refresh the
+  marketplace — a failure is reported, never fatal, and never lets the
+  report say "latest"; (3) `claude plugin update rice@rice-bootstrap -s user
+  --json`, a failure stopping before the repo is touched; (4) read the
+  install back from `claude plugin list` — the update's own message is not
+  trusted — and refuse a build that declares no `MAJOR.MINOR.PATCH` version
+  or lacks `scripts/rice.py`; (5) when rice is set up in the repo, run the
+  INSTALLED build's `rice.py bootstrap <repo>` by its installed path, which
+  satisfies I16 (`plugin:build`) without a reload, performs the I24 save,
+  and ends in the verifier's verdict; a repo rice never set up is left for
+  its first `/rice:bootstrap`. The OWNER-facing block starts with one line
+  of what the plugin step did (`updated a -> b`, `b is installed (this
+  session started on a)`, `already at the latest release (b)` only when the
+  marketplace was actually checked, or `could not check ... staying on b`),
+  and says that this session's hooks and skills load the new build after
+  `/reload-plugins` or in a new session whenever the loaded build differs
+  from the installed one. The model MUST NOT reload plugins (it cannot) and
+  the command MUST NOT claim a reload. Re-running is the recovery: each step
+  already done reports so and the next runs; no state is kept. The engine
+  and verifier decide the repo's outcome; `update.py` writes nothing in the
+  repo and holds no verdict.
 
 ---
 
@@ -707,7 +738,7 @@ helper line, printed only when all of: rice installed here (the existing
 reconcile question), `.claude/rice-version` present and SemVer, running build
 SemVer, build > repo, waiting marker absent. Text (wording MAY vary):
 `rice: this repo was finalized by rice <repo>; this session runs rice <build>.
-Run /rice:bootstrap to bring it up to date (it first commits and pushes your
+Run /rice:update to bring it up to date (it first commits and pushes your
 work).` Any exception ⇒ silence.
 RICE-FINAL-UX-REVIEW-001: as plain context the line reached no one in real
 sessions — not addressed to anyone, nor when it told the agent to tell the
@@ -935,3 +966,46 @@ Claude Code on the web re-injects its own `gh` client into every session.
 Rice's path never called it there (the credential was GH_TOKEN); the
 unit tests pin the path with `gh` absent.
 
+---
+
+## 17. One-command update (patch RICE-ONE-COMMAND-UPDATE-001)
+
+Source: the OWNER's request for a single command; this amends the earlier
+decision (RICE-UPDATE-RESEARCH-001/-GRILL-001, I15) that rice should not run
+the platform's update on itself. Normative: I15 (amended), I27. Evidence:
+`docs/research/RICE-ONE-COMMAND-UPDATE-001-feasibility.md`.
+
+Why the earlier objections no longer hold, each by a probe in a real
+interactive session:
+
+- "Undocumented whether a plugin may update itself from a session": the CLI
+  updates the cache from the Bash tool of a running session (exit 0, JSON
+  result); the running session's hooks and skill text keep the old build.
+- "It cannot take effect in the current session": the OWNER's session cannot
+  load the new build without `/reload-plugins` — and the model cannot run it
+  (the Skill tool answers "reload-plugins is a built-in CLI command, not a
+  skill. Ask the user to run /reload-plugins themselves") — but nothing the
+  repo update needs is in the loaded build. The installed build's scripts run
+  by path; `plugin:build` compares the installed version with the build that
+  runs, so it holds for them.
+- "In Cloud the update dies with the container": still true, and stated:
+  the next Cloud session starts from the Environment's setup script (and
+  its snapshot); `/rice:update` brings that session current again.
+
+Flow (one Bash command): check → refresh → update → read back → installed
+build's bootstrap (save → reconcile → Gate A → Gate B when Matt is in place)
+→ verdict. Failure behaviour: no step before the bootstrap writes in the
+repo; a failed bootstrap leaves the plugin updated and the repo exactly as
+bootstrap's own preconditions leave it (the save is first; nothing is half
+written); the same command is the retry.
+
+Real-session finding folded in: the bootstrap's git-deny probe round asks the
+agent to re-run the command; the second run finds the plugin already
+installed, so its first line is `b is installed (this session started on a)`
+rather than "already at the latest release".
+
+Not built, and why: no automatic reload (impossible for the model: probed);
+no auto-update setting or background check (the platform has them, per
+marketplace); no version registry or state file (the installed list is the
+state); no `-y` on the update (a marketplace-declared command is never
+accepted blindly).

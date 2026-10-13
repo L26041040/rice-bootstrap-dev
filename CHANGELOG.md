@@ -3,6 +3,19 @@
 All notable changes to the `rice` plugin. The top entry's version must equal
 `.claude-plugin/plugin.json`'s `version` (a release check).
 
+## [Unreleased]
+
+One-command update (RICE-ONE-COMMAND-UPDATE-001):
+
+- **`/rice:update`.** One command, in the running session: it refreshes the
+  marketplace, updates the plugin, reads back what is installed, then runs
+  the installed build's bootstrap on the repo (saving your work first) and
+  ends in the verifier's verdict. It asks nothing, never says "latest" without
+  having checked, refuses a build that declares no version, and can simply be
+  run again after a failure. The session's own hooks load the new build after
+  `/reload-plugins` or in a new session, and the report says so. The staleness
+  line at session start now points to `/rice:update`.
+
 ## [0.1.8] - 2026-10-12
 
 First-bootstrap fixes (RICE-BOOTSTRAP-UX-FIX-001):

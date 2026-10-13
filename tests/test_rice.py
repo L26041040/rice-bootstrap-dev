@@ -972,20 +972,26 @@ class TestCanonicalInstallPolicy(LifecycleBase):
 
 class TestThereIsNoUpdateSystem(unittest.TestCase):
     """RICE-FINAL-001: rice offers two repo lifecycles, bootstrap and
-    uninstall. There is no update workflow, no deprecated wrapper, and no
-    dead code kept "in case"."""
+    uninstall, and no update workflow inside the engine, no deprecated
+    wrapper, no dead code kept "in case". RICE-ONE-COMMAND-UPDATE-001 adds
+    one OWNER-typed command, `/rice:update`, that runs the platform's
+    update and then the installed build's bootstrap; the engine itself still
+    has no update verb, and no other script carries an update path."""
 
     SHIPPED = [p for p in (REPO / "scripts").glob("*.py")]
 
-    def test_the_update_skill_does_not_exist(self):
+    def test_the_update_skill_is_the_one_deliberate_update_path(self):
+        """RICE-ONE-COMMAND-UPDATE-001 amends RICE-FINAL-001: one OWNER-typed
+        `/rice:update`, an orchestrator beside the engine -- never a verb of
+        it. The old name `rice-update` stays unused."""
         self.assertFalse((REPO / "skills" / "rice-update").exists())
         manifest = json.loads((REPO / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        # two lifecycles plus the History Skill key (RICE-SPEC-001); never an update skill
-        self.assertEqual(manifest["skills"], ["./skills/bootstrap", "./skills/rice-uninstall", "./skills/history"])
+        self.assertEqual(manifest["skills"], ["./skills/bootstrap", "./skills/rice-uninstall",
+                                              "./skills/history", "./skills/update"])
         allowlist = (REPO / "scripts" / "export_public.py").read_text(encoding="utf-8")
         self.assertNotIn("rice-update", allowlist)
         self.assertEqual(sorted(p.name for p in (REPO / "skills").iterdir()),
-                         ["bootstrap", "history", "rice-uninstall"])
+                         ["bootstrap", "history", "rice-uninstall", "update"])
 
     def test_the_engine_has_no_update_verb(self):
         self.assertFalse(hasattr(rice, "update"))
@@ -1000,6 +1006,8 @@ class TestThereIsNoUpdateSystem(unittest.TestCase):
                 continue  # private release tooling, never shipped to a repo
             if py.name == "delete_remote_branch.py":
                 continue  # reads whether ONE named branch exists on origin; nothing about "latest"
+            if py.name == "update.py":
+                continue  # the one deliberate update path (RICE-ONE-COMMAND-UPDATE-001), OWNER-typed only
             code = "".join(py.read_text(encoding="utf-8").split('"""')[::2])
             # tokens that can only mean "rice updating itself". (`upstream` on
             # its own is the session archive's git upstream -- unrelated.)
@@ -1175,7 +1183,7 @@ class TestAdaptersCarryNoSteps(unittest.TestCase):
     lifecycle implementation detail, because a decision written in two places
     is a decision that will drift."""
 
-    ADAPTERS = ("skills/bootstrap/SKILL.md", "scripts/bootstrap_continue.py")
+    ADAPTERS = ("skills/bootstrap/SKILL.md", "skills/update/SKILL.md", "scripts/bootstrap_continue.py")
 
     # calling into the machinery the engine owns
     FORBIDDEN_CALLS = ("reconcile.", "verify.run", "verify.py", "repair.repair", "repair.py",
